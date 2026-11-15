@@ -171,7 +171,7 @@ func (d *Dispatcher) limits(ctx context.Context, r Runner, s *store.Session, g s
 					d.harnessError(ctx, r, s, g, tail)
 				}
 			}
-			if _, busy := HarnessBackground(harnessKind(g.Config), tail); tell && read && busy {
+			if _, busy := HarnessBackground(tail); tell && read && busy {
 				// It waits for a shell of its own, and its harness wakes it
 				// when that exits (yardr-zjhw: a builder whose depot test ran
 				// longer than idle was told of every five minutes). The spell
@@ -455,7 +455,7 @@ func (d *Dispatcher) idleNudge(ctx context.Context, r Runner, s *store.Session, 
 		// nothing to send reads nothing new.
 		tail, read = d.paneTail(ctx, r, *s)
 	}
-	if _, busy := HarnessBackground(harnessKind(g.Config), tail); read && busy {
+	if _, busy := HarnessBackground(tail); read && busy {
 		// It waits for a shell of its own, and its harness wakes it when
 		// that exits (yardr-kh12: a builder whose depot test ran in the
 		// background answered every nudge, and each answer started a new

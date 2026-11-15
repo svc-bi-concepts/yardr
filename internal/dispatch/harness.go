@@ -189,16 +189,14 @@ func HarnessError(kind, tail string) (reason, line string, ok bool) {
 const backgroundLines = 6
 
 // HarnessBackground finds, in the end of a pane, the line with which a
-// harness of kind says that work its agent started in the background still
-// runs (the `background` of the kind's file). Such an agent waits for its
-// own work and its harness wakes it when that ends: it is idle to herdr and
-// not to the idle limit (limits.go). A kind that names no such line never
-// has one.
-func HarnessBackground(kind, tail string) (line string, ok bool) {
-	h, _ := agents.Lookup(kind)
-	if len(h.Background) == 0 {
-		return "", false
-	}
+// harness says that work its agent started in the background still runs
+// (the `background` of a harness file). Such an agent waits for its own work
+// and its harness wakes it when that ends: it is idle to herdr and not to
+// the idle limit (limits.go). Every known harness's lines are matched, not
+// only the group's kind: the pane is what a harness drew, and provider
+// fallback can run another harness than the group names (yardr-vmrj). A
+// harness that names no such line adds none.
+func HarnessBackground(tail string) (line string, ok bool) {
 	lines := strings.Split(tail, "\n")
 	for i, seen := len(lines)-1, 0; i >= 0 && seen < backgroundLines; i-- {
 		l := strings.TrimSpace(lines[i])
@@ -206,9 +204,11 @@ func HarnessBackground(kind, tail string) (line string, ok bool) {
 			continue
 		}
 		seen++
-		for _, b := range h.Background {
-			if b.Matches(l) {
-				return l, true
+		for _, h := range agents.Harnesses {
+			for _, b := range h.Background {
+				if b.Matches(l) {
+					return l, true
+				}
 			}
 		}
 	}
