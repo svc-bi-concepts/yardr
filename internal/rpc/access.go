@@ -120,12 +120,14 @@ var Access = map[string]Class{
 	"Advance":     Agent,
 	"AdvanceNote": Agent, // but along done-safe's edge on a security path (store.AdvanceNote)
 	"Done":        Agent,
-	"CloseBead":   Agent, // its own bead alone (store.CloseBead)
-	"Reopen":      Admin,
-	"SetHold":     Agent, // but not to lift a hold (store.SetHold)
-	"Release":     Agent,
-	"FoldBeads":   Admin, // the shaper's, the yardmaster's and a person's; no bead's agent folds (store.FoldBeads also asks checkCloseOwn of every member)
-	"Unfold":      Agent, // the members of its own carrier alone (store.Unfold)
+	// The ack of a refused done re-runs the caller's own done alone (store.RetryRefusedDone).
+	"RetryRefusedDone": Agent,
+	"CloseBead":        Agent, // its own bead alone (store.CloseBead)
+	"Reopen":           Admin,
+	"SetHold":          Agent, // but not to lift a hold (store.SetHold)
+	"Release":          Agent,
+	"FoldBeads":        Admin, // the shaper's, the yardmaster's and a person's; no bead's agent folds (store.FoldBeads also asks checkCloseOwn of every member)
+	"Unfold":           Agent, // the members of its own carrier alone (store.Unfold)
 
 	"AddDep":            Agent,
 	"RemoveDep":         Agent, // but not a blocks edge (store.RemoveDep)
