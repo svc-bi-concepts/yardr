@@ -455,7 +455,7 @@ in.
 `move_refused`: a move (`yardr bead done`, `advance`, `close`, `hold`,
 `release`) the yard refused to a session's agent, which may sit idle as if
 it had worked. Its `reason` is `stale`, `not_allowed`, `not_member`,
-`not_found` or `other`, `command` is what the agent ran and `error` what it
+`not_found`, `unread` or `other`, `command` is what the agent ran and `error` what it
 was told ([line.md](line.md#2-new-a-builder-implements-it)). Once
 per bead, session and reason; a person's refused command logs none.
 

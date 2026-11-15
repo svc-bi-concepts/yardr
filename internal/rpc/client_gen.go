@@ -40,6 +40,9 @@ func (c *Client) AdvanceNote(ctx context.Context, id, stage, note string, exp st
 func (c *Client) Done(ctx context.Context, id, outcome, note string, exp store.Expect, actor string) (*store.Bead, error) {
 	return callV[*store.Bead](c, ctx, "Done", id, outcome, note, exp, actor)
 }
+func (c *Client) RetryRefusedDone(ctx context.Context, id, session, actor string) (*store.RetriedMove, error) {
+	return callV[*store.RetriedMove](c, ctx, "RetryRefusedDone", id, session, actor)
+}
 func (c *Client) CloseBead(ctx context.Context, id, reason string, exp store.Expect, actor string) (*store.Bead, error) {
 	return callV[*store.Bead](c, ctx, "CloseBead", id, reason, exp, actor)
 }

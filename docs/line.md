@@ -113,7 +113,9 @@ written for it once, when its agent is idle, but a note it never got to
 tell still stands: the session's own `yardr bead done` is refused while a
 note on the bead names that session and is not acked. The refusal lists
 each unread note, with its number, writer and text, and how to ack it
-(`yardr bead note <id> --ack <seq>`); after the ack the same done passes.
+(`yardr bead note <id> --ack <seq>`). The ack of the last such note re-runs
+the same done, with the same outcome and note, so the bead moves with no
+further command; a re-run refused for another reason is reported by that ack.
 A person moving the bead is not gated, nor is a session of a runner with
 no agent to ack (exec, manual, peer).
 
@@ -159,7 +161,7 @@ move was checked as: the pane's, else the one `YARDR_SESSION` names):
 
 | field | |
 |---|---|
-| `reason` | `stale` (the session no longer owns the bead, or the bead changed since `--revision`), `not_allowed` (the flow has no such move or outcome for the stage, or a part has no train), `not_member` (the stage's group has members and the agent is none), `not_found` (no such bead), `other` (anything else that failed the move: a flow that does not resolve, say) |
+| `reason` | `stale` (the session no longer owns the bead, or the bead changed since `--revision`), `not_allowed` (the flow has no such move or outcome for the stage, or a part has no train), `not_member` (the stage's group has members and the agent is none), `not_found` (no such bead), `unread` (a note the session was told of is not acked yet), `other` (anything else that failed the move: a flow that does not resolve, say) |
 | `command` | the move as `yardr` words, with the bead as the agent named it: `yardr bead done <id> --outcome shipped` |
 | `error` | what the agent was told |
 | `session`, `agent`, `group`, `stage` | whose session it was and the stage it was started for |

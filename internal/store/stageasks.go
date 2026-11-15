@@ -611,7 +611,7 @@ func stagePick(move string) func(f *Flow, b *beadRow, data map[string]any) (stri
 	if to, ok := strings.CutPrefix(move, moveTo); ok {
 		return advancePick(to, nil)
 	}
-	return donePick(move, nil)
+	return donePick(move, nil, 0)
 }
 
 // moveWords says a stage ask's move in a refusal's words.
