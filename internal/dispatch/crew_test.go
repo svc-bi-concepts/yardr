@@ -169,6 +169,17 @@ func (f *crewRunner) InputText(context.Context, map[string]any) (string, bool, e
 	return f.input, !f.noInput, nil
 }
 
+// InputComposer is the fake's input with the reason a runner gives for text
+// in it: a draft, and no reason for an empty input.
+func (f *crewRunner) InputComposer(ctx context.Context, handle map[string]any) (string, bool, string, error) {
+	text, known, err := f.InputText(ctx, handle)
+	reason := ""
+	if text != "" {
+		reason = "draft"
+	}
+	return text, known, reason, err
+}
+
 func (f *crewRunner) PromptTyped(context.Context, map[string]any, string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

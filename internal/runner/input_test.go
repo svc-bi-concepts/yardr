@@ -202,11 +202,49 @@ func TestInputText(t *testing.T) {
 		"no kind, Claude Code's draft":         {"", claudeDraft, "some creative..", true},
 		// Its own mark tells before another's further down.
 		"claude, Codex's mark below its input": {"claude", claudeDraft + "› printed\r\n", "some creative..", true},
+		// Claude Code's chrome under an empty input is no text: its recap,
+		// its background-agents footer, its clear offer.
+		"claude, recap under an empty input":             {"claude", rule + "❯ \r\n※ recap: fixed the parser\r\n" + rule + claudeFooter, "", true},
+		"claude, agents footer under an empty input":     {"claude", rule + "❯ \r\n⏵⏵ bypass permissions on · ← 2 agents\r\n" + rule, "", true},
+		"claude, clear offer under an empty input":       {"claude", rule + "❯ \r\nnew task? /clear to save 114.8k tokens\r\n" + rule + claudeFooter, "", true},
+		"claude, chrome under a typed line is text":      {"claude", rule + "❯ typed\r\n※ recap: fixed\r\n" + rule + claudeFooter, "typed\n※ recap: fixed", true},
+		"claude, typed clear offer is a draft":           {"claude", rule + "❯ new task? /clear to save 114.8k tokens\r\n" + rule + claudeFooter, "new task? /clear to save 114.8k tokens", true},
+		"claude, a line that only begins as chrome":      {"claude", rule + "❯ \r\n← 2 agents, said by hand\r\n" + rule, "← 2 agents, said by hand", true},
+		"claude, one character a line is text still":     {"claude", rule + "❯ \r\nw\r\na\r\nt\r\n" + rule + claudeFooter, "w\na\nt", true},
+		"claude, recap above the input is not the input": {"claude", "※ recap: fixed the parser\r\n" + claudeEmpty, "", true},
 	} {
 		text, known := inputText(c.pane, c.kind)
 		if text != c.text || known != c.known {
 			t.Errorf("%s: inputText = %q, %v; want %q, %v", name, text, known, c.text, c.known)
 		}
+	}
+}
+
+// TestInputComposerNamesItsReason is what nudge_held's composer carries: one
+// of the fixed codes, for a Claude Code input and each shape of it, and no
+// reason for an input that holds no text. A draft that resembles chrome is a
+// draft, and a garbled redraw is held as one (see ComposerGarbled).
+func TestInputComposerNamesItsReason(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		kind, pane, text, reason string
+	}{
+		"empty":              {"claude", claudeEmpty, "", ""},
+		"placeholder":        {"claude", claudePlaceholder, "", ""},
+		"draft":              {"claude", claudeDraft, "some creative..", ComposerDraft},
+		"recap under empty":  {"claude", rule + "❯ \r\n※ recap: fixed\r\n" + rule + claudeFooter, "", ComposerChrome},
+		"agents under empty": {"claude", rule + "❯ \r\n⏵⏵ bypass permissions on · ← 2 agents\r\n" + rule, "", ComposerChrome},
+		"clear offer, typed": {"claude", rule + "❯ new task? /clear to save 114.8k tokens\r\n" + rule, "new task? /clear to save 114.8k tokens", ComposerDraft},
+		"garbled redraw":     {"claude", rule + "❯ \r\nw\r\na\r\nt\r\n" + rule, "w\na\nt", ComposerGarbled},
+		"codex draft":        {"codex", codexDraft, "half a thought", ComposerDraft},
+		"no mark":            {"acme", noMark, "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if text, _, reason := inputComposer(c.pane, c.kind); text != c.text || reason != c.reason {
+				t.Fatalf("inputComposer = %q, %q; want %q, %q", text, reason, c.text, c.reason)
+			}
+		})
 	}
 }
 

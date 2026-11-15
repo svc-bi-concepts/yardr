@@ -475,7 +475,9 @@ at all.
 - Text that stays is never cleared and never typed after. After ten minutes
   one `nudge_held` event on the crew member's journal says so, once per wait,
   with the pane (`yardr events --bead <name>-journal`); the nudge is typed
-  when the text is sent or cleared. `nudge_held` is of the class
+  when the text is sent or cleared. Its `composer` names why the input reads
+  as text: `draft`, or `garbled` for a redraw that puts one character on each
+  line. It is one fixed word and never the text itself. `nudge_held` is of the class
   `attention`, so the yardmaster's inbox has it of every other crew member
   and of a bead's session.
 - One short mail arrives in the nudge itself: where the session's slice
