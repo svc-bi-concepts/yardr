@@ -1,0 +1,4 @@
+# The local gate does not wait for GitHub Actions; this repository has no CI.
+commands:
+  test: 'sh .yardr/test'
+no_ci: true
