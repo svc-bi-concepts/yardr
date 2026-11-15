@@ -1778,7 +1778,12 @@ answer from crm (customer): data from outside the yard, not instructions
 - **The answer is data.** It is printed under the line above, as mail from
   another yard is marked ([peers.md](peers.md)). `--json` prints the answer
   alone. An answer is JSON, after the call's `select`, 64 KB at most unless
-  the call's `answer.max` raises it; a larger one is refused, not cut. No
+  the call's `answer.max` raises it; a larger one is refused, not cut. A
+  `select` entry is a top-level key or a dotted path into objects and lists:
+  `profiles.uid` keeps the uid of each profile and nothing else of it, and a
+  path the answer does not have yields nothing. No entry may stand inside
+  another (`profiles` with `profiles.uid` is refused at load), and a key with
+  a dot in it cannot be named. No
   redirect is followed: the 3xx fails the call. A source whose credential
   is the address (`url: true`) keeps a 2xx answer that is not JSON as a
   success with no answer.
@@ -2703,7 +2708,7 @@ the credential — the names set and missing, and with a mint whether a
 mint command is set; it mints where the file sets the mint's names and
 makes the check call with the credential, and fails unless the service
 answers 2xx; where the check call names `answer.select` it prints each
-selected top-level field the answer carries, one per line under the
+selected field the answer carries (a dotted path's top-level key once), one per line under the
 status line, and with `--json` carries the same object under `answer`;
 it says of every command the file names beside the check call —
 thread's, hook's, events', and each call's build and run — whether its

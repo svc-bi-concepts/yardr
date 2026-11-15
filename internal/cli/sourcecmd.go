@@ -161,8 +161,9 @@ replaced by the value, escaped by where it stands; a file stands alone as
 a value of the body. The body is sent as JSON, or as a multipart upload
 when it names a file parameter, and a value that is exactly {param} is
 sent as the parameter's type; one whose optional parameter was not given
-is left out. The answer is JSON: select keeps the named top-level keys,
-and it is at most 64 KB (answer.max raises that, to 1 MiB at most).
+is left out. The answer is JSON: select keeps the named fields, top-level
+keys or dotted paths into objects and lists (profiles.uid keeps the uid of
+each profile), and it is at most 64 KB (answer.max raises that, to 1 MiB at most).
 
 The file holds no secret. {credential} stands for the value of the variable
 credential.env names, read at each call from the file the operator gives it
@@ -1465,7 +1466,8 @@ declaration names as check: a read call without parameters, sent as a request
 or, where it names run, answered by its command. Prints the status the service
 answered with, and fails on anything but a success. Where the check call names
 answer.select, a successful check also prints each selected top-level field
-the answer carries, one per line under the status line (and carries the same
+the answer carries (a dotted path's top-level key once, with what it keeps),
+one per line under the status line (and carries the same
 object under answer with --json); a field the answer does not carry prints no
 line. A source whose file names no check call is sent nothing: its credential
 is looked at and that is all. Where the file names a mint (credential.mint),
@@ -1616,14 +1618,7 @@ process for it. Nothing of the request is written anywhere.`,
 					if json.Unmarshal(res.Answer, &anyJSON) == nil {
 						out["answer"] = anyJSON
 					}
-					var obj map[string]json.RawMessage
-					if json.Unmarshal(res.Answer, &obj) == nil {
-						for _, name := range call.Answer.Select {
-							if raw, ok := obj[name]; ok {
-								selected = append(selected, name+": "+checkField(raw))
-							}
-						}
-					}
+					selected = checkFields(res.Answer, call.Answer.Select)
 				}
 				said = func(w io.Writer) {
 					fmt.Fprintf(w, "%s: credential: %s\n", d.Name, state)
@@ -1957,17 +1952,6 @@ func checkCommands(d *source.Declaration, home string) (cmds []commandCheck, ok 
 		cmds = append(cmds, cmd)
 	}
 	return cmds, ok
-}
-
-// checkField renders one selected field of a check call's answer for
-// its line: a string as it is, a number or a boolean as its JSON, and an
-// object or a list as compact JSON, as the answer already holds it.
-func checkField(raw json.RawMessage) string {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	return string(raw)
 }
 
 // paramLine is a parameter in a line of yardr source show.

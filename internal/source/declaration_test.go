@@ -540,6 +540,10 @@ func TestParseRefuses(t *testing.T) {
 			"bases.EU", "use lowercase letters"},
 		{"no region base", with("base: https://crm.example.com/api/v2\n", "base: https://crm.example.com/api/v2\nbases: {}\n"),
 			"bases", "no base: bases names the regions' bases beside base, or is left out"},
+		{"a select path inside another", with("answer: { select: [id, name, plan, owner, open_tickets] }", "answer: { select: [id, profiles, profiles.uid] }"),
+			"calls.customer.answer.select", "profiles and profiles.uid overlap"},
+		{"a select path with an empty segment", with("answer: { select: [id, name, plan, owner, open_tickets] }", "answer: { select: [id, profiles..uid] }"),
+			"calls.customer.answer.select", "empty segment"},
 		{"no calls", "name: x\nbase: https://x.example.com\n", "calls", "missing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

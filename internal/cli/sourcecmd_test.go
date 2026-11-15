@@ -641,7 +641,7 @@ calls:
   ping:
     kind: read
     request: { method: GET, path: /me }
-    answer: { select: [name, count, flag, obj, list, missing] }
+    answer: { select: [name, count, flag, obj.a, list, missing] }
 `
 
 // source check shows the check call's selected top-level fields, one per
@@ -650,13 +650,14 @@ calls:
 // selected object is carried under answer. A selected field the answer
 // does not carry prints no line, the check still succeeding on its
 // status, and a check call with no selection prints exactly what it
-// prints without one. The credential is in neither output.
+// prints without one. A dotted entry (obj.a) prints its top-level key
+// once, with only the path it names. The credential is in neither output.
 func TestSourceCheckSelectedAnswer(t *testing.T) {
 	t.Parallel()
 	const token = "tok-9c41-not-to-be-seen"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"name":"ada","count":3,"flag":true,"obj":{"a":1},"list":[1,"x"],"extra":"dropped"}`)
+		io.WriteString(w, `{"name":"ada","count":3,"flag":true,"obj":{"a":1,"b":"dropped"},"list":[1,"x"],"extra":"dropped"}`)
 	}))
 	defer srv.Close()
 	st := storetest.New(t)
