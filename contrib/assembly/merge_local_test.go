@@ -978,11 +978,14 @@ func TestMergeLocalRunsTheBasesCopyOfTheTestScript(t *testing.T) {
 // candidate's replacement script.
 func TestMergeLocalBaseTestScriptUsesWorktreePathForLayout(t *testing.T) {
 	y := newYard(t)
-	main := y.commit(y.repo, "run-tests.sh", "#!/bin/sh\ncd \"$(dirname \"$0\")\" || exit 2\ntest -e candidate-file\n")
-	y.tests("run-tests.sh")
+	if err := os.Mkdir(filepath.Join(y.repo, "ci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := y.commit(y.repo, "ci/run-tests.sh", "#!/bin/sh\ncd \"$(dirname \"$0\")/..\" || exit 2\ntest -e candidate-file\n")
+	y.tests("ci/run-tests.sh")
 	y.git(y.wt, "merge", "-q", "--ff-only", "main")
 	y.commit(y.wt, "candidate-file", "present\n")
-	y.commit(y.wt, "run-tests.sh", "#!/bin/sh\nexit 1\n")
+	y.commit(y.wt, "ci/run-tests.sh", "#!/bin/sh\nexit 1\n")
 
 	y.assembly()
 
