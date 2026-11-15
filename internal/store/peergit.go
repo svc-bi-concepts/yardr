@@ -74,6 +74,9 @@ var (
 	// (PutDepot).
 	gitBranchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 	scpRemote     = regexp.MustCompile(`^(?:[^@/:]+@)?([^/:@]+):(.*)$`)
+	// gitHelper is the prefix git reads as a remote helper's name:
+	// <transport>::<address>. The letter first keeps an IPv6 address out.
+	gitHelper = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*)::`)
 	// formRemote is what RemoteForm gives for a remote on another machine:
 	// a host, then the path.
 	formRemote = regexp.MustCompile(`(?i)^(\[[0-9a-f:.]+\]|[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)/(.+)$`)
@@ -101,10 +104,16 @@ func IsBeadBranch(name string) bool {
 // the host is in lower case: git@host:acme/web.git, ssh://git@host/acme/web
 // and https://host/acme/web are one remote, and host/acme/api is another.
 // A path on this machine is file:///path, with the links in it followed.
-// The form reads as itself, and is "" for what reads as none of them.
+// A remote helper's prefix (av::https://host/path, gitremote-helpers(7)) is
+// no part of the form, so the remote is matched by its address. The form
+// reads as itself, and is "" for what reads as none of them.
 func RemoteForm(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" || len(s) > 2048 || strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return ""
+	}
+	s, ok := helperAddress(s)
+	if !ok {
 		return ""
 	}
 	var host, path string
@@ -148,6 +157,40 @@ func RemoteForm(raw string) string {
 		host = "[" + host + "]"
 	}
 	return host + path
+}
+
+// helperAddress is s with one leading remote-helper prefix dropped, and
+// whether what is left is a network address (scheme://host/path or scp's
+// [user@]host:path) that RemoteForm may read. A peer supplies the string, so
+// nothing else reaches RemoteForm's local branch: ext:: and fd:: run a
+// command or use a descriptor, file:: and a bare path name this machine, and
+// a second :: is no address. A string with no prefix is returned as it is.
+func helperAddress(s string) (string, bool) {
+	m := gitHelper.FindStringSubmatch(s)
+	if m == nil {
+		return s, true
+	}
+	addr := s[len(m[0]):]
+	switch strings.ToLower(m[1]) {
+	case "ext", "fd", "file":
+		return "", false
+	}
+	if addr == "" || strings.Contains(addr, "::") {
+		return "", false
+	}
+	if strings.Contains(addr, "://") {
+		u, err := url.Parse(addr)
+		if err != nil || u.Hostname() == "" || strings.EqualFold(u.Scheme, "file") {
+			return "", false
+		}
+		return addr, true
+	}
+	scp := scpRemote.FindStringSubmatch(addr)
+	// One letter before the colon is a drive, and "file" is a scheme, not a host.
+	if scp == nil || len(scp[1]) < 2 || strings.HasPrefix(addr, ".") || strings.EqualFold(scp[1], "file") {
+		return "", false
+	}
+	return addr, true
 }
 
 // realPath is path with the links in it followed, as far as it is there:

@@ -1873,7 +1873,9 @@ none: a bead it sends is refused`.
 
 - **The bead says which repository it is for.** A bead sent from a
   repository carries the remote its work starts from, and it goes to the
-  intake whose depot's origin is that remote. A yard that builds for two
+  intake whose depot's origin is that remote. A remote through a git remote
+  helper, `helper::url` (`av::https://host/owner/repo.git`), is matched by its
+  url: the helper's name is no part of the remote. A yard that builds for two
   repositories holds an intake for each, and each bead goes to its own:
   ```sh
   yardr peer intake north --depot web --flow incoming
