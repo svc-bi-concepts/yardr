@@ -219,6 +219,39 @@ func hasRemote(ctx context.Context, depot Depot, remote string) (bool, error) {
 	return slices.Contains(strings.Fields(string(out)), remote), nil
 }
 
+// peerRemote is the remote of the depot a branch the group's peer returns is
+// fetched from.
+func (g Group) peerRemote() string {
+	return or(setting(g.Config[GroupRemote]), PeerRemote)
+}
+
+// checkPeerRemote refuses to send bead from depot when the depot's repository
+// lacks the group's remote: the return of the bead is fetched from that
+// remote, so a bead sent from such a depot would come back with its branch
+// nowhere to be taken from. Only the repository's own configuration is read
+// here; nothing is fetched, so the vault gate is not touched.
+func (s *Store) checkPeerRemote(ctx context.Context, depot Depot, group, bead string) error {
+	if depot.IsDir() || depot.Path == "" {
+		return nil
+	}
+	g, err := s.GetGroup(ctx, group)
+	if err != nil {
+		return err
+	}
+	remote := g.peerRemote()
+	rctx, rcancel := context.WithTimeout(ctx, peerFetchTimeout)
+	has, err := hasRemote(rctx, depot, remote)
+	rcancel()
+	if err != nil {
+		return fmt.Errorf("reading the remotes of depot %s: %w", depot.Name, err)
+	}
+	if !has {
+		return fmt.Errorf("%w: depot %s has no remote %s, which the return of bead %s is fetched from: git -C %s remote add %s <url>, then yardr bead unhold %s",
+			ErrNoPeerRemote, depot.Name, remote, bead, depot.Path, remote, bead)
+	}
+	return nil
+}
+
 // remoteForm is the URL the depot has for remote, in RemoteForm. A path that
 // is written from the depot is made whole first.
 func remoteForm(ctx context.Context, depot Depot, remote string) (string, error) {
