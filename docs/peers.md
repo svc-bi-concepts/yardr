@@ -1714,6 +1714,9 @@ laptop routes `build` to `at-north`, north routes it to its builders.
 - `remote=<name>` is the remote of the bead's depot that a branch the yard
   returns is fetched from (`origin` unless set), and `tries` is also how
   often that fetch is tried ([Code that comes back](#code-that-comes-back)).
+  That remote must be in every depot clone the group sends from: a bead of
+  a depot without it is held unsent, with the command that adds it, rather
+  than sent to come back with its branch nowhere to be taken from.
 - No members. `--type`, `--label` and `--bead-priority` of the route
   choose which beads of the stage go there (only those labelled `remote`, say).
 - `yardr flow show <depot>` has the group under GROUP and `yard north` under
