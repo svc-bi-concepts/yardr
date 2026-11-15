@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -299,5 +300,31 @@ func TestBaseOfHelperOrigin(t *testing.T) {
 	}
 	if got.Remote != "github.com/acme/web" || got.BaseCommit != base {
 		t.Fatalf("the git part is %+v, want remote github.com/acme/web at %s", got, base)
+	}
+}
+
+// The message sent to a peer carries the normalized remote, not just the
+// helper-wrapped origin that baseOf reads from the depot.
+func TestPeerBeadSendCarriesHelperRemote(t *testing.T) {
+	t.Parallel()
+	y, _ := newSendingYard(t)
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main", dir)
+	commit(t, dir, "a.txt")
+	git(t, dir, "remote", "add", "origin", "av::https://github.com/acme/web.git")
+	if err := y.api.PutDepot(y.ctx, store.Depot{Name: "web", Path: dir, Kind: store.DepotGit, Base: "main"}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	y.send(t, store.NewBead{Title: "Send the remote"})
+	out := y.outbox(t)
+	if len(out) != 1 {
+		t.Fatalf("the outbox = %+v", out)
+	}
+	var msg store.PeerBeadMessage
+	if err := json.Unmarshal(out[0].Body, &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Git == nil || msg.Git.Remote != "github.com/acme/web" {
+		t.Fatalf("the sent git record = %+v, want remote github.com/acme/web", msg.Git)
 	}
 }
