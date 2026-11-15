@@ -903,14 +903,10 @@ runtest() {
     # The test command starts with no descriptor above 2 that the landing
     # did not give it, or does not start.
     closefds "$RUN"
-    if [ -n "$copy" ]; then
-      # The base copy protects only this entry script. Its $0 is the path the
-      # script would have in the worktree, for layout such as dirname "$0";
-      # anything it sources or calls through that path comes from the branch.
-      exec sh -c "$(cat "$copy")" "$WT/$TEST"
-    else
-      exec sh -c "$TEST"
-    fi
+    # The base copy protects only this entry script. Its $0 is the path the
+    # script would have in the worktree, for layout such as dirname "$0";
+    # anything it sources or calls through that path comes from the branch.
+    if [ -n "$copy" ]; then exec sh -c "$(cat "$copy")" "$WT/$TEST"; else exec sh -c "$TEST"; fi
   ) >"$log" 2>&1 </dev/null &
   pid=$!
   (
