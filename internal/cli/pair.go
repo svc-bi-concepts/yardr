@@ -351,7 +351,7 @@ func (a *app) pairHost(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	// or has ended is not changed by it.
 	defer func() { _ = st.PairClose(context.WithoutCancel(ctx), id, who) }()
 
-	command := fmt.Sprintf("yardr peer pair %s %s", inv.URL, opened.Code)
+	command := pairCallerCommand(inv.URL, opened.Code, enrollment != nil)
 	// The form gives the listener's own address, so only the command can
 	// name one the listener is not on.
 	var loopback string
@@ -372,6 +372,9 @@ func (a *app) pairHost(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	} else {
 		fmt.Fprintf(w, "Pairing is open for %s, until %s, for one yard. Read the code to the other operator, who runs:\n\n  %s\n\n",
 			short(store.TTL), opened.Expires.Local().Format("15:04:05"), command)
+		if enrollment != nil {
+			fmt.Fprintln(w, "The caller independently gets this yard's fresh v2 invite over a trusted channel and uses their existing peer name; both operators compare fresh checks.")
+		}
 		if loopback != "" {
 			fmt.Fprintf(w, "%s\n\n", loopback)
 		}
@@ -808,6 +811,16 @@ func (a *app) pairDone(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 
 func peerEnrollmentPartial(peer, reason string) error {
 	return fmt.Errorf("peer %s enrollment has a partial or unknown outcome: %s. Inspect `yardr peer show %s` on both yards. If both current peer records and independently obtained fresh invites still agree, open a new pairing on the reachable yard with `yardr peer pair --enroll %s --invite <fresh-v2-invite>`, then call it with `yardr peer pair <address> <new-code> --enroll %s --invite <fresh-v2-invite>`; both operators compare fresh checks. Do not remove, re-add, clear a pin, or replay queued work", peer, reason, peer, peer, peer)
+}
+
+func pairCallerCommand(address, code string, enroll bool) string {
+	command := fmt.Sprintf("yardr peer pair %s %s", address, code)
+	if enroll {
+		// The caller must independently obtain this yard's invite and use its
+		// own existing peer name; neither is known to this yard.
+		command += " --enroll <existing-peer-name> --invite '<fresh-v2-invite>'"
+	}
+	return command
 }
 
 func (a *app) pairEnrollmentDone(w io.Writer, p store.Peer, already bool) error {

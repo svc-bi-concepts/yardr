@@ -3221,8 +3221,11 @@ tries run out first, in a gap of days rather than minutes, after which
 it is given up as any failed message is. What the peer held for this yard
 crosses after a gap of any length, since asking burns no tries.
 The short-code pairing can enroll a legacy link in place once both yards
-run a sealed-wire build. Both operators use `yardr peer pair --enroll
-<existing-peer-name>` in place of `peer rm` and `peer add`; the authenticated
+run a sealed-wire build. The reachable yard runs `yardr peer pair --enroll
+<existing-peer-name> --invite <fresh-v2-invite>`; the caller runs
+`yardr peer pair <address> <code> --enroll <existing-peer-name> --invite
+<fresh-v2-invite>`. Each operator independently obtains the other yard's
+invite over a trusted channel and compares a fresh check. The authenticated
 check proves the encryption key belongs beside the same signing identity.
 Only a missing pin can be filled. Existing pins are not rotated, and there
 is no transparent compatibility with older builds.
