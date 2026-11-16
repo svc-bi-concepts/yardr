@@ -171,8 +171,9 @@ unread.
 
 **An agent that waits for its own background work is not idle either.** A
 session whose pane says, when it reaches `idle`, that a command its agent
-started in the background still runs (the `background` lines of its kind's
-harness file; Claude Code's `1 shell still running`) raises no
+started in the background still runs (the `background` lines of any
+harness file, whichever kind the group names; Claude Code's
+`1 shell still running`) raises no
 `session_idle`, and its idle spell starts again from that look, so `grace`
 does not end it. `max_age` applies. See
 [groups.md](groups.md#a-command-runs-in-the-background).

@@ -1064,8 +1064,10 @@ waits for an answer, its harness says something no pattern knows) without
 that starts a long command in the background (the depot's test) and waits
 for it is idle to herdr, and its harness wakes it when the command exits. So
 when a session reaches `idle`, the pane read for `session_idle` is first
-looked at for a line of the kind's `background`
-([what yardr knows of a kind](#what-yardr-knows-of-a-kind)), in its last 6
+looked at for a line of any kind's `background`
+([what yardr knows of a kind](#what-yardr-knows-of-a-kind)), not only the
+group's kind's, since provider fallback can run another harness than the
+group names, in its last 6
 lines that are not empty: what the harness draws around its input, not what
 the agent wrote further up. Claude Code's are the line that ends its turn
 and its status line (seen 13 Oct 2026, 2.1.288):
@@ -1089,7 +1091,8 @@ it does not catch: a background command that never exits, or one the agent
 left running while it asks its human something, keeps `session_idle` away
 for as long as it shows. `max_age` applies as ever, and an error of the
 harness is still told of at the start of the spell. No other kind's file
-names such a line, so their agents are told of at the limit as before.
+names such a line, so an agent whose pane shows neither is told of at the
+limit as before.
 
 #### A usage limit says its window and when it resets
 
