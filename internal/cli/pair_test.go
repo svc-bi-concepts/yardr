@@ -36,6 +36,7 @@ func pairYards(t *testing.T) (north, laptop *cliYard) {
 var pairCommand = regexp.MustCompile(`yardr peer pair (http://\S+) ([0-9A-Z]{4}-[0-9A-Z]{4})`)
 
 func TestPairCallerCommandNamesEnrollmentInputs(t *testing.T) {
+	t.Parallel()
 	got := pairCallerCommand("https://north.example", "ABCD-EFGH", true)
 	want := "yardr peer pair https://north.example ABCD-EFGH --enroll <existing-peer-name> --invite '<fresh-v2-invite>'"
 	if got != want {
