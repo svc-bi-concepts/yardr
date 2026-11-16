@@ -413,6 +413,186 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	}
 }
 
+// TestLegacyEnrollmentRecoversAfterCallerCASFailure proves that a host-side
+// commit is not rolled back when the caller's snapshot changes, and that a
+// new, fully confirmed pairing can finish the still-missing side safely.
+func TestLegacyEnrollmentRecoversAfterCallerCASFailure(t *testing.T) {
+	cheapKeys(t)
+	host, joiner := newPairYard(t, "north"), newPairYard(t, "laptop")
+	ctx := context.Background()
+	for _, y := range []*pairYard{host, joiner} {
+		if err := y.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := joiner.own.SetSetting(ctx, "name", "laptop", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "laptop", URL: joiner.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := joiner.own.AddPeer(ctx, store.Peer{Name: "north", Key: host.pub(), Calls: "north", URL: host.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	joinerInvite := store.Invite{Name: "laptop", Key: joiner.pub(), Enc: joiner.enc, URL: joiner.srv.URL}
+	hostInvite := store.Invite{Name: "north", Key: host.pub(), Enc: host.enc, URL: host.srv.URL}
+	// PairOpen returns the code once; recovery must start a genuinely new
+	// pairing and compare a fresh check.
+	openWithCode := func(invite store.Invite) (*store.PairingCode, *store.Peer) {
+		t.Helper()
+		before, err := host.own.GetPeer(ctx, "laptop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := host.own.PairOpen(ctx, store.PairOffer{Name: host.name, Key: host.pub(), Enc: host.enc, URL: host.srv.URL,
+			Enrollment: &store.PeerEnrollment{PeerName: "laptop", Expected: *before, Invite: invite}}, "jo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p, before
+	}
+	opened, expected := openWithCode(joinerInvite)
+	code, err := store.CleanCode(opened.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called, err := joiner.caller().PairCall(ctx, host.srv.URL, code, "laptop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.PairAnswer(ctx, opened.ID, true, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	out, exchange, err := joiner.caller().PairAnswerWithProof(ctx, called, true)
+	if err != nil || out.State != store.Confirmed {
+		t.Fatalf("confirmed pairing = %+v, %v", out, err)
+	}
+	proof := store.PeerEnrollmentProof{Expected: *mustGetPeer(t, joiner.own, ctx, "north"), Invite: hostInvite, Transcript: called.Transcript,
+		ConfirmRequestURL: exchange.RequestURL, ConfirmRequestTime: exchange.RequestTime, ConfirmRequestBody: exchange.RequestBody, ConfirmRequestSig: exchange.RequestSig,
+		ConfirmResponseStatus: exchange.ResponseStatus, ConfirmResponseBody: exchange.ResponseBody, ConfirmResponseSig: exchange.ResponseSig}
+	if hostPeer, err := host.own.GetPeer(ctx, expected.Name); err != nil || hostPeer.Enc != joiner.enc {
+		t.Fatalf("host did not commit before caller CAS: peer=%+v err=%v", hostPeer, err)
+	}
+	current := proof.Expected
+	if _, err := joiner.own.AllowPeer(ctx, "north", store.PeerAllow{Send: []string{store.PeerPing}, Receive: []string{store.PeerPing}}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := joiner.own.CommitPeerEnrollment(ctx, proof, "jo"); err == nil || !strings.Contains(err.Error(), "changed during enrollment") {
+		t.Fatalf("stale caller snapshot error = %v", err)
+	}
+	if got, err := joiner.own.GetPeer(ctx, "north"); err != nil || got.Enc != "" || got.Key != current.Key {
+		t.Fatalf("caller changed despite failed CAS: peer=%+v err=%v", got, err)
+	}
+	// A fresh invite and fresh pairing recognize the host's equal pin as a
+	// read-only recovery, then enroll the caller from the new proof.
+	opened, _ = openWithCode(joinerInvite)
+	code, err = store.CleanCode(opened.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called, err = joiner.caller().PairCall(ctx, host.srv.URL, code, "laptop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.PairAnswer(ctx, opened.ID, true, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	out, exchange, err = joiner.caller().PairAnswerWithProof(ctx, called, true)
+	if err != nil || out.State != store.Confirmed {
+		t.Fatalf("recovery pairing = %+v, %v", out, err)
+	}
+	proof.Expected = *mustGetPeer(t, joiner.own, ctx, "north")
+	proof.Transcript = called.Transcript
+	proof.ConfirmRequestURL, proof.ConfirmRequestTime = exchange.RequestURL, exchange.RequestTime
+	proof.ConfirmRequestBody, proof.ConfirmRequestSig = exchange.RequestBody, exchange.RequestSig
+	proof.ConfirmResponseStatus, proof.ConfirmResponseBody, proof.ConfirmResponseSig = exchange.ResponseStatus, exchange.ResponseBody, exchange.ResponseSig
+	if _, err := joiner.own.CommitPeerEnrollment(ctx, proof, "jo"); err != nil {
+		t.Fatalf("caller recovery with fresh pairing: %v", err)
+	}
+	if got, err := joiner.own.GetPeer(ctx, "north"); err != nil || got.Enc != host.enc {
+		t.Fatalf("caller did not recover enrollment: peer=%+v err=%v", got, err)
+	}
+}
+
+type loseConfirmResponse struct{ base http.RoundTripper }
+
+func (r loseConfirmResponse) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := r.base.RoundTrip(req)
+	if err != nil || req.URL.Path != pairing.PathConfirm {
+		return resp, err
+	}
+	_ = resp.Body.Close()
+	return nil, errors.New("simulated lost confirmation response")
+}
+
+// TestLegacyEnrollmentLostResponseKeepsAsymmetricState exercises the case
+// where the host commits but the caller cannot learn that from the wire.
+func TestLegacyEnrollmentLostResponseKeepsAsymmetricState(t *testing.T) {
+	cheapKeys(t)
+	host, joiner := newPairYard(t, "north"), newPairYard(t, "laptop")
+	ctx := context.Background()
+	for _, y := range []*pairYard{host, joiner} {
+		if err := y.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := joiner.own.SetSetting(ctx, "name", "laptop", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "laptop", URL: joiner.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := joiner.own.AddPeer(ctx, store.Peer{Name: "north", Key: host.pub(), Calls: "north", URL: host.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	joinerInvite := store.Invite{Name: "laptop", Key: joiner.pub(), Enc: joiner.enc, URL: joiner.srv.URL}
+	before, err := host.own.GetPeer(ctx, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := host.own.PairOpen(ctx, store.PairOffer{Name: host.name, Key: host.pub(), Enc: host.enc, URL: host.srv.URL,
+		Enrollment: &store.PeerEnrollment{PeerName: "laptop", Expected: *before, Invite: joinerInvite}}, "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := store.CleanCode(opened.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called, err := joiner.caller().PairCall(ctx, host.srv.URL, code, "laptop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.PairAnswer(ctx, opened.ID, true, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	caller := joiner.caller()
+	caller.HTTP = &http.Client{Transport: loseConfirmResponse{base: http.DefaultTransport}}
+	if out, _, err := caller.PairAnswerWithProof(ctx, called, true); err == nil || out != nil {
+		t.Fatalf("lost confirmation response = %+v, %v", out, err)
+	}
+	hostAfter, err := host.own.GetPeer(ctx, "laptop")
+	if err != nil || hostAfter.Enc != joiner.enc {
+		t.Fatalf("host commit was lost with response: peer=%+v err=%v", hostAfter, err)
+	}
+	joinerAfter, err := joiner.own.GetPeer(ctx, "north")
+	if err != nil || joinerAfter.Enc != "" {
+		t.Fatalf("caller guessed an unknown outcome: peer=%+v err=%v", joinerAfter, err)
+	}
+	if p := host.pairing(t); p.State != store.PairDone {
+		t.Fatalf("host pairing after lost response = %+v", p)
+	}
+}
+
+func mustGetPeer(t *testing.T, s *store.Store, ctx context.Context, name string) *store.Peer {
+	t.Helper()
+	p, err := s.GetPeer(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 // A wrong code is refused and counted, and the fifth ends the pairing: the
 // right code is then good for nothing. Four wrong ones leave it open.
 func TestPairingWrongCode(t *testing.T) {
