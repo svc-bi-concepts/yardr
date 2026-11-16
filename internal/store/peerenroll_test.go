@@ -5,18 +5,31 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"yardr.dev/yardr/internal/store"
+	"yardr.dev/yardr/internal/storetest"
 	"yardr.dev/yardr/internal/yardkey"
 )
 
 func enrollmentFixture(t *testing.T) (*peerYard, store.PeerEnrollmentProof) {
 	t.Helper()
-	y := newPeerYard(t, "http://north.test")
+	return enrollmentFixtureNamed(t, "south")
+}
+
+func enrollmentFixtureNamed(t *testing.T, name string) (*peerYard, store.PeerEnrollmentProof) {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), ".south")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	api, own := storetest.NewOwnedIn(t, home)
+	y := newPeerYardOn(t, "http://north.test", api, own)
 	if err := y.api.SetSetting(y.ctx, store.OperatorSetting, "jo", "jo"); err != nil {
 		t.Fatal(err)
 	}
@@ -26,8 +39,10 @@ func enrollmentFixture(t *testing.T) (*peerYard, store.PeerEnrollmentProof) {
 	if _, err := y.api.AddPeer(y.ctx, store.Peer{Name: "north", Key: y.key, Calls: "the-north", URL: "http://north.test"}, "jo"); err != nil {
 		t.Fatal(err)
 	}
-	if err := y.api.SetSetting(y.ctx, "name", "south", "jo"); err != nil {
-		t.Fatal(err)
+	if name != "" {
+		if err := y.api.SetSetting(y.ctx, "name", name, "jo"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	expected, err := y.api.GetPeer(y.ctx, "north")
 	if err != nil {
@@ -43,7 +58,12 @@ func enrollmentFixture(t *testing.T) (*peerYard, store.PeerEnrollmentProof) {
 
 func enrollmentProof(t *testing.T, y *peerYard, expected store.Peer, invite store.Invite) store.PeerEnrollmentProof {
 	t.Helper()
-	joiner := store.Party{Nonce: store.NewNonce(), Name: "south", Key: y.ownSign, Enc: y.ownEnc}
+	return enrollmentProofNamed(t, y, expected, invite, "south")
+}
+
+func enrollmentProofNamed(t *testing.T, y *peerYard, expected store.Peer, invite store.Invite, name string) store.PeerEnrollmentProof {
+	t.Helper()
+	joiner := store.Party{Nonce: store.NewNonce(), Name: name, Key: y.ownSign, Enc: y.ownEnc}
 	host := store.Party{Nonce: store.NewNonce(), Name: invite.Name, Key: invite.Key, Enc: invite.Enc, URL: invite.URL}
 	transcript := store.Transcript{Joiner: joiner, Host: host}
 	transcript.Commit = store.Commit(joiner)
@@ -61,6 +81,27 @@ func enrollmentProof(t *testing.T, y *peerYard, expected store.Peer, invite stor
 		ConfirmRequestTime: requestTime, ConfirmRequestBody: requestBody, ConfirmRequestSig: requestSig,
 		ConfirmResponseStatus: http.StatusOK, ConfirmResponseBody: responseBody,
 		ConfirmResponseSig: store.SignResponse(ed25519.PrivateKey(y.north), http.StatusOK, requestSig, responseBody)}
+}
+
+func TestCommitPeerEnrollmentEffectiveName(t *testing.T) {
+	for _, name := range []string{"", "renamed"} {
+		t.Run("setting="+name, func(t *testing.T) {
+			y, proof := enrollmentFixtureNamed(t, name)
+			effective := "south"
+			if name != "" {
+				effective = "renamed"
+			}
+			wrong := enrollmentProofNamed(t, y, proof.Expected, proof.Invite, "impostor")
+			if _, err := y.api.CommitPeerEnrollment(y.ctx, wrong, "jo"); err == nil {
+				t.Fatal("enrollment accepted another yard's name")
+			}
+			proof = enrollmentProofNamed(t, y, proof.Expected, proof.Invite, effective)
+			got, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo")
+			if err != nil || got.Enc != proof.Invite.Enc {
+				t.Fatalf("enrollment with effective name = %+v, %v", got, err)
+			}
+		})
+	}
 }
 
 func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {

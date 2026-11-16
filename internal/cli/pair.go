@@ -402,10 +402,19 @@ func (a *app) pairHosted(w, warn io.Writer, ctx context.Context, st store.API, p
 	for {
 		now, err := st.GetPairing(ctx, p.ID)
 		if ctx.Err() != nil {
+			if p.Enroll != "" {
+				return nil, peerEnrollmentPartial(p.Enroll, "the host stopped waiting for the final pairing outcome")
+			}
 			return nil, errors.New("the pairing was ended" + nothingSaved)
 		} else if errors.Is(err, store.ErrNotFound) {
+			if p.Enroll != "" {
+				return nil, peerEnrollmentPartial(p.Enroll, "the host's in-memory pairing is gone")
+			}
 			return nil, errors.New("the pairing is gone: the yard's server stopped or was replaced while it was open, and a pairing lives in its memory. Open another" + nothingSaved)
 		} else if err != nil {
+			if p.Enroll != "" {
+				return nil, peerEnrollmentPartial(p.Enroll, "the host could not read the final pairing outcome")
+			}
 			return nil, err
 		}
 		if now.Tries > tries {
@@ -429,6 +438,9 @@ func (a *app) pairHosted(w, warn io.Writer, ctx context.Context, st store.API, p
 				}
 			}
 			if now, err = st.PairAnswer(ctx, p.ID, yes, a.who()); err != nil {
+				if p.Enroll != "" {
+					return nil, peerEnrollmentPartial(p.Enroll, "the host did not receive its local confirmation outcome")
+				}
 				return nil, err
 			}
 			if now.State == store.PairCalled && opt.form != nil {
@@ -643,6 +655,9 @@ func (a *app) pairJoin(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	switch {
 	case ctx.Err() != nil:
 		refuse(store.Closed)
+		if existing != nil {
+			return peerEnrollmentPartial(peer.Name, "the caller stopped waiting for the final confirmed pairing answer")
+		}
 		return errors.New("the pairing was ended" + nothingSaved)
 	case wait.Err() != nil:
 		refuse(store.TimedOut)

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"reflect"
+	"strings"
 
 	bolt "go.etcd.io/bbolt"
 )
@@ -92,7 +94,13 @@ func (s *Store) validateEnrollmentBinding(tx *bolt.Tx, expected Peer, invite Inv
 		return fmt.Errorf("peer %s changed during enrollment", expected.Name)
 	}
 	var name string
-	if ok, err := get(tx, bSettings, "name", &name); err != nil || !ok || transcript.Joiner.Name != name || transcript.Joiner.Key != s.yardKey() {
+	if _, err := get(tx, bSettings, "name", &name); err != nil {
+		return err
+	}
+	if name == "" {
+		name = strings.TrimLeft(filepath.Base(s.home), ".")
+	}
+	if transcript.Joiner.Name != name || transcript.Joiner.Key != s.yardKey() {
 		return errors.New("peer enrollment transcript does not match this yard's identity")
 	}
 	priv, err := s.peerEncPriv()
