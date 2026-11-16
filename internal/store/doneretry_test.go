@@ -180,3 +180,69 @@ func TestAckRerunWaitsForEveryAck(t *testing.T) {
 		t.Fatalf("retry with every note acked = %+v, %v; want the bead in review", re, err)
 	}
 }
+
+// A second done refused for the same unread note replaces the first: the
+// ack re-runs the newest one, so a question the agent took back for a done
+// is not what moves the bead.
+func TestAckRerunsTheNewestRefusedDone(t *testing.T) {
+	t.Parallel()
+	s, ctx, b, builder, seqs := refusedDoneYard(t, 1)
+	mine := store.Expect{Session: builder.ID}
+
+	if _, err := s.Done(ctx, b.ID, "question", "stuck", mine, "builder"); err == nil || !strings.Contains(err.Error(), "unread") {
+		t.Fatalf("question with an unread note: %v", err)
+	}
+	if _, err := s.Done(ctx, b.ID, "", "built it", mine, "builder"); err == nil || !strings.Contains(err.Error(), "unread") {
+		t.Fatalf("done with an unread note: %v", err)
+	}
+	if _, err := s.AckNote(ctx, b.ID, seqs[0], builder.ID, "builder"); err != nil {
+		t.Fatal(err)
+	}
+	re, err := s.RetryRefusedDone(ctx, b.ID, builder.ID, "builder")
+	if err != nil || re == nil {
+		t.Fatalf("retry after the ack = %+v, %v; want the done re-run", re, err)
+	}
+	if re.Bead.Stage != "review" {
+		t.Fatalf("re-run left the bead in %s, want review (the newest done's outcome)", re.Bead.Stage)
+	}
+}
+
+// A re-run refused for a reason its session was refused for before the
+// unread note is still logged as the newest refusal, so a later ack does not
+// re-run the done again: the agent was told why, and runs it when ready.
+func TestAckRerunRefusedAgainIsNotRerunTwice(t *testing.T) {
+	t.Parallel()
+	s, ctx, b, builder, _ := refusedDoneYard(t, 0)
+	dir := gitRepo(t, map[string]string{"main.go": "package main\n"})
+	if err := s.SetHandle(ctx, builder.ID, map[string]any{"worktree": dir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scratch.py"), []byte("print(1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mine := store.Expect{Session: builder.ID}
+
+	if _, err := s.Done(ctx, b.ID, "", "built it", mine, "builder"); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("done with a dirty worktree: %v", err)
+	}
+	n, err := s.AddNotedAs(ctx, b.ID, "narrower now", "yardmaster", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Done(ctx, b.ID, "", "built it", mine, "builder"); err == nil || !strings.Contains(err.Error(), "unread") {
+		t.Fatalf("done with an unread note: %v", err)
+	}
+	if _, err := s.AckNote(ctx, b.ID, n.Seq, builder.ID, "builder"); err != nil {
+		t.Fatal(err)
+	}
+	if re, err := s.RetryRefusedDone(ctx, b.ID, builder.ID, "builder"); err == nil || !strings.Contains(err.Error(), "uncommitted changes") || re != nil {
+		t.Fatalf("retry with a dirty worktree = %+v, %v; want the uncommitted changes refusal", re, err)
+	}
+	refused := refusalsOf(t, s, ctx, b.ID)
+	if last := refused[len(refused)-1]; last.Data["reason"] != store.RefusedOther {
+		t.Fatalf("newest refusal = %+v, want the re-run's own", last.Data)
+	}
+	if re, err := s.RetryRefusedDone(ctx, b.ID, builder.ID, "builder"); re != nil || err != nil {
+		t.Fatalf("second retry = %+v, %v; want nothing", re, err)
+	}
+}
