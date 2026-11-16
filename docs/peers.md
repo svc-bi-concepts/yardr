@@ -2803,7 +2803,7 @@ group's `remote` on the way back.
 
 | | |
 |---|---|
-| left out | the scheme (`https`, `ssh`, `git`, the scp spelling `git@host:path`), the login, the port, a trailing `.git`, a trailing `/` |
+| left out | a remote helper's prefix (`av::`, as in `av::https://host/path`), the scheme (`https`, `ssh`, `git`, the scp spelling `git@host:path`), the login, the port, a trailing `.git`, a trailing `/` |
 | compared | the host, in lower case, and the path as it is written: `acme/web` and `Acme/web` are two |
 
 So these are one remote, `github.com/acme/web`, and a laptop that clones by
@@ -2815,12 +2815,15 @@ ssh://git@github.com/acme/web
 ssh://git@github.com:2222/acme/web.git
 https://github.com/acme/web
 https://jo:<token>@github.com/acme/web.git/
+av::https://github.com/acme/web.git
 ```
 
 `github.com/acme/api` is another remote, and so is `gitlab.com/acme/web`.
 A path on the machine (`/srv/git/web.git`, `file:///srv/git/web.git`) is
 `file:///srv/git/web`, with the links in it followed, and is the same
-remote only for two yards on that machine.
+remote only for two yards on that machine. A helper's prefix before
+anything but a network address (`ext::`, `fd::`, `file::`, `av::/srv/git/web.git`)
+names no remote.
 
 What is compared is what `git remote get-url <remote>` prints in each depot,
 so a URL that git's `url.<base>.insteadOf` rewrites is compared as
