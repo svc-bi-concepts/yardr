@@ -72,6 +72,13 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if _, err := y.api.AllowPeer(y.ctx, "north", store.PeerAllow{Send: []string{store.PeerPing, store.PeerMail, store.PeerBead}, Receive: []string{store.PeerPing, store.PeerMail, store.PeerBead}}, "jo"); err != nil {
 		t.Fatal(err)
 	}
+	cursorBody, err := json.Marshal(store.PeerPage{Messages: []store.PeerMessage{{ID: "cursor-7", Seq: 7, Kind: store.PeerPing, Body: json.RawMessage(`{"cursor":7}`)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := y.api.PeerPulled(y.ctx, "north", y.sealedBatch(t, ed25519.PrivateKey(y.north), y.key, cursorBody, nil)); err != nil {
+		t.Fatalf("seed peer cursor: %v", err)
+	}
 	if _, err := y.api.SetPeerIntake(y.ctx, "north", &store.PeerIntake{Depot: "web", Flow: "incoming"}, "jo"); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +92,21 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if got := y.take(t, beadMsg("b1", "web-1", nil)); got[0].Refused != "" {
 		t.Fatalf("seed incoming custody: %+v", got)
 	}
-	incomingBefore := y.arrived(t)
+	incoming := y.arrived(t)
+	// Receiving the same message again leaves its seen/dedup entry effective.
+	duplicate := beadMsg("b1", "web-1", nil)
+	askSeq, err := y.api.AddAsk(y.ctx, incoming.ID, store.Ask{To: "jo", Question: "Keep this open?", Context: []string{"Continuity check"}}, "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	askBefore, err := y.api.UserAsks(y.ctx, "jo", "jo")
+	if err != nil || len(askBefore.Open) == 0 || askBefore.Open[len(askBefore.Open)-1].Ask != askSeq {
+		t.Fatalf("seed open ask: %+v, %v", askBefore, err)
+	}
+	incomingBefore, err := y.api.GetBead(y.ctx, incoming.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	outgoingCreated, outgoingSession := y.send(t, store.NewBead{Title: "in-flight peer work", Priority: 1})
 	outgoingBefore, err := y.api.GetBead(y.ctx, outgoingCreated.ID)
 	if err != nil {
@@ -135,6 +156,13 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(sessionAfter, outgoingSession) {
 		t.Fatalf("outgoing session changed during enrollment: before=%+v after=%+v err=%v", outgoingSession, sessionAfter, err)
 	}
+	if got := y.take(t, duplicate); !got[0].Duplicate {
+		t.Fatalf("dedup state changed during enrollment: %+v", got)
+	}
+	askAfter, err := y.api.UserAsks(y.ctx, "jo", "jo")
+	if err != nil || !reflect.DeepEqual(askAfter, askBefore) {
+		t.Fatalf("open ask changed during enrollment: before=%+v after=%+v err=%v", askBefore, askAfter, err)
+	}
 	events, err := y.own.Events(y.ctx, "", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +171,11 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 		t.Fatalf("enrollment audit event = %+v", got)
 	}
 	// A new, fully proven equal-pin retry is read-only and emits no second event.
-	proof = enrollmentProof(t, y, *got, proof.Invite)
+	current, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof = enrollmentProof(t, y, *current, proof.Invite)
 	eventsBefore := len(events)
 	got, err = y.api.CommitPeerEnrollment(y.ctx, proof, "jo")
 	if err != nil || got.Enc != proof.Invite.Enc {
