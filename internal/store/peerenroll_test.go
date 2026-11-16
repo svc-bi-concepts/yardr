@@ -261,8 +261,10 @@ func TestCommitPeerEnrollmentRefusesInvalidProofAndRotation(t *testing.T) {
 	}{
 		{"bad request signature", func(p *store.PeerEnrollmentProof) { p.ConfirmRequestSig = "bad" }, "confirmation request"},
 		{"stale request", func(p *store.PeerEnrollmentProof) {
-			p.ConfirmRequestTime = time.Now().Add(-10 * time.Minute).Format(time.RFC3339Nano)
-		}, "confirmation request"},
+			stale := time.Now().Add(-10 * time.Minute)
+			p.ConfirmRequestTime, p.ConfirmRequestSig = yardkey.SignRequest(y.ownPriv, y.key, http.MethodPost, "/peers/pair/confirm", stale, p.ConfirmRequestBody)
+			p.ConfirmResponseSig = store.SignResponse(ed25519.PrivateKey(y.north), http.StatusOK, p.ConfirmRequestSig, p.ConfirmResponseBody)
+		}, "timestamp"},
 		{"cross transcript", func(p *store.PeerEnrollmentProof) { p.Transcript.Joiner.Nonce = store.NewNonce() }, "does not name the transcript"},
 		{"bad response signature", func(p *store.PeerEnrollmentProof) { p.ConfirmResponseSig = "bad" }, "not signed"},
 		{"unconfirmed", func(p *store.PeerEnrollmentProof) {

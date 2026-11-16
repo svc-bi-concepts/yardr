@@ -235,8 +235,8 @@ the same and the command says that the ping is owed.
   one network; a listener on every address (`:8790`) needs it. The yard
   that calls keeps the address it called, until `yardr peer set`
 [changes it](#changing-where-a-peer-is-called).
-- **Without a terminal** there is no one to ask, and both commands refuse,
-  naming `--yes`. For a new link, `--yes` confirms the check without asking
+- **Without a terminal**, commands for a new link refuse, naming `--yes`.
+  For a new link, `--yes` confirms the check without asking
   and prints it, for scripts and tests ([below](#what-pairing-rests-on) is what that
   costs). With `--json`, which needs `--yes`, the yard that opens the
   pairing prints two documents: `{"pairing", "code", "address", "expires",
@@ -3289,10 +3289,10 @@ with is 401, as any request that is no peer's.
 
 | event | when | data |
 |---|---|---|
-| `peer_added` | `peer add`, and a pairing that ended with a link | `peer`, `key`, `url`; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was added that way |
+| `peer_added` | `peer add`, and a pairing that created a new link | `peer`, `key`, `url`; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was added that way |
 | `peer_encryption_enrolled` | enrollment filled a missing encryption pin; confirming an equal pin emits no event | `peer`, `key` (the signing identity) |
 | `peer_pair_opened` | `peer pair` opened a pairing on this yard | `pairing`, its id; `expires`; `url`; `role` `host` |
-| `peer_paired` | a pairing ended with a link: with it `peer_added` and `peer_allowed`, in the same write | `peer`, `key`, `url`, `calls`, `role` (`host`: this yard was called; `joiner`: it called), `pairing` on the host |
+| `peer_paired` | a pairing created a new link: with it `peer_added` and `peer_allowed`, in the same write | `peer`, `key`, `url`, `calls`, `role` (`host`: this yard was called; `joiner`: it called), `pairing` on the host |
 | `peer_pair_refused` | a pairing ended without one | `reason`: `wrong_code` (on the host after five, with `wrong_codes`; on the yard that called for each), `declined` (this yard's operator), `peer_declined` (the other's), `timed_out`, `closed` (`--end`, Ctrl+C), `already_peer`, `bad_name`, `own_key`; `role`; `pairing` on the host; `peer`, `calls` and `key` once the other yard is known |
 | `peer_removed` | `peer rm` | `peer`, `messages_dropped`, `identities` (each `source`, `id`, `crew`) that went with it, `crew` that could mail it and no longer can, `beads` it sent that now say their link is removed, `beads_away` of this yard's that were there and ended as `undelivered`, `asks` it asked that were dropped (each person they were for gets one mail from `yard` listing theirs); `approved`, the `bead` and `ask` of the run ask the operator approved, when it was removed that way |
 | `peer_renamed` | `peer rename` | `from`, `to`; `peer`, the new name; `messages` that waited and moved with it; `crew` whose `peers` setting followed, `groups` whose `peer` setting did, `subscriptions`: who holds a subscription whose `peer=` or `speaker=` filter did; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was renamed that way |

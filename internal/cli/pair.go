@@ -62,15 +62,15 @@ other yard's name. With an argument or a flag, without a terminal, with
 The yards then give each other their names and public keys, and each shows
 its operator a check of six digits. Compare it with the other operator's,
 over the way you passed the code: it is the same on both only when nothing
-between the yards put a key of its own in. Each operator confirms it, each
-yard saves the other as a peer, and a ping proves the link. Declined, or not
-answered in time, on either side: nothing is saved on either.
+between the yards put a key of its own in. For a new link, each operator
+confirms it, each yard saves the other as a peer, and a ping proves the link.
+Declined, or not answered in time, before both confirm: no new link is saved.
 
 The code is good for 10 minutes and for one pairing, and 5 wrong codes end
 the pairing. It keeps a yard that was not given it from calling at all. The
 check is what the link rests on: do not confirm one you have not compared.
 
-The link carries ping both ways and nothing else, and shows the other yard
+The new link carries ping both ways and nothing else, and shows the other yard
 nobody of this one. In a terminal the form asks whom this yard lets it write
 to; in a pane or script, pass --expose <crew member or user> (repeatable).
 Mail between crew members is allowed separately with peer allow.
