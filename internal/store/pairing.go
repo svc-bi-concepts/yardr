@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -33,11 +34,20 @@ const (
 // yard says of itself (its invite, with the URL it is reached at), and As,
 // the name to save the other yard under when not the one it gives.
 type PairOffer struct {
-	Name string `json:"name"`
-	Key  string `json:"key"`
-	Enc  string `json:"enc,omitempty"`
-	URL  string `json:"url"`
-	As   string `json:"as,omitempty"`
+	Name       string          `json:"name"`
+	Key        string          `json:"key"`
+	Enc        string          `json:"enc,omitempty"`
+	URL        string          `json:"url"`
+	As         string          `json:"as,omitempty"`
+	Enrollment *PeerEnrollment `json:"enrollment,omitempty"`
+}
+
+// PeerEnrollment binds a legacy peer's current record to the fresh invite
+// and authenticated pairing that may supply its absent encryption pin.
+type PeerEnrollment struct {
+	PeerName string `json:"peer_name"`
+	Expected Peer   `json:"expected"`
+	Invite   Invite `json:"invite"`
 }
 
 // Pairing is the host's pairing as its operator sees it. It never holds the
@@ -50,11 +60,13 @@ type Pairing struct {
 	Tries int `json:"wrong_codes,omitempty"`
 	// Once the other yard has called: the name it is saved under, what it
 	// calls itself, its key, and the check to compare with its operator's.
-	Peer  string `json:"peer,omitempty"`
-	Calls string `json:"calls,omitempty"`
-	Key   string `json:"key,omitempty"`
-	Enc   string `json:"enc,omitempty"`
-	Check string `json:"check,omitempty"`
+	Peer            string `json:"peer,omitempty"`
+	Calls           string `json:"calls,omitempty"`
+	Key             string `json:"key,omitempty"`
+	Enc             string `json:"enc,omitempty"`
+	Enroll          string `json:"enroll,omitempty"`
+	AlreadyEnrolled bool   `json:"already_enrolled,omitempty"`
+	Check           string `json:"check,omitempty"`
 	// Confirmed is this yard's operator's word on the check, PeerConfirmed
 	// the other's.
 	Confirmed     bool `json:"confirmed,omitempty"`
@@ -75,8 +87,10 @@ type PairingCode struct {
 // hostPairing is the one pairing a yard has open, or had last.
 type hostPairing struct {
 	Pairing
-	offer PairOffer
-	actor string
+	offer      PairOffer
+	enroll     *PeerEnrollment
+	transcript Transcript
+	actor      string
 	// code is the code as both sides compute from it, until a yard that
 	// knows it has revealed itself; it is forgotten then, and when the
 	// pairing ends.
@@ -284,6 +298,35 @@ func (s *Store) PairOpen(ctx context.Context, o PairOffer, actor string) (*Pairi
 			return nil, fmt.Errorf("peer %s is added already; to replace it, remove it first (its waiting messages go with it)", o.As)
 		}
 	}
+	var enroll *PeerEnrollment
+	if o.Enrollment != nil {
+		if o.As != "" {
+			return nil, errors.New("pairing: --enroll uses the existing peer name, not --name")
+		}
+		e := o.Enrollment
+		var peer *Peer
+		err := s.read(func(tx *bolt.Tx) error {
+			var err error
+			peer, err = loadPeer(tx, e.PeerName)
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("peer %s: %w", e.PeerName, err)
+		}
+		parsed, err := ParseInvite(e.Invite.String())
+		if err != nil || e.Invite.Enc == "" || parsed != e.Invite {
+			return nil, errors.New("pairing enrollment requires a valid fresh sealed-wire invite")
+		}
+		if !reflect.DeepEqual(*peer, enrollmentPeerRecord(e.Expected)) || peer.Key != e.Invite.Key || peer.Calls != e.Invite.Name || peer.URL != e.Invite.URL {
+			return nil, fmt.Errorf("peer %s identity or authority changed; inspect the peer before starting enrollment", e.PeerName)
+		}
+		if peer.Enc != "" && peer.Enc != e.Invite.Enc {
+			return nil, fmt.Errorf("peer %s already has a different encryption key; key rotation is not supported", e.PeerName)
+		}
+		copy := *e
+		copy.Expected = *peer // retain the snapshot read by the store, not the caller's object
+		enroll = &copy
+	}
 	s.pair.mu.Lock()
 	defer s.pair.mu.Unlock()
 	if p := s.pairing(ctx); p != nil && (p.State == PairOpened || p.State == PairCalled) {
@@ -294,8 +337,12 @@ func (s *Store) PairOpen(ctx context.Context, o PairOffer, actor string) (*Pairi
 	if err != nil {
 		return nil, err
 	}
-	p := &hostPairing{Pairing: Pairing{ID: newPeerMessageID(), State: PairOpened, Expires: now().Add(TTL)},
-		offer: o, actor: actor, code: clean}
+	enrollName := ""
+	if enroll != nil {
+		enrollName = enroll.PeerName
+	}
+	p := &hostPairing{Pairing: Pairing{ID: newPeerMessageID(), State: PairOpened, Expires: now().Add(TTL), Enroll: enrollName},
+		offer: o, enroll: enroll, actor: actor, code: clean}
 	if err := s.LogEvent(ctx, "", "peer_pair_opened", actor, p.event(map[string]any{"expires": p.Expires, "url": o.URL})); err != nil {
 		return nil, err
 	}
@@ -403,6 +450,28 @@ func (s *Store) PairClose(ctx context.Context, id, actor string) error {
 // finishPairing saves the other yard as a peer, both operators having
 // confirmed. A name or key taken since the call ends the pairing instead.
 func (s *Store) finishPairing(ctx context.Context, p *hostPairing) {
+	if p.Enroll != "" {
+		if p.enroll == nil {
+			s.endPairing(ctx, p, AlreadyPeer, "the enrollment record is missing", p.actor)
+			return
+		}
+		var already bool
+		err := s.write(func(w *wtx) error {
+			if err := w.may(ctx, p.actor, ActPair, Object{Kind: KindPeer}); err != nil {
+				return err
+			}
+			var err error
+			_, already, err = w.enrollPeerEncryption(p.enroll.Expected, p.enroll.Invite.Enc, p.actor)
+			return err
+		})
+		if err != nil {
+			s.endPairing(ctx, p, AlreadyPeer, err.Error(), p.actor)
+			return
+		}
+		p.AlreadyEnrolled = already
+		p.Peer, p.State = p.Enroll, PairDone
+		return
+	}
 	peer := Peer{Name: p.Peer, Key: p.Key, Enc: p.Enc, Calls: p.Calls}
 	if _, err := s.pairPeer(peer, p.actor, map[string]any{"role": "host", "pairing": p.ID}); err != nil {
 		s.endPairing(ctx, p, AlreadyPeer, err.Error(), p.actor)
@@ -496,6 +565,7 @@ func (s *Store) PairReveal(ctx context.Context, r Reveal) (session string, err e
 	}
 	p.forget()
 	p.Calls, p.Key, p.Enc, p.Check, p.session = t.Joiner.Name, t.Joiner.Key, t.Joiner.Enc, t.Check(), t.Session()
+	p.transcript = t
 	p.Peer = p.offer.As
 	if p.Peer == "" {
 		p.Peer = p.Calls
@@ -510,7 +580,14 @@ func (s *Store) PairReveal(ctx context.Context, r Reveal) (session string, err e
 	if p.offer.As == "" && checkName("peer", p.Peer) != nil {
 		return refuse(BadName, fmt.Sprintf("the other yard calls itself %q, which is no name for a peer here: open the pairing again with --name", p.Calls))
 	}
-	if err := s.CheckPeer(ctx, Peer{Name: p.Peer, Key: p.Key}); err != nil {
+	if p.Enroll != "" {
+		if p.enroll == nil || p.enroll.Invite.Name != t.Joiner.Name || p.enroll.Invite.Key != t.Joiner.Key ||
+			p.enroll.Invite.Enc != t.Joiner.Enc || p.enroll.Expected.Key != p.Key || p.enroll.Expected.Calls != p.Calls ||
+			p.enroll.Expected.URL != p.enroll.Invite.URL || (p.enroll.Expected.Enc != "" && p.enroll.Expected.Enc != t.Joiner.Enc) {
+			return refuse(AlreadyPeer, fmt.Sprintf("peer %s changed identity or already has an encryption key", p.Enroll))
+		}
+		p.Peer = p.enroll.PeerName
+	} else if err := s.CheckPeer(ctx, Peer{Name: p.Peer, Key: p.Key}); err != nil {
 		return refuse(AlreadyPeer, err.Error())
 	}
 	p.State, p.Expires = PairCalled, now().Add(ConfirmTTL)

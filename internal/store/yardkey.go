@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The yard's key as the store keeps and checks it: the key file, what a
@@ -19,6 +20,9 @@ import (
 // signing of requests, links and frames stay, over these.
 
 var enc = base64.RawURLEncoding
+
+// PairRequestMaxSkew is the accepted age of a signed pairing confirmation.
+const PairRequestMaxSkew = 5 * time.Minute
 
 // ErrSignature is every reason a request or an answer is not the peer's: a
 // key that does not parse, a signature that does not verify, a timestamp
@@ -175,6 +179,37 @@ func VerifyResponse(from string, status int, requestSig, sig string, body []byte
 		return fmt.Errorf("%w: bad signature on the answer", ErrSignature)
 	}
 	return nil
+}
+
+// VerifyPairRequest verifies a signed request from the pairing protocol.
+// Its exact bytes are shared with internal/yardkey so the store can bind a
+// caller-side enrollment write to the confirmation it received.
+func VerifyPairRequest(from, to, method, path, ts, sig string, body []byte, at time.Time) error {
+	pub, err := ParsePublic(from)
+	if err != nil {
+		return fmt.Errorf("%w: bad key", ErrSignature)
+	}
+	raw, err := enc.DecodeString(sig)
+	if err != nil || !ed25519.Verify(pub, pairRequest(to, method, path, ts, body), raw) {
+		return fmt.Errorf("%w: bad signature", ErrSignature)
+	}
+	sec, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: bad timestamp", ErrSignature)
+	}
+	if d := at.Sub(time.Unix(sec, 0)); d > PairRequestMaxSkew || d < -PairRequestMaxSkew {
+		return fmt.Errorf("%w: timestamp %s off", ErrSignature, d.Round(time.Second))
+	}
+	return nil
+}
+
+// PairRequestBytes is the message signed by a yard's pairing confirmation.
+func PairRequestBytes(to, method, path, ts string, body []byte) []byte {
+	return pairRequest(to, method, path, ts, body)
+}
+
+func pairRequest(to, method, path, ts string, body []byte) []byte {
+	return []byte(strings.Join([]string{"yardr-peer-request-1", to, method, path, ts, bodySum(body)}, "\n"))
 }
 
 // clipErr keeps text that is not what was expected short in an error.

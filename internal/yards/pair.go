@@ -22,8 +22,8 @@ import (
 // calling yard revealed, and answered signed with this yard's, which is
 // what shows that each holds the private key it gave.
 
-// maxPair bounds a pairing request and its answer: a few short fields.
-const maxPair = 4 << 10
+// maxPair is the store's native limit for a pairing request and its answer.
+const maxPair = store.PairingMessageBound
 
 // PairStore is the host's side of a pairing, in the process that owns the
 // store. None of it is on the socket.
@@ -269,37 +269,50 @@ func (c *Caller) PairCall(ctx context.Context, url, code, name string, accept fu
 // it is asked again until the state is no longer store.Waiting; this
 // yard saves the other only on store.Confirmed.
 func (c *Caller) PairAnswer(ctx context.Context, p *Called, yes bool) (*store.PairingOutcome, error) {
+	out, _, err := c.PairAnswerWithProof(ctx, p, yes)
+	return out, err
+}
+
+// PairAnswerWithProof also retains the exact signed confirmation exchange
+// so the caller's store can verify that a later pin write names this session.
+func (c *Caller) PairAnswerWithProof(ctx context.Context, p *Called, yes bool) (*store.PairingOutcome, PairConfirmationExchange, error) {
 	body, err := json.Marshal(store.PairingAnswer{Session: p.Session(), Confirm: yes})
 	if err != nil {
-		return nil, err
+		return nil, PairConfirmationExchange{}, err
 	}
 	host := store.Peer{Name: p.Host.Name, Key: p.Host.Key, URL: p.URL}
-	status, answer, _, err := c.doOld(ctx, host, http.MethodPost, pairing.PathConfirm, body)
+	status, answer, _, exchange, err := c.doOld(ctx, host, http.MethodPost, pairing.PathConfirm, body)
 	if errors.Is(err, ErrUnsigned) {
 		// do's words are a peer's; these two are not peers yet.
-		return nil, fmt.Errorf("%s's answer was %w, the one it gave in the pairing: the pairing is gone there, the clocks are more than %s apart, or something between the two answered",
+		return nil, exchange, fmt.Errorf("%s's answer was %w, the one it gave in the pairing: the pairing is gone there, the clocks are more than %s apart, or something between the two answered",
 			host.Name, ErrUnsigned, yardkey.MaxSkew)
 	} else if err != nil {
-		return nil, err
+		return nil, exchange, err
 	}
 	var out store.PairingOutcome
 	if status != http.StatusOK || json.Unmarshal(answer, &out) != nil {
-		return nil, fmt.Errorf("the other yard answered %d", status)
+		return nil, exchange, fmt.Errorf("the other yard answered %d", status)
 	}
-	return &out, nil
+	return &out, exchange, nil
 }
 
 // PairWait asks the yard that was called, every interval, until both
 // operators have confirmed or the pairing has ended, and returns which.
 func (c *Caller) PairWait(ctx context.Context, p *Called, interval time.Duration) (*store.PairingOutcome, error) {
+	out, _, err := c.PairWaitWithProof(ctx, p, interval)
+	return out, err
+}
+
+// PairWaitWithProof returns the exact last exchange that ended the wait.
+func (c *Caller) PairWaitWithProof(ctx context.Context, p *Called, interval time.Duration) (*store.PairingOutcome, PairConfirmationExchange, error) {
 	for {
-		out, err := c.PairAnswer(ctx, p, true)
+		out, exchange, err := c.PairAnswerWithProof(ctx, p, true)
 		if err != nil || out.State != store.Waiting {
-			return out, err
+			return out, exchange, err
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, PairConfirmationExchange{}, ctx.Err()
 		case <-time.After(interval):
 		}
 	}

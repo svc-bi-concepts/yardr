@@ -312,6 +312,7 @@ type API interface {
 	PeerPostAnswered(ctx context.Context, name string, answer PeerAnswer) error
 	CheckPeer(ctx context.Context, p Peer) error
 	PairPeer(ctx context.Context, p Peer, actor string) (*Peer, error)
+	CommitPeerEnrollment(ctx context.Context, proof PeerEnrollmentProof, actor string) (*Peer, error)
 	PairRefused(ctx context.Context, reason, peer, actor string) error
 	PairOpen(ctx context.Context, o PairOffer, actor string) (*PairingCode, error)
 	GetPairing(ctx context.Context, id string) (*Pairing, error)

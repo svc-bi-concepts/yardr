@@ -866,6 +866,9 @@ func (c *Client) CheckPeer(ctx context.Context, p store.Peer) error {
 func (c *Client) PairPeer(ctx context.Context, p store.Peer, actor string) (*store.Peer, error) {
 	return callV[*store.Peer](c, ctx, "PairPeer", p, actor)
 }
+func (c *Client) CommitPeerEnrollment(ctx context.Context, proof store.PeerEnrollmentProof, actor string) (*store.Peer, error) {
+	return callV[*store.Peer](c, ctx, "CommitPeerEnrollment", proof, actor)
+}
 func (c *Client) PairRefused(ctx context.Context, reason, peer, actor string) error {
 	return c.call(ctx, "PairRefused", nil, reason, peer, actor)
 }

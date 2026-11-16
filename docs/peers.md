@@ -313,7 +313,20 @@ yard carried to the other.
    ```
 
    The link works once both have. A name or a key that is a peer already is
-   refused: `yardr peer rm` first, to replace one. A peer whose address
+   refused. Removing and re-adding a peer is destructive: it removes queued
+   mail, grants and custody records. For an existing legacy link without an
+   encryption pin, each operator independently gets the other yard's fresh
+   v2 invite over a trusted channel. The reachable yard runs
+   `yardr peer pair --enroll <existing-name> --invite <fresh-v2-invite>`;
+   the caller runs `yardr peer pair <address> <code> --enroll <existing-name>
+   --invite <fresh-v2-invite>`. Compare a fresh check on both yards. This
+   fills only a missing pin and preserves the existing link settings and
+   queued work. A partial or unknown result is inspected with
+   `yardr peer show <name>` on both sides, then retried only with a new code,
+   fresh invites and fresh checks after confirming the current identities.
+   Do not remove/re-add the peer, clear a pin or replay queued work. This does
+   not rotate an existing encryption key or make old and new builds
+   transparently compatible. A peer whose address
    moved is not replaced: `yardr peer set <name> --url <url>` [changes where
    it is called](#changing-where-a-peer-is-called) and keeps the link. A
    `yardr-peer-1` line from before the sealed wire still adds, with no
@@ -3194,7 +3207,7 @@ and is refused before anything is dialled, with one line, by `yardr peer
 ping`, `yardr peer show` and `yardr doctor` alike:
 
 ```text
-<peer> was linked before sealed bodies: re-link it — yardr peer rm <peer>, then link it again by its address or its new invite
+<peer> was linked before sealed bodies: enroll its missing encryption pin with yardr peer pair --enroll <peer> --invite <fresh-v2-invite> on both yards
 ```
 
 The dispatcher makes no dial and counts no try for such a peer. A request
@@ -3207,10 +3220,12 @@ try, so what waited is delivered once both run the new build — unless its
 tries run out first, in a gap of days rather than minutes, after which
 it is given up as any failed message is. What the peer held for this yard
 crosses after a gap of any length, since asking burns no tries.
-Enrolment is unchanged apart from presenting the yard's encryption key
-beside its signing key; a yard linked by its address is re-linked by
-deriving the address again (`yardr peer rm`, then the same add), which
-mints no code and changes no operator's confirmation.
+The short-code pairing can enroll a legacy link in place once both yards
+run a sealed-wire build. Both operators use `yardr peer pair --enroll
+<existing-peer-name>` in place of `peer rm` and `peer add`; the authenticated
+check proves the encryption key belongs beside the same signing identity.
+Only a missing pin can be filled. Existing pins are not rotated, and there
+is no transparent compatibility with older builds.
 
 Until a header signature holds, a request is read up to a small
 message's bound (256 KiB plus room); then up to the sealed encoding of

@@ -1067,14 +1067,19 @@ not re-asked in §5):
 - Each yard makes its encryption pair on first run of the new build
   (`peer-enc.key` beside `peer.key`). A stored link made before the
   flag day has no encryption key for its peer, and it does not gain one
-  by upgrading: existing links re-link at the flag day. Until they do,
+  by upgrading: they need the in-place enrollment below. Until then,
   the new wire refuses the old record — the caller and the dispatcher
   make no sealed push, pull or ping to a peer whose stored record has
   no encryption key, burn no try and dial nothing, and `yardr peer
-  ping`, `peer show` and `doctor` say so in one line ("<peer> was
-  linked before sealed bodies: re-link it — `yardr peer rm <peer>`,
-  then link it again by its address or its new invite"), which the
-  receiver's log counts beside the unsigned 401s above. No `PeerSays`
+  ping`, `peer show` and `doctor` say so in one line. The operator fills
+  the missing pin in place with the authenticated pairing enrollment
+  (`yardr peer pair --enroll <peer> --invite <fresh-v2-invite>` on each
+  reachable side, and the caller's address/code command); removing and
+  adding instead drops queued mail, grants and custody records. A partial
+  outcome is inspected and retried only with a fresh pairing and checks.
+  There is no transparent compatibility between old and new builds. These
+  behaviors are described in `docs/peers.md`; old-format requests still
+  produce the unsigned 401s above. No `PeerSays`
   field, clear key advertisement or bootstrap exchange teaches the key
   instead (§3.3): a pull could carry the asker's key to the responder,
   but the responder's sealed answer could not be opened by an asker
