@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
@@ -171,6 +172,11 @@ func TestCommitPeerEnrollmentRefusesInvalidProofAndRotation(t *testing.T) {
 			p.ConfirmResponseBody, _ = json.Marshal(store.PairingOutcome{State: store.Ended})
 			p.ConfirmResponseSig = store.SignResponse(ed25519.PrivateKey(y.north), http.StatusOK, p.ConfirmRequestSig, p.ConfirmResponseBody)
 		}, "not confirmed"},
+		{"signing identity mismatch", func(p *store.PeerEnrollmentProof) {
+			p.Invite.Key = store.Public(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize)))
+		}, "identity or authority"},
+		{"malformed encryption identity", func(p *store.PeerEnrollmentProof) { p.Invite.Enc = "not-an-encryption-key" }, "valid current sealed-wire invite"},
+		{"stale invite authority", func(p *store.PeerEnrollmentProof) { p.Invite.URL = "http://stale.example" }, "identity or authority"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bad := proof
