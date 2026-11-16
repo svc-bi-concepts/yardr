@@ -214,6 +214,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				return err
 			}
 			if bead := awayBead(ctx, st, args[0]); bead != "" {
+				if broadcast {
+					return fmt.Errorf("broadcast replies are only supported for source hook deliveries")
+				}
 				if len(replyFiles) > 0 {
 					return fmt.Errorf("--file carries files into a source's thread: %s is a bead at another yard, answered with a note", bead)
 				}

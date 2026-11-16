@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -112,6 +113,34 @@ func TestReplyOnABeadAtAPeer(t *testing.T) {
 	}
 	seq := strconv.FormatUint(page.Events[0].Seq, 10)
 	mustAs(t, st, "jo", "crew", "set", "clerk", "peers=north")
+	for _, target := range []string{id, seq} {
+		for _, identity := range []string{"person", "flag", "environment"} {
+			a := appOn(st)
+			a.env = maps.Clone(a.env)
+			a.actor = "jo"
+			args := []string{target, "Channel answer.", "--broadcast"}
+			switch identity {
+			case "flag":
+				args = append(args, "--crew", "clerk")
+			case "environment":
+				a.actor = "clerk"
+				a.env["YARDR_CREW"] = "clerk"
+			}
+			head, err := st.Head(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := run(t, a.replyCmd(), args...); err == nil || !strings.Contains(err.Error(), "broadcast replies are only supported for source hook deliveries") {
+				t.Fatalf("broadcast to %s as %s: %v", target, identity, err)
+			}
+			if after, err := st.Head(ctx); err != nil || after != head {
+				t.Fatalf("refused broadcast wrote state: head %d -> %d, %v", head, after, err)
+			}
+			if got := notes(); len(got) != 1 {
+				t.Fatalf("refused broadcast queued a note: %+v", got)
+			}
+		}
+	}
 	if got := mustAs(t, st, "clerk", "reply", seq, "Held for what?", "--crew", "clerk"); got != "note for web-0wzb@north queued; the daemon delivers it, and yardr peer show north lists it while it waits\n" {
 		t.Fatalf("reply by a crew member on a delivery:\n%s", got)
 	}
