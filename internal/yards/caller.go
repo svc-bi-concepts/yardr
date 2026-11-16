@@ -183,10 +183,8 @@ func (c *Caller) do(ctx context.Context, p store.Peer, method, path string, body
 	return out, nil
 }
 
-// doOld makes one request signed the way before the sealed wire (yardkey's
-// SignRequest over the body's sha256, answered by store.SignResponse): a
-// pairing's confirm is the one caller left, since a pairing is no peer
-// message and its exchange goes with bead 4, not with this flag day.
+// PairConfirmationExchange retains the signed bytes that bind a caller-side
+// enrollment write to the peer's confirmed pairing outcome.
 type PairConfirmationExchange struct {
 	RequestURL     string
 	RequestTime    string
@@ -197,6 +195,10 @@ type PairConfirmationExchange struct {
 	ResponseSig    string
 }
 
+// doOld makes one request signed the way before the sealed wire (yardkey's
+// SignRequest over the body's sha256, answered by store.SignResponse): a
+// pairing's confirm is the one caller left, since a pairing is no peer
+// message and its exchange goes with bead 4, not with this flag day.
 func (c *Caller) doOld(ctx context.Context, p store.Peer, method, path string, body []byte) (status int, answer []byte, reqSig string, exchange PairConfirmationExchange, err error) {
 	if p.URL == "" {
 		return 0, nil, "", exchange, fmt.Errorf("peer %s has no URL: it is not called, it calls", p.Name)

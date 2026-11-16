@@ -200,8 +200,8 @@ laptop may write to nobody here: yardr peer allow laptop --expose <crew member o
 mail between crew members is not allowed yet: yardr peer allow laptop --send mail --receive mail
 ```
 
-What is saved is what the commands by hand save: north has `laptop` without
-a URL, laptop has `north` with the address it called, and each allows `ping`
+For a new link, what is saved is what the commands by hand save: north has
+`laptop` without a URL, laptop has `north` with the address it called, and each allows `ping`
 both ways. Nothing else is allowed, and pairing prints the two `peer allow`
 commands that allow more: `--expose` for who the peer may write to here
 (with `--expose` given to `peer pair` it prints who that is instead), and
@@ -217,10 +217,13 @@ the same and the command says that the ping is owed.
   A server that stops takes an open pairing with it.
 - **The check.** Say no to one that differs from the other operator's, or
   that you cannot compare. Either operator saying no, or not answering
-  within 5 minutes of the call, leaves nothing saved on either yard.
+  within 5 minutes of the call, creates no new link and leaves an existing
+  link unchanged. For an uncertain enrollment outcome, see
+  [enrollment recovery](#enrolling-a-legacy-link).
 - **Names.** Each yard saves the other under the name it gives itself, or
-  under `--name`. A name or a key that is a peer already is refused in the
-  words `peer add` uses, before either operator is asked: the yard that
+  under `--name` for a new link. For an existing link, see
+  [enrollment](#enrolling-a-legacy-link). For a new link, a name or a key
+  that is a peer already is refused in the words `peer add` uses, before either operator is asked: the yard that
   calls finds out before it has said who it is, so its code is still good
   for the same command with `--name`.
 - **`--url`** is where the other yard reaches the one that opens the
@@ -233,13 +236,50 @@ the same and the command says that the ping is owed.
   that calls keeps the address it called, until `yardr peer set`
 [changes it](#changing-where-a-peer-is-called).
 - **Without a terminal** there is no one to ask, and both commands refuse,
-  naming `--yes`. `--yes` confirms the check without asking and prints it,
-  for scripts and tests ([below](#what-pairing-rests-on) is what that
+  naming `--yes`. For a new link, `--yes` confirms the check without asking
+  and prints it, for scripts and tests ([below](#what-pairing-rests-on) is what that
   costs). With `--json`, which needs `--yes`, the yard that opens the
   pairing prints two documents: `{"pairing", "code", "address", "expires",
   "command"}` at once, and at the end what both print: `{"role", "peer",
   "check", "ping" or "ping_error"}`.
 - **Only the operator** pairs, as only the operator adds a peer.
+
+#### Enrolling a legacy link
+
+Once both yards run a sealed-wire build, each operator independently gets
+the other yard's fresh `yardr-peer-2` invite over a trusted channel
+(`yardr peer invite`, with the unchanged `--url` where the existing link
+has one). Each invite must match the stored signing key, advertised yard
+name and URL. Use each yard's existing local peer name; the names may
+differ between yards.
+
+The reachable yard opens the pairing:
+
+```sh
+yardr peer pair --enroll <existing-peer-name> --invite '<fresh-v2-invite>'
+```
+
+The caller uses the address and code it shows, with its own existing peer
+name and independently obtained invite:
+
+```sh
+yardr peer pair <address> <code> --enroll <existing-peer-name> --invite '<fresh-v2-invite>'
+```
+
+Both operators compare a fresh check. Enrollment requires a terminal and
+refuses `--yes`, `--json`, `--name` and `--expose`. The authenticated check
+binds the encryption key to the existing signing identity. Only the missing pin is
+filled; identities, link settings, permissions, queued messages and accepted
+work stay in place. A fresh pairing can also confirm an equal pin when one
+yard committed first; a different pin is refused. This does not rotate keys
+or make old and new builds transparently compatible.
+
+If a final answer is lost, waiting is cancelled or a server restarts, one
+yard may have committed already. Inspect `yardr peer show <name>` on both
+sides and confirm their current identities before retrying with a new code,
+fresh invites and fresh checks. Do not remove/re-add the peer, clear a pin
+or replay queued work: removing a peer drops queued mail, grants and custody
+records.
 
 #### What pairing rests on
 
@@ -313,25 +353,14 @@ yard carried to the other.
    ```
 
    The link works once both have. A name or a key that is a peer already is
-   refused. Removing and re-adding a peer is destructive: it removes queued
-   mail, grants and custody records. For an existing legacy link without an
-   encryption pin, each operator independently gets the other yard's fresh
-   v2 invite over a trusted channel. The reachable yard runs
-   `yardr peer pair --enroll <existing-name> --invite <fresh-v2-invite>`;
-   the caller runs `yardr peer pair <address> <code> --enroll <existing-name>
-   --invite <fresh-v2-invite>`. Compare a fresh check on both yards. This
-   fills only a missing pin and preserves the existing link settings and
-   queued work. A partial or unknown result is inspected with
-   `yardr peer show <name>` on both sides, then retried only with a new code,
-   fresh invites and fresh checks after confirming the current identities.
-   Do not remove/re-add the peer, clear a pin or replay queued work. This does
-   not rotate an existing encryption key or make old and new builds
-   transparently compatible. A peer whose address
+   refused. For a legacy link without an encryption pin, use
+   [enrollment](#enrolling-a-legacy-link) to keep its queues, grants and
+   custody records. A peer whose address
    moved is not replaced: `yardr peer set <name> --url <url>` [changes where
    it is called](#changing-where-a-peer-is-called) and keeps the link. A
    `yardr-peer-1` line from before the sealed wire still adds, with no
    encryption key pinned: [The requests](#the-requests) says what that
-   link gets until it is re-added from a new invite.
+   link gets until it is enrolled.
 
 3. **Each allows what the link carries.** Nothing is allowed by default:
 
@@ -3213,22 +3242,12 @@ ping`, `yardr peer show` and `yardr doctor` alike:
 The dispatcher makes no dial and counts no try for such a peer. A request
 signed the old way (the `Yardr-Peer-*` triplet over a body's sha256) is
 the same plain unsigned 401 at the receiver: no compat reader is kept.
-Upgrading the two yards in either order, an operator sees this: while
-only one side is upgraded, its traffic is refused (401 on the old side's
-asking, an unopenable answer on the other's), which counts as a failed
-try, so what waited is delivered once both run the new build — unless its
-tries run out first, in a gap of days rather than minutes, after which
-it is given up as any failed message is. What the peer held for this yard
-crosses after a gap of any length, since asking burns no tries.
-The short-code pairing can enroll a legacy link in place once both yards
-run a sealed-wire build. The reachable yard runs `yardr peer pair --enroll
-<existing-peer-name> --invite <fresh-v2-invite>`; the caller runs
-`yardr peer pair <address> <code> --enroll <existing-peer-name> --invite
-<fresh-v2-invite>`. Each operator independently obtains the other yard's
-invite over a trusted channel and compares a fresh check. The authenticated
-check proves the encryption key belongs beside the same signing identity.
-Only a missing pin can be filled. Existing pins are not rotated, and there
-is no transparent compatibility with older builds.
+A legacy link resumes only after both yards upgrade and
+[enroll its missing pin](#enrolling-a-legacy-link). For a link that already
+pins an encryption key, a peer still on the old build causes failed pushes,
+which burn tries. What waits is delivered once both run the new build,
+unless its tries run out first; failed messages are not replayed. Messages
+that only wait to be pulled burn no tries and can cross after any gap.
 
 Until a header signature holds, a request is read up to a small
 message's bound (256 KiB plus room); then up to the sealed encoding of
@@ -3270,6 +3289,7 @@ with is 401, as any request that is no peer's.
 | event | when | data |
 |---|---|---|
 | `peer_added` | `peer add`, and a pairing that ended with a link | `peer`, `key`, `url`; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was added that way |
+| `peer_encryption_enrolled` | enrollment filled a missing encryption pin; confirming an equal pin emits no event | `peer`, `key` (the signing identity) |
 | `peer_pair_opened` | `peer pair` opened a pairing on this yard | `pairing`, its id; `expires`; `url`; `role` `host` |
 | `peer_paired` | a pairing ended with a link: with it `peer_added` and `peer_allowed`, in the same write | `peer`, `key`, `url`, `calls`, `role` (`host`: this yard was called; `joiner`: it called), `pairing` on the host |
 | `peer_pair_refused` | a pairing ended without one | `reason`: `wrong_code` (on the host after five, with `wrong_codes`; on the yard that called for each), `declined` (this yard's operator), `peer_declined` (the other's), `timed_out`, `closed` (`--end`, Ctrl+C), `already_peer`, `bad_name`, `own_key`; `role`; `pairing` on the host; `peer`, `calls` and `key` once the other yard is known |

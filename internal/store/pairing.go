@@ -33,6 +33,7 @@ const (
 // PairOffer is what the host's operator opens a pairing with: what this
 // yard says of itself (its invite, with the URL it is reached at), and As,
 // the name to save the other yard under when not the one it gives.
+// Enrollment instead binds the pairing to an existing peer record.
 type PairOffer struct {
 	Name       string          `json:"name"`
 	Key        string          `json:"key"`
@@ -447,8 +448,9 @@ func (s *Store) PairClose(ctx context.Context, id, actor string) error {
 	return nil
 }
 
-// finishPairing saves the other yard as a peer, both operators having
-// confirmed. A name or key taken since the call ends the pairing instead.
+// finishPairing saves a new peer or enrolls an existing peer's missing
+// encryption pin after both operators confirm. A conflicting record change
+// since the call ends the pairing instead.
 func (s *Store) finishPairing(ctx context.Context, p *hostPairing) {
 	if p.Enroll != "" {
 		if p.enroll == nil {
