@@ -47,6 +47,12 @@ type Replier interface {
 	Thread(ctx context.Context, env Envelope, cred string) ([]Message, error)
 }
 
+// BroadcastReplier is a source adapter that can opt a reply into channel broadcast.
+type BroadcastReplier interface {
+	CheckBroadcast(env Envelope) error
+	ReplyBroadcast(ctx context.Context, env Envelope, to, body, key, cred string) (Message, error)
+}
+
 // ReplierFor is the source's Replier, if it can be answered in: the one
 // built from d, the yard's declared source of that name, when it has
 // the keys a reply takes, else the builtin one of that name. No name is
@@ -267,7 +273,23 @@ func declaredThread(d Declared, env Envelope) (string, error) {
 // does not carry it; the key is the comment's own id where the source
 // takes one, so a retry finds it with Posted.
 func (d Declared) Reply(ctx context.Context, env Envelope, to, body, key, cred string) (Message, error) {
-	return d.reply(ctx, env, to, body, key, nil, cred)
+	return d.reply(ctx, env, to, body, key, nil, false, cred)
+}
+
+// ReplyBroadcast posts a reply with the source's explicit channel broadcast option.
+func (d Declared) ReplyBroadcast(ctx context.Context, env Envelope, to, body, key, cred string) (Message, error) {
+	if err := d.CheckBroadcast(env); err != nil {
+		return Message{}, err
+	}
+	return d.reply(ctx, env, to, body, key, nil, true, cred)
+}
+
+// CheckBroadcast refuses unsupported sources and Slack direct-message threads before any write.
+func (d Declared) CheckBroadcast(env Envelope) error {
+	if d.D.Thread == nil || !d.D.Thread.Broadcast {
+		return fmt.Errorf("source %s does not support broadcast replies", d.D.Name)
+	}
+	return nil
 }
 
 // ReplyFiles posts body with the local files paths in the thread of the
@@ -276,10 +298,10 @@ func (d Declared) Reply(ctx context.Context, env Envelope, to, body, key, cred s
 // says its replies take files is asked (FilerFor): one that ignores
 // unknown keys would send the words and drop the files.
 func (d Declared) ReplyFiles(ctx context.Context, env Envelope, to, body, key string, files []string, cred string) (Message, error) {
-	return d.reply(ctx, env, to, body, key, files, cred)
+	return d.reply(ctx, env, to, body, key, files, false, cred)
 }
 
-func (d Declared) reply(ctx context.Context, env Envelope, to, body, key string, files []string, cred string) (Message, error) {
+func (d Declared) reply(ctx context.Context, env Envelope, to, body, key string, files []string, broadcast bool, cred string) (Message, error) {
 	thread, err := declaredThread(d, env)
 	if err != nil {
 		return Message{}, err
@@ -291,6 +313,9 @@ func (d Declared) reply(ctx context.Context, env Envelope, to, body, key string,
 	in := map[string]any{"thread": thread, "parent": parent, "body": body, "key": key}
 	if len(files) > 0 {
 		in["files"] = files
+	}
+	if broadcast {
+		in["broadcast"] = true
 	}
 	var m Message
 	err = d.runThread(ctx, "thread.reply", d.D.Thread.Reply, in, cred, func(out []byte) error {

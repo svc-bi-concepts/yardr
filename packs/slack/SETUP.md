@@ -163,6 +163,9 @@ yard if it differs.
    belongs to the channel it was invited into, and its token holds
    `channels:history` — and `yardr hook show 5210` holds the delivery itself
    meanwhile.
+   For a channel-thread answer that should also appear in the channel, use
+   `yardr reply 5210 --broadcast -` with the answer on stdin. The flag is
+   refused for direct and group direct messages.
    The companion check in the same walk: a one-to-one direct message
    mentioning nobody still lands whole by the `room=dm` subscription.
    A group message mentioning nobody lands nowhere — Slack sends no
