@@ -215,15 +215,16 @@ func TestIdleSessionWithBackgroundWorkIsNotIdle(t *testing.T) {
 	}
 }
 
-// What a pane says of background work counts for the kind that declares
-// it, in what its harness draws around its input: a kind with no such lines
-// is told of at the limit whatever its pane shows, and so is an agent
+// What a pane says of background work counts for any harness that declares
+// it, in what its harness draws around its input (yardr-vmrj: a codex group
+// whose pane was drawn by Claude Code is not told of its shell). No pane
+// with such a line and no shell is told of at the limit, and so is an agent
 // further up whose pane the words stand, in what it wrote.
 func TestBackgroundWorkIsItsKindsToDeclare(t *testing.T) {
 	t.Parallel()
 	for name, c := range map[string]struct{ kind, pane string }{
-		"a kind that declares none": {"codex", shellRuns},
 		"no background work":        {"claude", shellGone},
+		"no background work, codex": {"codex", shellGone},
 		"the agent's own words": {"claude", "⏺ Earlier: done 12:44 AM · 1 shell still running\n" +
 			"⏺ one\n⏺ two\n⏺ three\n⏺ four\n⏺ five\n⏺ six\n❯ "},
 	} {
@@ -240,9 +241,68 @@ func TestBackgroundWorkIsItsKindsToDeclare(t *testing.T) {
 			}
 		})
 	}
-	if line, ok := dispatch.HarnessBackground("claude", shellRuns); !ok || line != "⏵⏵ auto mode on · 1 shell · ← 1 agent · ↓ to manage" {
+	if line, ok := dispatch.HarnessBackground(shellRuns); !ok || line != "⏵⏵ auto mode on · 1 shell · ← 1 agent · ↓ to manage" {
 		t.Fatalf("background work in the pane = %q, %v; want the status line", line, ok)
 	}
+}
+
+// A group of kind codex whose pane ends in Claude Code's bypass-permissions
+// line (provider fallback ran Claude Code in its pane: yardr-vmrj) is told
+// of neither a nudge nor session_idle while the line shows a shell, and
+// both come once it shows none.
+func TestCodexGroupWithClaudesBackgroundShellIsNotIdle(t *testing.T) {
+	t.Parallel()
+	const bypassShell = "⏺ Running the depot gate in the background.\n" +
+		"────────────────────────────────────────\n❯ \n────────────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on · 1 shell · ← 2 agents · ↓ to manage"
+	const bypassIdle = "⏺ Waiting on the reviewer.\n" +
+		"────────────────────────────────────────\n❯ \n────────────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on · ← 2 agents · ↓ to manage"
+
+	t.Run("nudge", func(t *testing.T) {
+		t.Parallel()
+		s, r, d, b := harnessSetup(t, "codex", map[string]any{"idle": "1h", "stall": "off"})
+		n := &tallyRunner{agentRunner: r}
+		d.Runners["fake"] = n
+		ctx := context.Background()
+		sess := liveSession(t, s, b.ID)
+		must(t, s.SetHandle(ctx, sess, map[string]any{"session": sess, "agent": "yard-x-new"}))
+		nudged := func() int { t.Helper(); return len(eventKinds(t, s, b.ID, "session_idle_nudge")) }
+
+		r.show("idle", bypassShell)
+		must(t, d.Reconcile(ctx))
+		if got := n.told(); len(got) != 0 || nudged() != 0 {
+			t.Fatalf("nudges = %q, session_idle_nudge events = %d; want none while the shell runs", got, nudged())
+		}
+		r.show("idle", bypassIdle)
+		must(t, d.Reconcile(ctx))
+		if got := n.told(); len(got) != 1 || nudged() != 1 {
+			t.Fatalf("nudges = %q, session_idle_nudge events = %d; want one once the shell is gone", got, nudged())
+		}
+	})
+
+	t.Run("session_idle", func(t *testing.T) {
+		t.Parallel()
+		s, r, d, b := harnessSetup(t, "codex", map[string]any{"idle": "30ms", "stall": "off"})
+		ctx := context.Background()
+		told := func() int { t.Helper(); return len(eventKinds(t, s, b.ID, "session_idle")) }
+		r.show("idle", bypassShell)
+		must(t, d.Reconcile(ctx))
+		for range 3 {
+			time.Sleep(40 * time.Millisecond)
+			must(t, d.Reconcile(ctx))
+		}
+		if n := told(); n != 0 {
+			t.Fatalf("session_idle while its shell runs: %d", n)
+		}
+		r.show("idle", bypassIdle)
+		must(t, d.Reconcile(ctx))
+		time.Sleep(40 * time.Millisecond)
+		must(t, d.Reconcile(ctx))
+		if n := told(); n != 1 {
+			t.Fatalf("session_idle events = %d, want 1 once the pane shows no shell", n)
+		}
+	})
 }
 
 // tallyRunner is an agentRunner whose agents also take nudges, as herdr's
