@@ -216,10 +216,10 @@ the same and the command says that the ping is owed.
   called, and nowhere else: not in the store, not in an event, not in a log.
   A server that stops takes an open pairing with it.
 - **The check.** Say no to one that differs from the other operator's, or
-  that you cannot compare. Either operator saying no, or not answering
-  within 5 minutes of the call, creates no new link and leaves an existing
-  link unchanged. For an uncertain enrollment outcome, see
-  [enrollment recovery](#enrolling-a-legacy-link).
+  that you cannot compare. Until both have confirmed, either operator
+  saying no, or not answering within 5 minutes of the call, creates no new
+  link and leaves an existing link unchanged. For an uncertain enrollment
+  outcome, see [enrollment recovery](#enrolling-a-legacy-link).
 - **Names.** Each yard saves the other under the name it gives itself, or
   under `--name` for a new link. For an existing link, see
   [enrollment](#enrolling-a-legacy-link). For a new link, a name or a key
@@ -253,7 +253,8 @@ has one). Each invite must match the stored signing key, advertised yard
 name and URL. Use each yard's existing local peer name; the names may
 differ between yards.
 
-The reachable yard opens the pairing:
+The yard at the caller's existing stored URL opens the pairing, using
+`--url` if needed to advertise that same address:
 
 ```sh
 yardr peer pair --enroll <existing-peer-name> --invite '<fresh-v2-invite>'

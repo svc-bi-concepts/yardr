@@ -89,7 +89,10 @@ queued work stay in place. A different identity or an existing different
 pin is refused. Removing and adding a peer loses its queues, grants and
 custody records.
 
-Without a terminal there is no one to ask: --yes confirms the check without
+Enrollment requires a terminal and refuses --yes, --json, --name and --expose.
+See docs/peers.md, "Enrolling a legacy link", for the procedure and recovery.
+
+For a new link without a terminal, --yes confirms the check without
 asking, and prints it. That is for scripts and tests, on a network you trust:
 a check nobody compared has proved nothing. With --json the opening yard
 prints two documents, the code at once and the result at the end.`,

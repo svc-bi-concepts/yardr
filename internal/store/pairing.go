@@ -375,8 +375,9 @@ func (s *Store) GetPairing(ctx context.Context, id string) (*Pairing, error) {
 }
 
 // PairAnswer is the host's operator's word on the check: yes confirms it,
-// and the peer is saved once the other yard's operator has confirmed too;
-// no ends the pairing with nothing saved on either side.
+// and the peer is saved or enrolled once the other operator has confirmed too.
+// Before both confirm, no ends the pairing without changing either link;
+// an answer after completion does not undo the committed write.
 func (s *Store) PairAnswer(ctx context.Context, id string, yes bool, actor string) (*Pairing, error) {
 	if err := s.mayRead(ctx, actor, ActPair, Object{Kind: KindPeer}); err != nil {
 		return nil, err
@@ -611,9 +612,10 @@ func (s *Store) PairCaller(ctx context.Context, session string) (key string, err
 
 // PairConfirmed takes the calling yard's word on the check, which the
 // receiver has found signed with its key, and says how the pairing stands.
-// Its yes, once this yard's operator has said yes too, saves it as a peer;
-// its no ends the pairing. It asks again, with the same word, until the
-// answer is no longer Waiting.
+// Its yes, once this yard's operator has said yes too, saves or enrolls the
+// peer. Before both confirm, its no ends the pairing; a no after completion
+// does not undo the committed write. It asks again, with the same word,
+// until the answer is no longer Waiting.
 func (s *Store) PairConfirmed(ctx context.Context, session string, yes bool) (*PairingOutcome, error) {
 	s.pair.mu.Lock()
 	defer s.pair.mu.Unlock()
