@@ -567,7 +567,9 @@ func (s *Store) PairReveal(ctx context.Context, r Reveal) (session string, err e
 	p.Calls, p.Key, p.Enc, p.Check, p.session = t.Joiner.Name, t.Joiner.Key, t.Joiner.Enc, t.Check(), t.Session()
 	p.transcript = t
 	p.Peer = p.offer.As
-	if p.Peer == "" {
+	if p.Enroll != "" {
+		p.Peer = p.Enroll
+	} else if p.Peer == "" {
 		p.Peer = p.Calls
 	}
 	refuse := func(reason, detail string) (string, error) {
@@ -586,7 +588,6 @@ func (s *Store) PairReveal(ctx context.Context, r Reveal) (session string, err e
 			p.enroll.Expected.URL != p.enroll.Invite.URL || (p.enroll.Expected.Enc != "" && p.enroll.Expected.Enc != t.Joiner.Enc) {
 			return refuse(AlreadyPeer, fmt.Sprintf("peer %s changed identity or already has an encryption key", p.Enroll))
 		}
-		p.Peer = p.enroll.PeerName
 	} else if err := s.CheckPeer(ctx, Peer{Name: p.Peer, Key: p.Key}); err != nil {
 		return refuse(AlreadyPeer, err.Error())
 	}

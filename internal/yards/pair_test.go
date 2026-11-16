@@ -316,7 +316,7 @@ func TestPairing(t *testing.T) {
 // through the real pairing listener before either existing peer is updated.
 func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.T) {
 	cheapKeys(t)
-	host, joiner := newPairYard(t, "north"), newPairYard(t, "laptop")
+	host, joiner := newPairYard(t, "North/Work"), newPairYard(t, "Laptop/Work")
 	ctx := context.Background()
 	if err := host.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
 		t.Fatal(err)
@@ -324,13 +324,13 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	if err := joiner.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
 		t.Fatal(err)
 	}
-	if err := joiner.own.SetSetting(ctx, "name", "laptop", "jo"); err != nil {
+	if err := joiner.own.SetSetting(ctx, "name", "Laptop/Work", "jo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "laptop", URL: joiner.srv.URL}, "jo"); err != nil {
+	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "Laptop/Work", URL: joiner.srv.URL}, "jo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := joiner.own.AddPeer(ctx, store.Peer{Name: "north", Key: host.pub(), Calls: "north", URL: host.srv.URL}, "jo"); err != nil {
+	if _, err := joiner.own.AddPeer(ctx, store.Peer{Name: "north", Key: host.pub(), Calls: "North/Work", URL: host.srv.URL}, "jo"); err != nil {
 		t.Fatal(err)
 	}
 	for _, y := range []*pairYard{host, joiner} {
@@ -350,7 +350,7 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	joinerInvite := store.Invite{Name: "laptop", Key: joiner.pub(), Enc: joiner.enc, URL: joiner.srv.URL}
+	joinerInvite := store.Invite{Name: "Laptop/Work", Key: joiner.pub(), Enc: joiner.enc, URL: joiner.srv.URL}
 	hostOffer := store.PeerEnrollment{PeerName: "laptop", Expected: *hostBefore, Invite: joinerInvite}
 	opened, err := host.own.PairOpen(ctx, store.PairOffer{Name: host.name, Key: host.pub(), Enc: host.enc, URL: host.srv.URL, Enrollment: &hostOffer}, "jo")
 	if err != nil {
@@ -360,8 +360,8 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	called, err := joiner.caller().PairCall(ctx, host.srv.URL, code, "laptop", func(p store.Party) error {
-		if p.Key != host.pub() || p.Enc != host.enc || p.URL != host.srv.URL {
+	called, err := joiner.caller().PairCall(ctx, host.srv.URL, code, "Laptop/Work", func(p store.Party) error {
+		if p.Name != "North/Work" || p.Key != host.pub() || p.Enc != host.enc || p.URL != host.srv.URL {
 			t.Fatalf("host party = %+v", p)
 		}
 		return nil
@@ -380,10 +380,10 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hostAfter.Enc != joiner.enc || hostAfter.Key != hostBefore.Key || hostAfter.Name != hostBefore.Name {
+	if hostAfter.Enc != joiner.enc || hostAfter.Key != hostBefore.Key || hostAfter.Name != "laptop" || hostAfter.Calls != "Laptop/Work" {
 		t.Fatalf("host enrollment changed identity: before=%+v after=%+v", hostBefore, hostAfter)
 	}
-	proof := store.PeerEnrollmentProof{Expected: *joinerBefore, Invite: store.Invite{Name: "north", Key: host.pub(), Enc: host.enc, URL: host.srv.URL}, Transcript: called.Transcript,
+	proof := store.PeerEnrollmentProof{Expected: *joinerBefore, Invite: store.Invite{Name: "North/Work", Key: host.pub(), Enc: host.enc, URL: host.srv.URL}, Transcript: called.Transcript,
 		ConfirmRequestURL: exchange.RequestURL, ConfirmRequestTime: exchange.RequestTime, ConfirmRequestBody: exchange.RequestBody, ConfirmRequestSig: exchange.RequestSig,
 		ConfirmResponseStatus: exchange.ResponseStatus, ConfirmResponseBody: exchange.ResponseBody, ConfirmResponseSig: exchange.ResponseSig}
 	if _, err := joiner.own.CommitPeerEnrollment(ctx, proof, "jo"); err != nil {
@@ -393,7 +393,7 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if joinerAfter.Enc != host.enc || joinerAfter.Key != joinerBefore.Key || joinerAfter.Name != joinerBefore.Name {
+	if joinerAfter.Enc != host.enc || joinerAfter.Key != joinerBefore.Key || joinerAfter.Name != "north" || joinerAfter.Calls != "North/Work" {
 		t.Fatalf("caller enrollment changed identity: before=%+v after=%+v", joinerBefore, joinerAfter)
 	}
 	// The newly pinned keys now carry a real signed and sealed wire request.
