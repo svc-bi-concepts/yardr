@@ -85,7 +85,15 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 		t.Fatalf("seed incoming custody: %+v", got)
 	}
 	incomingBefore := y.arrived(t)
-	outgoingBefore, outgoingSession := y.send(t, store.NewBead{Title: "in-flight peer work", Priority: 1})
+	outgoingCreated, outgoingSession := y.send(t, store.NewBead{Title: "in-flight peer work", Priority: 1})
+	outgoingBefore, err := y.api.GetBead(y.ctx, outgoingCreated.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outgoingSession, err = y.api.GetSession(y.ctx, outgoingSession.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	queued, err := y.api.PeerSend(y.ctx, "north", store.PeerPing, json.RawMessage(`{"alive":true}`), "jo")
 	if err != nil {
 		t.Fatal(err)
