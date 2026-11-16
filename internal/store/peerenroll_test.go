@@ -170,12 +170,36 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if got := events[len(events)-1]; got.Kind != "peer_encryption_enrolled" || got.Data["peer"] != "north" {
 		t.Fatalf("enrollment audit event = %+v", got)
 	}
-	// A new, fully proven equal-pin retry is read-only and emits no second event.
+	// A concurrent local grant change makes the confirmed local compare-and-set
+	// fail without undoing the remote pin or disturbing queued custody.
 	current, err := y.api.GetPeer(y.ctx, "north")
 	if err != nil {
 		t.Fatal(err)
 	}
+	staleProof := enrollmentProof(t, y, *current, proof.Invite)
+	if _, err := y.api.AllowPeer(y.ctx, "north", store.PeerAllow{Send: append(append([]string(nil), current.Send...), store.PeerFile), Receive: current.Receive}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, staleProof, "jo"); err == nil || !strings.Contains(err.Error(), "changed during enrollment") {
+		t.Fatalf("concurrent compare-and-set error = %v", err)
+	}
+	if out, err := y.api.PeerOutbox(y.ctx, "north", 0); err != nil || !reflect.DeepEqual(out, outboxBefore) {
+		t.Fatalf("outbox changed after partial completion: before=%+v after=%+v err=%v", outboxBefore, out, err)
+	}
+	askAfterPartial, err := y.api.UserAsks(y.ctx, "jo", "jo")
+	if err != nil || !reflect.DeepEqual(askAfterPartial, askBefore) {
+		t.Fatalf("ask changed after partial completion: before=%+v after=%+v err=%v", askBefore, askAfterPartial, err)
+	}
+	// A fresh, fully proven equal-pin retry is read-only and emits no event.
+	current, err = y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
 	proof = enrollmentProof(t, y, *current, proof.Invite)
+	events, err = y.own.Events(y.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	eventsBefore := len(events)
 	got, err = y.api.CommitPeerEnrollment(y.ctx, proof, "jo")
 	if err != nil || got.Enc != proof.Invite.Enc {
