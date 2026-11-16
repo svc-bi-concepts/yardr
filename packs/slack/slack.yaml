@@ -113,10 +113,7 @@ hear:
 
 thread:
   reply:  [slack/thread, reply]      # in {thread, parent, body, key, broadcast?} out {id}
-  # Broadcast uses conversations.info and remains unavailable until the bot
-  # token has channels:read (public) or groups:read (private). The shipped
-  # manifest omits these; their operator-managed rollout is a prerequisite
-  # deferred from this pack's setup. Missing access refuses before posting.
+  # Broadcast's extra permissions and reauthorization are in SETUP.md.
   broadcast: true
   posted: [slack/thread, posted]     # in  {thread, key}                    out {} always
   read:   [slack/thread, read]       # in  {thread}                         out {messages: [...]}

@@ -168,12 +168,18 @@ yard if it differs.
    [`conversations.info`](https://docs.slack.dev/reference/methods/conversations.info/)
    to confirm the conversation is a channel. The bot token must already have
    `channels:read` for a public channel or `groups:read` for a private channel;
-   granting that metadata-read access is a separate operator-managed rollout
-   prerequisite, deferred from this setup. Once that prerequisite is met, use
+   add the needed scopes under OAuth & Permissions in the Slack app, then
+   reinstall the app to the workspace to authorize them. For an existing
+   installation, adding scopes alone does not update its authorization.
+   If Slack issues a replacement bot token, repeat steps 3 and 8 to update
+   both copies and restart the answering crew member. Once authorized, use
    `yardr reply 5210 --broadcast -` with the answer on stdin for a
    channel-thread answer that should also appear in the channel. Missing
    access or an unconfirmed channel refuses the reply before posting; direct
    and group direct messages are refused too.
+   To address the person explicitly, include Slack's mention syntax in the
+   answer, for example `<@U012AB3CD> Noted; I will post here when it lands.`
+   Broadcast does not add a mention to the supplied text.
    The companion check in the same walk: a one-to-one direct message
    mentioning nobody still lands whole by the `room=dm` subscription.
    A group message mentioning nobody lands nowhere — Slack sends no

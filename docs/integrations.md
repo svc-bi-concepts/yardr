@@ -1110,6 +1110,12 @@ git:                                  # what git uses to reach the source's repo
   would send the words and drop the files. Files are part of the
   answer, so the same words with other files are another reply, with a
   key of their own.
+- **`thread.broadcast: true` opts into channel broadcast.** With that
+  declaration, `yardr reply --broadcast` hands `thread.reply` the extra
+  input `broadcast: true`; ordinary replies omit it. The command must
+  refuse conversations that cannot be broadcast before posting. Without
+  the declaration, the CLI refuses the option. For reply restrictions
+  and retries, see [Speaking in sources](crew.md#speaking-in-sources).
 - **`thread.open` takes an `assignee` only where the file says so.**
   `thread.assignee` is `id` or `key`: the part of a person's identity in
   the source (`yardr user identity`) that its threads are assigned by.

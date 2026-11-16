@@ -284,7 +284,8 @@ func (d Declared) ReplyBroadcast(ctx context.Context, env Envelope, to, body, ke
 	return d.reply(ctx, env, to, body, key, nil, true, cred)
 }
 
-// CheckBroadcast refuses unsupported sources and Slack direct-message threads before any write.
+// CheckBroadcast checks the declaration's capability before recording a reply.
+// The source's reply command must check the conversation before posting.
 func (d Declared) CheckBroadcast(env Envelope) error {
 	if d.D.Thread == nil || !d.D.Thread.Broadcast {
 		return fmt.Errorf("source %s does not support broadcast replies", d.D.Name)
