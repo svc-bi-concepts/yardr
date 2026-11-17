@@ -72,8 +72,28 @@ reply) # chat.postMessage in the thread: the channel and the thread_ts
   [ -n "$channel" ] && [ -n "$ts" ] && [ "$channel" != "$thread" ] \
     || { echo "thread.reply was handed no channel and thread: $thread" >&2; exit 1; }
   [ -n "$parent" ] || parent=$ts
-  out=$(call chat.postMessage "$(jq -n -c --arg c "$channel" --arg t "$body" --arg p "$parent" \
-    '{channel: $c, text: $t, thread_ts: $p}')") || {
+  broadcast=$(arg broadcast)
+  [ -n "$broadcast" ] || broadcast=false
+  if [ "$broadcast" = true ]; then
+    info=$(callform conversations.info "channel=$channel") || {
+      code=$?
+      err=$(jq -r '.error // empty' <<<"$info" 2>/dev/null)
+      echo "conversations.info for channel $channel failed${err:+: slack $err} (curl exit $code)" >&2
+      exit 1
+    }
+    ok <<<"$info" || exit 1
+    jq -e --arg c "$channel" '
+      .channel.id == $c and
+      .channel.is_im == false and .channel.is_mpim == false and
+      ((.channel.is_channel == true) or (.channel.is_group == true)) and
+      ((.channel.is_channel == true and .channel.is_group == true) | not)
+    ' >/dev/null <<<"$info" || {
+      echo "conversations.info did not confirm channel $channel is broadcastable" >&2
+      exit 1
+    }
+  fi
+  out=$(call chat.postMessage "$(jq -n -c --arg c "$channel" --arg t "$body" --arg p "$parent" --argjson b "$broadcast" \
+    '{channel: $c, text: $t, thread_ts: $p} + (if $b then {reply_broadcast: true} else {} end)')") || {
     code=$?
     err=$(jq -r '.error // empty' <<<"$out" 2>/dev/null)
     echo "chat.postMessage to channel $channel failed${err:+: slack $err} (curl exit $code)" >&2

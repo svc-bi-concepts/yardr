@@ -112,6 +112,8 @@ hear:
 # posted answers what there is to find: nothing.
 
 thread:
-  reply:  [slack/thread, reply]      # in  {thread, parent, body, key}      out {id}
+  reply:  [slack/thread, reply]      # in {thread, parent, body, key, broadcast?} out {id}
+  # Broadcast's extra permissions and reauthorization are in SETUP.md.
+  broadcast: true
   posted: [slack/thread, posted]     # in  {thread, key}                    out {} always
   read:   [slack/thread, read]       # in  {thread}                         out {messages: [...]}

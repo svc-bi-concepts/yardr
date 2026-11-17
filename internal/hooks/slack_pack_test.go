@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -506,6 +507,37 @@ func TestSlackPackThread(t *testing.T) {
 				return
 			}
 			_, _ = io.WriteString(w, `{"ok":true,"ts":"1729157300.000900"}`)
+		case "conversations.info":
+			form, _ := url.ParseQuery(string(raw))
+			channel := form.Get("channel")
+			if mediaType(r) != "application/x-www-form-urlencoded" || channel == "" {
+				_, _ = io.WriteString(w, `{"ok":false,"error":"invalid_arguments"}`)
+				return
+			}
+			if channel == "CNOINFO" {
+				_, _ = io.WriteString(w, `{"ok":false,"error":"missing_scope"}`)
+				return
+			}
+			info := map[string]any{"id": channel, "is_im": false, "is_mpim": false, "is_channel": true, "is_group": false}
+			if channel == "G098MN456" {
+				info["is_mpim"], info["is_channel"] = true, false
+			}
+			if channel == "GLEGACY" {
+				info["is_channel"], info["is_group"] = false, true
+			}
+			if channel == "D012AB3CD" {
+				info["is_im"], info["is_channel"] = true, false
+			}
+			if channel == "CWRONG" {
+				info["id"] = "COTHER"
+			}
+			if channel == "CINVALID" {
+				delete(info, "is_im")
+			}
+			if channel == "CCONTRADICT" {
+				info["is_group"] = true
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": info})
 		case "conversations.replies":
 			form, _ := url.ParseQuery(string(raw))
 			reads = append(reads, slackRead{r.Method, mediaType(r), r.URL.RawQuery, form})
@@ -586,6 +618,27 @@ func TestSlackPackThread(t *testing.T) {
 		}
 		if m.ID != "1729157300.000900" || m.Body != "the shed lands Monday" {
 			t.Fatalf("%s: reply = %+v", channel, m)
+		}
+	}
+	before := len(posts)
+	if _, err := ad.ReplyBroadcast(ctx, env("C012AB3CD"), "", "broadcast answer", "key-broadcast", cred); err != nil {
+		t.Fatal(err)
+	}
+	if got := posts[len(posts)-1]; got["thread_ts"] != threads["C012AB3CD"][0].ts || got["reply_broadcast"] != true {
+		t.Errorf("broadcast reply was sent %v", got)
+	}
+	if _, err := ad.ReplyBroadcast(ctx, env("D012AB3CD"), "", "no broadcast", "key-dm", cred); err == nil || len(posts) != before+1 {
+		t.Errorf("DM broadcast = %v, posts %d (before %d)", err, len(posts), before)
+	}
+	legacy := hooks.Envelope{Source: "slack", Type: "message", Thread: hooks.Thread{ID: "GLEGACY:1729156800.000100"}}
+	if _, err := ad.ReplyBroadcast(ctx, legacy, "", "legacy private", "key-legacy", cred); err != nil {
+		t.Errorf("legacy private channel broadcast: %v", err)
+	}
+	for i, channel := range []string{"G098MN456", "CNOINFO", "CWRONG", "CINVALID", "CCONTRADICT"} {
+		bad := hooks.Envelope{Source: "slack", Type: "message", Thread: hooks.Thread{ID: channel + ":1729156800.000100"}}
+		before = len(posts)
+		if _, err := ad.ReplyBroadcast(ctx, bad, "", "must refuse", fmt.Sprintf("key-refuse-%d", i), cred); err == nil || len(posts) != before {
+			t.Errorf("metadata for %s: err %v, posts %d -> %d", channel, err, before, len(posts))
 		}
 	}
 	if auth != "Bearer "+cred {

@@ -55,6 +55,8 @@ type Thread struct {
 	// A source without it is refused --file: a reply command that
 	// ignores unknown keys would send the words and drop the files.
 	Files bool `json:"files,omitempty"`
+	// Broadcast says thread.reply accepts broadcast: true for a channel reply.
+	Broadcast bool `json:"broadcast,omitempty"`
 }
 
 // The parts of an identity a thread.assignee names.
@@ -332,7 +334,7 @@ func expandLink(tmpl string, groups []string) string {
 func (r *reader) thread(e entry) *Thread {
 	t := &Thread{}
 	var place, states, assignee *entry
-	for _, f := range r.entries(e.v, e.path, "reply", "posted", "read", "file", "open", "opened", "state", "place", "states", "labels", "assignee", "files") {
+	for _, f := range r.entries(e.v, e.path, "reply", "posted", "read", "file", "open", "opened", "state", "place", "states", "labels", "assignee", "files", "broadcast") {
 		switch f.key {
 		case "reply":
 			t.Reply = r.command(f, "linear/thread, reply")
@@ -375,6 +377,8 @@ func (r *reader) thread(e entry) *Thread {
 			}
 		case "files":
 			t.Files, _ = r.boolean(f.v, f.path)
+		case "broadcast":
+			t.Broadcast, _ = r.boolean(f.v, f.path)
 		}
 	}
 	if e.v.Kind != yaml.MappingNode {
