@@ -67,7 +67,11 @@ type Pairing struct {
 	Enc             string `json:"enc,omitempty"`
 	Enroll          string `json:"enroll,omitempty"`
 	AlreadyEnrolled bool   `json:"already_enrolled,omitempty"`
-	Check           string `json:"check,omitempty"`
+	// PreviousCalls is, for an enrollment, the name the peer was saved under
+	// (its record here, read by the store): shown beside Calls, the name it
+	// calls itself now, so the operators compare the rename in the check.
+	PreviousCalls string `json:"previous_calls,omitempty"`
+	Check         string `json:"check,omitempty"`
 	// Confirmed is this yard's operator's word on the check, PeerConfirmed
 	// the other's.
 	Confirmed     bool `json:"confirmed,omitempty"`
@@ -467,7 +471,7 @@ func (s *Store) finishPairing(ctx context.Context, p *hostPairing) {
 				return err
 			}
 			var err error
-			_, already, err = w.enrollPeerEncryption(p.enroll.Expected, p.enroll.Invite, p.actor)
+			_, already, err = w.enrollPeerIdentity(p.enroll.Expected, p.enroll.Invite.Name, p.enroll.Invite.Enc, p.actor)
 			return err
 		})
 		if err != nil {
@@ -589,8 +593,12 @@ func (s *Store) PairReveal(ctx context.Context, r Reveal) (session string, err e
 		return refuse(BadName, fmt.Sprintf("the other yard calls itself %q, which is no name for a peer here: open the pairing again with --name", p.Calls))
 	}
 	if p.Enroll != "" {
+		if p.enroll != nil {
+			// The store's own snapshot of the saved name, not the caller's.
+			p.PreviousCalls = p.enroll.Expected.Calls
+		}
 		if p.enroll == nil || p.enroll.Invite.Name != t.Joiner.Name || p.enroll.Invite.Key != t.Joiner.Key ||
-			p.enroll.Invite.Enc != t.Joiner.Enc || p.enroll.Expected.Key != p.Key || p.enroll.Expected.Calls != p.Calls ||
+			p.enroll.Invite.Enc != t.Joiner.Enc || p.enroll.Expected.Key != p.Key ||
 			p.enroll.Expected.URL != p.enroll.Invite.URL || (p.enroll.Expected.Enc != "" && p.enroll.Expected.Enc != t.Joiner.Enc) {
 			return refuse(AlreadyPeer, fmt.Sprintf("peer %s changed identity or already has an encryption key", p.Enroll))
 		}

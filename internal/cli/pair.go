@@ -258,10 +258,12 @@ func (a *app) enrollRename(w, warn io.Writer, peer, saved, calls string) {
 }
 
 // confirmCheck shows the check and asks the operator whether the other
-// yard's is the same. With --yes it is printed and not asked.
-func (a *app) confirmCheck(w, warn io.Writer, opt pairOpts, peer, calls, check string) (bool, error) {
+// yard's is the same. previous is the name the peer was saved under when
+// this is an enrollment ("" otherwise), shown beside calls. With --yes it
+// is printed and not asked.
+func (a *app) confirmCheck(w, warn io.Writer, opt pairOpts, peer, calls, previous, check string) (bool, error) {
 	if opt.form != nil {
-		return askSame(w, calls, check)
+		return askSame(w, calls, previous, check)
 	}
 	a.progress(w, warn, "\n  check  %s\n", check)
 	if opt.yes {
@@ -441,11 +443,9 @@ func (a *app) pairHosted(w, warn io.Writer, ctx context.Context, st store.API, p
 				a.progress(w, warn, "%s called (it calls itself %s). Its key: %s", now.Peer, now.Calls, now.Key)
 			}
 			if now.Enroll != "" {
-				if saved, err := st.GetPeer(ctx, now.Enroll); err == nil {
-					a.enrollRename(w, warn, now.Enroll, saved.Calls, now.Calls)
-				}
+				a.enrollRename(w, warn, now.Enroll, now.PreviousCalls, now.Calls)
 			}
-			yes, err := a.confirmCheck(w, warn, opt, now.Peer, now.Calls, now.Check)
+			yes, err := a.confirmCheck(w, warn, opt, now.Peer, now.Calls, now.PreviousCalls, now.Check)
 			if err != nil {
 				return nil, err
 			}
@@ -646,7 +646,11 @@ func (a *app) pairJoin(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	if existing != nil {
 		a.enrollRename(w, warn, existing.Name, existing.Calls, host.Name)
 	}
-	yes, err := a.confirmCheck(w, warn, opt, peer.Name, host.Name, called.Check())
+	previous := ""
+	if existing != nil {
+		previous = existing.Calls
+	}
+	yes, err := a.confirmCheck(w, warn, opt, peer.Name, host.Name, previous, called.Check())
 	if err == nil && yes && opt.form != nil {
 		// As on the yard that is called: every question before this yard's yes.
 		var name string
