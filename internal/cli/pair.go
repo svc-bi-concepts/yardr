@@ -320,6 +320,17 @@ func (a *app) progress(w, warn io.Writer, format string, args ...any) {
 	fmt.Fprintf(w, format+"\n", args...)
 }
 
+// enrollRename says, before the check is compared, that the peer being
+// enrolled calls itself by another name than this yard has saved. The check
+// covers the name too, so both operators see it; this line is what makes
+// the change visible to the one who confirms it.
+func (a *app) enrollRename(w, warn io.Writer, peer, saved, calls string) {
+	if saved == "" || saved == calls {
+		return
+	}
+	a.progress(w, warn, "%s calls itself %s now; this yard has it saved as %s. Confirm the check only if the other operator knows it was renamed.", peer, calls, saved)
+}
+
 // confirmCheck shows the check and asks the operator whether the other
 // yard's is the same. With --yes it is printed and not asked.
 func (a *app) confirmCheck(w, warn io.Writer, opt pairOpts, peer, calls, check string) (bool, error) {
@@ -623,6 +634,11 @@ func (a *app) pairHosted(w, warn io.Writer, ctx context.Context, st store.API, p
 			if opt.form == nil {
 				a.progress(w, warn, "%s called (it calls itself %s). Its key: %s", now.Peer, now.Calls, now.Key)
 			}
+			if now.Enroll != "" {
+				if saved, err := st.GetPeer(ctx, now.Enroll); err == nil {
+					a.enrollRename(w, warn, now.Enroll, saved.Calls, now.Calls)
+				}
+			}
 			yes, err := a.confirmCheck(w, warn, opt, now.Peer, now.Calls, now.Check)
 			if err != nil {
 				return nil, err
@@ -813,6 +829,9 @@ func (a *app) pairJoin(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 			a.progress(w, warn, "it gives its address as %s; this yard keeps the one it answered at", host.URL)
 		}
 	}
+	if existing != nil {
+		a.enrollRename(w, warn, existing.Name, existing.Calls, host.Name)
+	}
 	yes, err := a.confirmCheck(w, warn, opt, peer.Name, host.Name, called.Check())
 	if err == nil && yes && opt.form != nil {
 		// As on the yard that is called: every question before this yard's yes.
@@ -905,7 +924,9 @@ func peerEnrollment(ctx context.Context, st store.API, opt pairOpts) (*store.Pee
 	if err != nil {
 		return nil, fmt.Errorf("peer %s: %w", opt.enroll, err)
 	}
-	if expected.Key != invite.Key || expected.Calls != invite.Name || expected.URL != invite.URL ||
+	// The name the peer calls itself may have changed since it was linked:
+	// it is shown in the check, and the key, encryption key and URL must hold.
+	if expected.Key != invite.Key || expected.URL != invite.URL ||
 		(expected.Enc != "" && expected.Enc != invite.Enc) {
 		return nil, fmt.Errorf("peer %s identity or authority does not match the fresh invite", opt.enroll)
 	}

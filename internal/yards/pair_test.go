@@ -413,6 +413,109 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	}
 }
 
+// TestLegacyEnrollmentAcceptsARenamedPeer proves that a peer which renamed itself
+// is enrolled under its new name, with its key, pins and sealed traffic kept.
+func TestLegacyEnrollmentAcceptsARenamedPeer(t *testing.T) {
+	cheapKeys(t)
+	host, joiner := newPairYard(t, "North/Work"), newPairYard(t, "Laptop/Work")
+	ctx := context.Background()
+	if err := host.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.own.SetSetting(ctx, "name", "Laptop/Work", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "Laptop/Work", URL: joiner.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	// North renamed itself after this yard linked it: the pinned key and URL
+	// are unchanged, and the name this yard saved is the old one.
+	if _, err := joiner.own.AddPeer(ctx, store.Peer{Name: "north", Key: host.pub(), Calls: "North/Old", URL: host.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	for _, y := range []*pairYard{host, joiner} {
+		peer := "laptop"
+		if y == joiner {
+			peer = "north"
+		}
+		if _, err := y.own.AllowPeer(ctx, peer, store.PeerAllow{Send: []string{store.PeerPing}, Receive: []string{store.PeerPing}}, "jo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hostBefore, err := host.own.GetPeer(ctx, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinerBefore, err := joiner.own.GetPeer(ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinerInvite := store.Invite{Name: "Laptop/Work", Key: joiner.pub(), Enc: joiner.enc, URL: joiner.srv.URL}
+	hostOffer := store.PeerEnrollment{PeerName: "laptop", Expected: *hostBefore, Invite: joinerInvite}
+	opened, err := host.own.PairOpen(ctx, store.PairOffer{Name: host.name, Key: host.pub(), Enc: host.enc, URL: host.srv.URL, Enrollment: &hostOffer}, "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := store.CleanCode(opened.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called, err := joiner.caller().PairCall(ctx, host.srv.URL, code, "Laptop/Work", func(p store.Party) error {
+		if p.Name != "North/Work" || p.Key != host.pub() || p.Enc != host.enc || p.URL != host.srv.URL {
+			t.Fatalf("host party = %+v", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.PairAnswer(ctx, opened.ID, true, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	out, exchange, err := joiner.caller().PairAnswerWithProof(ctx, called, true)
+	if err != nil || out.State != store.Confirmed {
+		t.Fatalf("confirmed answer = %+v, %v", out, err)
+	}
+	hostAfter, err := host.own.GetPeer(ctx, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostAfter.Enc != joiner.enc || hostAfter.Key != hostBefore.Key || hostAfter.Name != "laptop" || hostAfter.Calls != "Laptop/Work" {
+		t.Fatalf("host enrollment changed identity: before=%+v after=%+v", hostBefore, hostAfter)
+	}
+	proof := store.PeerEnrollmentProof{Expected: *joinerBefore, Invite: store.Invite{Name: "North/Work", Key: host.pub(), Enc: host.enc, URL: host.srv.URL}, Transcript: called.Transcript,
+		ConfirmRequestURL: exchange.RequestURL, ConfirmRequestTime: exchange.RequestTime, ConfirmRequestBody: exchange.RequestBody, ConfirmRequestSig: exchange.RequestSig,
+		ConfirmResponseStatus: exchange.ResponseStatus, ConfirmResponseBody: exchange.ResponseBody, ConfirmResponseSig: exchange.ResponseSig}
+	if _, err := joiner.own.CommitPeerEnrollment(ctx, proof, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	joinerAfter, err := joiner.own.GetPeer(ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joinerAfter.Enc != host.enc || joinerAfter.Key != joinerBefore.Key || joinerAfter.Name != "north" || joinerAfter.Calls != "North/Work" || joinerAfter.URL != joinerBefore.URL {
+		t.Fatalf("caller enrollment changed identity: before=%+v after=%+v", joinerBefore, joinerAfter)
+	}
+	// The newly pinned keys now carry a real signed and sealed wire request.
+	msg, err := joiner.own.PeerSend(ctx, "north", store.PeerPing, json.RawMessage(`{"enrolled":true}`), "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.caller().Push(ctx, *joinerAfter, msg.PeerMessage); err != nil {
+		t.Fatalf("sealed push after enrollment: %v", err)
+	}
+	batch, err := joiner.caller().Pull(ctx, *joinerAfter, 0, 0)
+	if err != nil {
+		t.Fatalf("sealed pull after enrollment: %v", err)
+	}
+	if batch.Digest == "" || len(batch.Body) == 0 {
+		t.Fatalf("sealed response after enrollment = %+v", batch)
+	}
+}
+
 // TestLegacyEnrollmentRecoversAfterCallerCASFailure proves that a host-side
 // commit is not rolled back when the caller's snapshot changes, and that a
 // new, fully confirmed pairing can finish the still-missing side safely.
