@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -428,7 +429,7 @@ func TestLegacyEnrollmentAcceptsARenamedPeer(t *testing.T) {
 	if err := joiner.own.SetSetting(ctx, "name", "Laptop/Work", "jo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "Laptop/Work", URL: joiner.srv.URL}, "jo"); err != nil {
+	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "Laptop/Old", URL: joiner.srv.URL}, "jo"); err != nil {
 		t.Fatal(err)
 	}
 	// North renamed itself after this yard linked it: the pinned key and URL
@@ -444,6 +445,24 @@ func TestLegacyEnrollmentAcceptsARenamedPeer(t *testing.T) {
 		if _, err := y.own.AllowPeer(ctx, peer, store.PeerAllow{Send: []string{store.PeerPing}, Receive: []string{store.PeerPing}}, "jo"); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Sealed mail queued on both sides before the enrollment, which must stay
+	// queued exactly once under the renamed records.
+	for _, q := range []struct {
+		y    *pairYard
+		peer string
+	}{{host, "laptop"}, {joiner, "north"}} {
+		if _, err := q.y.own.PeerSend(ctx, q.peer, store.PeerPing, json.RawMessage(`{"queued":true}`), "jo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hostOutBefore, err := host.own.PeerOutbox(ctx, "laptop", 0)
+	if err != nil || len(hostOutBefore) != 1 {
+		t.Fatalf("host queue = %+v, %v", hostOutBefore, err)
+	}
+	joinerOutBefore, err := joiner.own.PeerOutbox(ctx, "north", 0)
+	if err != nil || len(joinerOutBefore) != 1 {
+		t.Fatalf("joiner queue = %+v, %v", joinerOutBefore, err)
 	}
 	hostBefore, err := host.own.GetPeer(ctx, "laptop")
 	if err != nil {
@@ -472,8 +491,13 @@ func TestLegacyEnrollmentAcceptsARenamedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := host.own.PairAnswer(ctx, opened.ID, true, "jo"); err != nil {
+	answered, err := host.own.PairAnswer(ctx, opened.ID, true, "jo")
+	if err != nil {
 		t.Fatal(err)
+	}
+	// The host's own record is the store's source for the old name it shows.
+	if answered.PreviousCalls != "Laptop/Old" || answered.Calls != "Laptop/Work" {
+		t.Fatalf("host pairing shows %q -> %q, want Laptop/Old -> Laptop/Work", answered.PreviousCalls, answered.Calls)
 	}
 	out, exchange, err := joiner.caller().PairAnswerWithProof(ctx, called, true)
 	if err != nil || out.State != store.Confirmed {
@@ -498,6 +522,27 @@ func TestLegacyEnrollmentAcceptsARenamedPeer(t *testing.T) {
 	}
 	if joinerAfter.Enc != host.enc || joinerAfter.Key != joinerBefore.Key || joinerAfter.Name != "north" || joinerAfter.Calls != "North/Work" || joinerAfter.URL != joinerBefore.URL {
 		t.Fatalf("caller enrollment changed identity: before=%+v after=%+v", joinerBefore, joinerAfter)
+	}
+	for _, q := range []struct {
+		y    *pairYard
+		peer string
+		want []store.PeerOut
+	}{{host, "laptop", hostOutBefore}, {joiner, "north", joinerOutBefore}} {
+		if got, err := q.y.own.PeerOutbox(ctx, q.peer, 0); err != nil || !reflect.DeepEqual(got, q.want) {
+			t.Fatalf("%s queue changed by the rename: before=%+v after=%+v err=%v", q.peer, q.want, got, err)
+		}
+	}
+	// A repeat of the confirmed commit is a no-op: no second event, no new queue entry.
+	seen, err := joiner.own.Events(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof.Expected = *joinerAfter
+	if _, err := joiner.own.CommitPeerEnrollment(ctx, proof, "jo"); err != nil {
+		t.Fatalf("repeat after rename: %v", err)
+	}
+	if again, err := joiner.own.Events(ctx, "", 0); err != nil || len(again) != len(seen) {
+		t.Fatalf("repeat wrote events: %d -> %d, %v", len(seen), len(again), err)
 	}
 	// The newly pinned keys now carry a real signed and sealed wire request.
 	msg, err := joiner.own.PeerSend(ctx, "north", store.PeerPing, json.RawMessage(`{"enrolled":true}`), "jo")
