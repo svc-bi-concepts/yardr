@@ -462,6 +462,11 @@ func TestCommitPeerEnrollmentAuditsTheRenameMinimally(t *testing.T) {
 		t.Fatalf("rename audit data = %v, want %v", got[0].Data, want)
 	}
 
+	// The safe projection tells exactly the audit's own fields, nothing of a proof.
+	if told, ok := store.EventDataTold("peer_identity_enrolled"); !ok || !reflect.DeepEqual(told, []string{"encryption_pin_added", "new_calls", "old_calls", "peer"}) {
+		t.Fatalf("peer_identity_enrolled projection = %v, %v", told, ok)
+	}
+
 	// The pin is now held and the name is current: a repeat writes nothing.
 	seq = mark()
 	current, err := y.api.GetPeer(y.ctx, "north")
