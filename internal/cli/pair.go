@@ -80,17 +80,10 @@ hook_addr <host:port>) and says where the other reaches it with --url; the
 default is the listener's own address. The other need not be reachable at
 all: the link then pulls. One of the two has to be.
 
-For an existing link with no encryption pin, each operator independently
-gets the other yard's fresh v2 invite over a trusted channel. The reachable
-yard runs --enroll <existing-peer-name> --invite <fresh-v2-invite>; the
-caller adds those flags to the address and code command. Both operators
-compare a fresh check. Only the missing pin is filled; link settings and
-queued work stay in place. A different identity or an existing different
-pin is refused. Removing and adding a peer loses its queues, grants and
-custody records.
-
-Enrollment requires a terminal and refuses --yes, --json, --name and --expose.
-See docs/peers.md, "Enrolling a legacy link", for the procedure and recovery.
+For an existing link, --enroll can fill a missing encryption pin or refresh
+the peer's advertised name. See docs/peers.md, "Enrolling a legacy link",
+for the procedure, confirmation requirements and recovery. Removing and
+adding a peer loses its queues, grants and custody records.
 
 For a new link without a terminal, --yes confirms the check without
 asking, and prints it. That is for scripts and tests, on a network you trust:
@@ -174,7 +167,7 @@ prints two documents, the code at once and the result at the end.`,
 	}
 	cmd.Flags().StringVar(&opt.name, "name", "", "the name to save the other yard under (default: the name it gives itself)")
 	cmd.Flags().StringVar(&opt.invite, "invite", "", "fresh v2 invite independently obtained from the peer operator; required with --enroll")
-	cmd.Flags().StringVar(&opt.enroll, "enroll", "", "fill the missing encryption pin of this existing peer after the authenticated pairing")
+	cmd.Flags().StringVar(&opt.enroll, "enroll", "", "enroll this existing peer's encryption pin or advertised name; see docs/peers.md")
 	cmd.Flags().StringVar(&opt.url, "url", "", "where the other yard reaches this one's listener, such as http://10.0.0.5:8790 (default: the listener's address)")
 	cmd.Flags().BoolVar(&opt.yes, "yes", false, "confirm the check without asking, and print it (scripts and tests)")
 	cmd.Flags().StringSliceVar(&opt.expose, "expose", nil, "crew member or user of this yard the other may see and write to (repeatable)")
