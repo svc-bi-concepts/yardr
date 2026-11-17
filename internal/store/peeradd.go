@@ -14,8 +14,9 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// CommitPeerEnrollment fills one missing pin, or recognizes an equal pin
-// after a fresh signed pairing when the other yard committed first.
+// CommitPeerEnrollment applies the identity from a fresh signed pairing
+// without replacing the existing link. See enrollPeerIdentity for the
+// mutation and audit invariants.
 func (s *Store) CommitPeerEnrollment(ctx context.Context, proof PeerEnrollmentProof, actor string) (*Peer, error) {
 	var out Peer
 	err := s.write(func(w *wtx) error {

@@ -43,8 +43,9 @@ type PairOffer struct {
 	Enrollment *PeerEnrollment `json:"enrollment,omitempty"`
 }
 
-// PeerEnrollment binds a legacy peer's current record to the fresh invite
-// and authenticated pairing that may supply its absent encryption pin.
+// PeerEnrollment binds an existing peer's current record to the fresh invite
+// and authenticated pairing that may refresh its advertised name and supply
+// its absent encryption pin.
 type PeerEnrollment struct {
 	PeerName string `json:"peer_name"`
 	Expected Peer   `json:"expected"`
@@ -456,8 +457,8 @@ func (s *Store) PairClose(ctx context.Context, id, actor string) error {
 	return nil
 }
 
-// finishPairing saves a new peer or enrolls an existing peer's missing
-// encryption pin after both operators confirm. A conflicting record change
+// finishPairing saves a new peer or enrolls an existing peer's identity
+// after both operators confirm. A conflicting record change
 // since the call ends the pairing instead.
 func (s *Store) finishPairing(ctx context.Context, p *hostPairing) {
 	if p.Enroll != "" {

@@ -249,9 +249,9 @@ the same and the command says that the ping is owed.
 Once both yards run a sealed-wire build, each operator independently gets
 the other yard's fresh `yardr-peer-2` invite over a trusted channel
 (`yardr peer invite`, with the unchanged `--url` where the existing link
-has one). Each invite must match the stored signing key, advertised yard
-name and URL. Use each yard's existing local peer name; the names may
-differ between yards.
+has one). Each invite must match the stored signing key and URL, and any
+encryption key already pinned. Use each yard's existing local peer name;
+the names may differ between yards.
 
 The yard at the caller's existing stored URL opens the pairing, using
 `--url` if needed to advertise that same address:
@@ -270,19 +270,18 @@ yardr peer pair <address> <code> --enroll <existing-peer-name> --invite '<fresh-
 Both operators compare a fresh check. When the other yard has renamed
 itself since the link was made, the invite carries its new name: the check
 shows the change, and both operators confirm it as they would any check.
-The pinned signing key, encryption key and URL must still match. The saved
-name is then the new one; the link settings and queued messages stay.
-Both screens show the old name beside the new one, before the check: the
-saved name, then what the other yard calls itself now. The audit records the
-change as one `peer_identity_enrolled` event (the local name, the old and new
-names, and whether the encryption pin was added).
-Enrollment requires a terminal and
-refuses `--yes`, `--json`, `--name` and `--expose`. The authenticated check
-binds the encryption key to the existing signing identity. Only the missing pin is
-filled; identities, link settings, permissions, queued messages and accepted
-work stay in place. A fresh pairing can also confirm an equal pin when one
-yard committed first; a different pin is refused. This does not rotate keys
-or make old and new builds transparently compatible.
+Both screens show the saved advertised name beside the new one before the
+check. Enrollment updates that name without changing the local peer name;
+its audit event is listed under [Events](#events).
+
+Enrollment requires a terminal and refuses `--yes`, `--json`, `--name` and
+`--expose`. The authenticated check binds the encryption key to the existing
+signing identity. A missing encryption pin is filled; identities, link
+settings, permissions, queued messages and accepted work stay in place.
+A fresh pairing can also confirm an equal pin when one yard committed
+first, or refresh the advertised name of an already enrolled peer; a
+different pin is refused. This does not rotate keys or make old and new
+builds transparently compatible.
 
 If a final answer is lost, waiting is cancelled or a server restarts, one
 yard may have committed already. Inspect `yardr peer show <name>` on both
@@ -3299,7 +3298,8 @@ with is 401, as any request that is no peer's.
 | event | when | data |
 |---|---|---|
 | `peer_added` | `peer add`, and a pairing that created a new link | `peer`, `key`, `url`; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was added that way |
-| `peer_encryption_enrolled` | enrollment filled a missing encryption pin; confirming an equal pin emits no event | `peer`, `key` (the signing identity) |
+| `peer_encryption_enrolled` | enrollment filled a missing encryption pin without changing the advertised name; confirming an equal pin and unchanged name emits no event | `peer`, `key` (the signing identity) |
+| `peer_identity_enrolled` | enrollment changed the advertised name, optionally filling a missing encryption pin in the same write | `peer` (the local name), `old_calls`, `new_calls`, `encryption_pin_added` |
 | `peer_pair_opened` | `peer pair` opened a pairing on this yard | `pairing`, its id; `expires`; `url`; `role` `host` |
 | `peer_paired` | a pairing created a new link: with it `peer_added` and `peer_allowed`, in the same write | `peer`, `key`, `url`, `calls`, `role` (`host`: this yard was called; `joiner`: it called), `pairing` on the host |
 | `peer_pair_refused` | a pairing ended without one | `reason`: `wrong_code` (on the host after five, with `wrong_codes`; on the yard that called for each), `declined` (this yard's operator), `peer_declined` (the other's), `timed_out`, `closed` (`--end`, Ctrl+C), `already_peer`, `bad_name`, `own_key`; `role`; `pairing` on the host; `peer`, `calls` and `key` once the other yard is known |
