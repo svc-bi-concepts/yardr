@@ -1012,7 +1012,7 @@ not re-asked in §5):
   simply resume — was wrong past a horizon, so it is stated exactly
   here. For a link that already pins an encryption key — every link
   made on the new wire, and a pre-flag-day link once it has been
-  re-linked (next bullet) — the signing key and the stored link never
+  enrolled in place (next bullet) — the signing key and the stored link never
   change, so a peer that merely upgrades late needs no re-link, and
   `peer show` on a link whose peer was last heard on the old wire says
   so in words ("its build signs the old way: the link waits for its
@@ -1040,7 +1040,7 @@ not re-asked in §5):
   try-burning is the risk of a link that already pins an encryption
   key while its peer answers on the old wire; a keyless pre-flag-day
   link burns no try at all, because it is refused before any dial
-  (next bullet) and waits until its operator re-links it. Q5 is
+  (next bullet) and waits until its operator enrolls its missing pin. Q5 is
   therefore decided (§5) for crossing inside one announced
   window, shorter than the give-up horizon, instead of trusting any
   order over any gap — with the limit stated there: a message already
@@ -1061,41 +1061,27 @@ not re-asked in §5):
   router — and bead 1 waits at `approved` until the window. In the
   window itself, the operator deploys bead 3's edge, merges bead 1
   (the connected yards upgrade), and each yard re-enrols and
-  re-links in that same sitting (next bullets); a yard upgraded
-  later, outside the window, re-links and re-enrols then in the same
-  way, with no recovery command behind it (Q5, §5).
+  enrolls its legacy peer links in that same sitting (next bullets); a yard
+  upgraded later, outside the window, enrolls those links and re-enrols
+  then in the same way, with no recovery command behind it (Q5, §5).
 - Each yard makes its encryption pair on first run of the new build
   (`peer-enc.key` beside `peer.key`). A stored link made before the
   flag day has no encryption key for its peer, and it does not gain one
-  by upgrading: existing links re-link at the flag day. Until they do,
+  by upgrading: the link needs the in-place enrollment below. Until then,
   the new wire refuses the old record — the caller and the dispatcher
   make no sealed push, pull or ping to a peer whose stored record has
   no encryption key, burn no try and dial nothing, and `yardr peer
-  ping`, `peer show` and `doctor` say so in one line ("<peer> was
-  linked before sealed bodies: re-link it — `yardr peer rm <peer>`,
-  then link it again by its address or its new invite"), which the
-  receiver's log counts beside the unsigned 401s above. No `PeerSays`
+  ping`, `peer show` and `doctor` say so in one line. The operator fills
+  the missing pin in place with authenticated pairing enrollment, preserving
+  the existing link. The procedure, identity checks and partial-outcome
+  recovery are in [Enrolling a legacy link](../peers.md#enrolling-a-legacy-link).
+  Old-format requests still produce the unsigned 401s above. No `PeerSays`
   field, clear key advertisement or bootstrap exchange teaches the key
   instead (§3.3): a pull could carry the asker's key to the responder,
   but the responder's sealed answer could not be opened by an asker
   that does not yet hold the responder's key, and a push cannot be
   sealed to a recipient whose key is unknown, so any such exchange
-  would need a signed clear step this design does not add. Re-linking
-  is done in the same sitting as the upgrade, by both operators: each
-  removes the old peer (`peer rm`, whose waiting messages go with it
-  and are counted as `messages_dropped` as today, to be re-originated
-  if they still matter) and links again — by address once §6 beads 2
-  to 4 have landed, or by the new `yardr-peer-2` invite (§3.4) where
-  there is no address — pinning both keys at once as any first link
-  does (§3.4). The remade link starts `ping`-only, as a new link does,
-  and each operator re-applies what the old link carried (`peer allow`,
-  `--expose`, `--trust`, `--reach`, intakes) for their own yard;
-  nothing of the old link's grants survives the `rm`, and `peer show`
-  on the remade link says it was made by address or invite, as it does
-  for any new link. Today's links are the operator's own three yards,
-  so this is one sitting's work, not a programme; a link made by
-  address or by the new invite after the flag day never needs it,
-  because both keys are pinned when it is made. A yard already
+  would need a signed clear step this design does not add. A yard already
   connected to the edge also re-enrols once in that same sitting
   (`yardr edge connect <url>` again), so the edge's enrolment record
   gains the encryption key bead 2 (§6) publishes; until it does, that
@@ -1104,7 +1090,7 @@ not re-asked in §5):
   the encryption key is the same failure as restoring without
   `peer.key` today — a stranger to its peers — and `doctor` says
   which file is missing. Signing keys do not change; only the wire
-  stops matching until both sides move and re-link.
+  stops matching until both sides move and enroll missing pins.
 - Pairing's three requests (`/peers/pair/hello|reveal|confirm`,
   [internal/pairing](../../internal/pairing/pairing.go)) are removed
   with the code transport they serve, in the bead that lands the link
@@ -1485,9 +1471,9 @@ recovery for links that miss it?** That there is a flag day, with no
  pull-waiting messages lose nothing under either. *I would take (i),
  and announce the release as breaking either way.* **Decided (26
  Oct, ask 13366): (i).** One announced upgrade window. Connected
- yards upgrade together in that window and re-link and re-enrol
+ yards upgrade together in that window, enroll legacy links and re-enrol
  then (§3.6). There is no recovery command for a yard that upgrades
- later. It re-links and re-enrols when it does. What was given up
+ later. It enrolls legacy links and re-enrols when it does. What was given up
  on meanwhile is re-originated. The window carries the edge cutover
  with it. Bead 3's edge is deployed and bead 1 merged inside it, in
  the order §3.6 and §6 state. Neither is crossed alone.
@@ -1550,7 +1536,7 @@ carries both keys; and enrolment presents the yard's encryption
 public key beside its signing key, in the enrolment body itself, so
 a yard that enrols on this build presents the key the edge bead (§6,
 bead 2) stores and publishes. A stored peer with no encryption key
-is refused for sealed traffic with the re-link line of §3.6, before
+is refused for sealed traffic with the enrollment line of §3.6, before
 any dial. The wire caps move with the seal and the plaintext
 caps do not (§3.3): the receiver's and caller's read limits are derived
 from the envelope encoding of `MaxPeerFileBody` (keeping the 4 KiB and
@@ -1605,11 +1591,11 @@ today's caps and within the derived sealed bound, while a file one
 byte over the plaintext setting sealed inside a lawful wire body is
 refused `too_large` and a wire body over the sealed bound is refused
 413 before opening; a peer record stored before this bead (no
-encryption key) is refused with the §3.6 re-link line — `peer ping`
+encryption key) is refused with the §3.6 enrollment line — `peer ping`
 fails with it, `peer show` and `doctor` name it, and the dispatcher
 makes no dial and counts no try to it — and after that peer is
-removed and added again with the other's new invite, a ping crosses
-sealed both ways; across the flag day, on a link that already pins
+enrolled in place as described in
+[peers.md](../peers.md#enrolling-a-legacy-link), a ping crosses sealed both ways; across the flag day, on a link that already pins
 an encryption key (made by the new invite in the test), a short gap
 and a long one are each proven: with the second yard upgraded while
 a queued message still has tries left, that message is delivered

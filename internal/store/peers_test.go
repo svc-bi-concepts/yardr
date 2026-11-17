@@ -29,6 +29,8 @@ type peerYard struct {
 	key   string // north's public key
 	// ownSign and ownEnc are this yard's two public keys.
 	ownSign, ownEnc string
+	ownPriv         ed25519.PrivateKey
+	ownEncPriv      []byte
 }
 
 func newPeerYard(t *testing.T, url string) *peerYard {
@@ -51,12 +53,12 @@ func newPeerYardOn(t *testing.T, url string, api store.API, own *store.Store) *p
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, ownEncPub, _, err := yardkey.EnsureEnc(filepath.Join(ownDir, "peer-enc.key"))
+	own.SetYard(filepath.Join(ownDir, "peer.key"), "test")
+	ownEncPriv, ownEncPub, _, err := yardkey.EnsureEnc(filepath.Join(ownDir, "peer-enc.key"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	own.SetYard(filepath.Join(ownDir, "peer.key"), "test")
-	y := &peerYard{api: api, own: own, ctx: context.Background(), north: k, key: store.Public(k), ownSign: store.Public(ownKey), ownEnc: ownEncPub}
+	y := &peerYard{api: api, own: own, ctx: context.Background(), north: k, key: store.Public(k), ownSign: store.Public(ownKey), ownEnc: ownEncPub, ownPriv: ownKey, ownEncPriv: ownEncPriv}
 	_, northEncPub, err := store.GenerateEnc()
 	if err != nil {
 		t.Fatal(err)

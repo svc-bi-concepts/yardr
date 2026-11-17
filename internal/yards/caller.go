@@ -183,13 +183,25 @@ func (c *Caller) do(ctx context.Context, p store.Peer, method, path string, body
 	return out, nil
 }
 
+// PairConfirmationExchange retains the signed bytes that bind a caller-side
+// enrollment write to the peer's confirmed pairing outcome.
+type PairConfirmationExchange struct {
+	RequestURL     string
+	RequestTime    string
+	RequestBody    []byte
+	RequestSig     string
+	ResponseStatus int
+	ResponseBody   []byte
+	ResponseSig    string
+}
+
 // doOld makes one request signed the way before the sealed wire (yardkey's
 // SignRequest over the body's sha256, answered by store.SignResponse): a
 // pairing's confirm is the one caller left, since a pairing is no peer
 // message and its exchange goes with bead 4, not with this flag day.
-func (c *Caller) doOld(ctx context.Context, p store.Peer, method, path string, body []byte) (status int, answer []byte, reqSig string, err error) {
+func (c *Caller) doOld(ctx context.Context, p store.Peer, method, path string, body []byte) (status int, answer []byte, reqSig string, exchange PairConfirmationExchange, err error) {
 	if p.URL == "" {
-		return 0, nil, "", fmt.Errorf("peer %s has no URL: it is not called, it calls", p.Name)
+		return 0, nil, "", exchange, fmt.Errorf("peer %s has no URL: it is not called, it calls", p.Name)
 	}
 	now := time.Now
 	if c.Now != nil {
@@ -197,9 +209,10 @@ func (c *Caller) doOld(ctx context.Context, p store.Peer, method, path string, b
 	}
 	req, err := http.NewRequestWithContext(ctx, method, p.URL+path, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, "", err
+		return 0, nil, "", exchange, err
 	}
 	ts, reqSig := yardkey.SignRequest(c.Key, p.Key, method, path, now(), body)
+	exchange.RequestURL, exchange.RequestTime, exchange.RequestBody, exchange.RequestSig = req.URL.String(), ts, append([]byte(nil), body...), reqSig
 	req.Header.Set(yardkey.HeaderKey, store.Public(c.Key))
 	req.Header.Set(yardkey.HeaderTime, ts)
 	req.Header.Set(yardkey.HeaderSig, reqSig)
@@ -213,18 +226,19 @@ func (c *Caller) doOld(ctx context.Context, p store.Peer, method, path string, b
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, "", err
+		return 0, nil, "", exchange, err
 	}
 	defer resp.Body.Close()
 	answer, err = io.ReadAll(io.LimitReader(resp.Body, int64(maxAnswer)+1))
 	if err != nil {
-		return 0, nil, "", err
+		return 0, nil, "", exchange, err
 	}
 	if err := store.VerifyResponse(p.Key, resp.StatusCode, reqSig, resp.Header.Get(yardkey.HeaderSig), answer); err != nil {
-		return 0, nil, "", fmt.Errorf("peer %s answered %d, %w: this yard is not a peer of it there, the clocks are more than %s apart, or something between the two answered",
+		return 0, nil, "", exchange, fmt.Errorf("peer %s answered %d, %w: this yard is not a peer of it there, the clocks are more than %s apart, or something between the two answered",
 			p.Name, resp.StatusCode, ErrUnsigned, yardkey.MaxSkew)
 	}
-	return resp.StatusCode, answer, reqSig, nil
+	exchange.ResponseStatus, exchange.ResponseBody, exchange.ResponseSig = resp.StatusCode, append([]byte(nil), answer...), resp.Header.Get(yardkey.HeaderSig)
+	return resp.StatusCode, answer, reqSig, exchange, nil
 }
 
 // Push posts m to p. nil means p has it (taken now, or before: the same id
