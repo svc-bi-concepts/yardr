@@ -8,6 +8,16 @@ on what lands, with it (R4). R1 and R2 are script behavior: R2 is enforced
 on every run, R1 on every race leg; the rest are rules the gate, the roles
 and the assembly keep between them.
 
+When the shared gate-slot wrapper named in `.yardr/test` is present, the
+script acquires a shared gate slot before running any gate steps, including
+for the no-mistakes Test command configured in `.no-mistakes.yaml`. It sets
+`YARD_GATE_FRESH=1` so a previous pass cannot replace the run. A caller
+already holding a slot (`YARD_GATE_SLOT_HELD` set) keeps that slot instead
+of acquiring another. Plan mode (`YARDR_TEST_PLAN` set), `sizes` (including
+`sizes --rewrite`) and `--race-queue` bypass the wrapper. Without the
+wrapper, the script runs directly. This slot covers the whole gate run;
+the race lock described below still governs the individual test steps.
+
 An allow-list in `.yardr/test` names what is over budget today, each entry
 with why and which bead brings it under. A fix deletes its entries; a row
 whose site is gone is deleted with the fix, not left for later. One row has
