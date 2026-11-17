@@ -21,6 +21,7 @@ import (
 // state fails it too.
 var allowSerial = map[string]string{
 	"TestAddrSettingsAreCheckedAsTheFlag":                   "stubWeb,t.Setenv",
+	"TestAskSameShowsTheSavedNameOfARenamedPeer":            "stubAsk",
 	"TestAskTelemetrySkipsWhenSet":                          "stubAsk",
 	"TestBDPAndOTelStartStop":                               "running,stub:answers,stub:spawn,t.Setenv",
 	"TestBDPStartAndInstallStayOnLoopback":                  "stub:answers,stub:spawn,stubServices",
