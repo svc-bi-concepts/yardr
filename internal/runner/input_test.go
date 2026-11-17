@@ -144,6 +144,18 @@ func TestInputText(t *testing.T) {
 		"draft of two lines": {"claude", rule + "❯ first line\r\n  second line\r\n" + rule + claudeFooter, "first line\nsecond line", true},
 		"draft begun with an empty first line": {
 			"claude", rule + "❯ \r\n  second line\r\n" + rule + claudeFooter, "second line", true},
+		// Claude Code's footer drawn fused to the bottom rule (yardr-bvck3)
+		// ends the input as the rule does: an empty input whose footer
+		// row is fused reads empty, and a real draft above it still holds.
+		"claude, empty input, footer fused to the rule": {
+			"claude", "⏺ reply\r\n❯\r\n❯\r\n──⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent\r\n", "", true},
+		"claude, draft above a fused footer": {
+			"claude", "❯ draft\r\n──⏵⏵ bypass permissions on (shift+tab to cycle)\r\n", "draft", true},
+		// The mark inside a row, not after a rule's run, is the input's text.
+		"claude, footer mark inside a draft's row": {
+			"claude", rule + "❯ draft\r\nmore ⏵⏵ text\r\n" + rule + claudeFooter, "draft\nmore ⏵⏵ text", true},
+		// A kind with no footer mark has no fused footer: its row is text.
+		"codex, fused footer row is text": {"codex", "› draft\r\n──⏵⏵ x\r\n" + codexFooter, "draft\n──⏵⏵ x", true},
 		// A person who types a placeholder's words has typed text: the
 		// attribute is asked, not the wording.
 		"placeholder's words, typed": {"codex", "\x1b[0m\x1b[1m›\x1b[0m Ask Codex to do anything\r\n" + codexFooter, "Ask Codex to do anything", true},

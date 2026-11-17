@@ -109,15 +109,18 @@ type Harness struct {
 // no faint style: while the input's first line begins with it, the input
 // reads empty. PlaceholderSGR is the colour such a hint is drawn in, for a
 // harness whose hint's words are not fixed: text drawn in it reads as no
-// text, as faint text does. Error is every mark the harness's TUI may draw
-// before a message of its own, taken off a line before it is read for an
-// error.
+// text, as faint text does. Footer begins the harness's footer where it is
+// drawn fused to the rule above its input (a box-drawing run, then the mark,
+// on one row): that row ends the input as a rule does. Error is every mark
+// the harness's TUI may draw before a message of its own, taken off a line
+// before it is read for an error.
 type Marks struct {
 	Input          string `yaml:"input" json:"input,omitempty"`
 	Message        string `yaml:"message" json:"message,omitempty"`
 	Edge           string `yaml:"edge" json:"edge,omitempty"`
 	Placeholder    string `yaml:"placeholder" json:"placeholder,omitempty"`
 	PlaceholderSGR string `yaml:"placeholder_sgr" json:"placeholder_sgr,omitempty"`
+	Footer         string `yaml:"footer" json:"footer,omitempty"`
 	Error          string `yaml:"error" json:"error,omitempty"`
 }
 
@@ -778,8 +781,8 @@ func (h *Harness) Check() error {
 		return fmt.Errorf("%s is no kind herdr starts", h.Kind)
 	case h.Label == "":
 		return fmt.Errorf("no label")
-	case h.Marks.Input == "" && (h.Marks.Message != "" || h.Marks.Edge != "" || h.Marks.Placeholder != "" || h.Marks.PlaceholderSGR != ""):
-		return fmt.Errorf("marks: message, edge, placeholder or placeholder_sgr without input, which is what a pane is read from")
+	case h.Marks.Input == "" && (h.Marks.Message != "" || h.Marks.Edge != "" || h.Marks.Placeholder != "" || h.Marks.PlaceholderSGR != "" || h.Marks.Footer != ""):
+		return fmt.Errorf("marks: message, edge, placeholder, placeholder_sgr or footer without input, which is what a pane is read from")
 	}
 	if sgr := h.Marks.PlaceholderSGR; sgr != "" {
 		colour, err := parseSGRColor(sgr)

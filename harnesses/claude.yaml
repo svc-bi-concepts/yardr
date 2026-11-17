@@ -53,10 +53,13 @@ trust:
 
 # Claude Code begins a message it took with the mark of its input. Before a
 # message of its own it draws ⏺ or ⎿; the other marks are a box's edge and
-# what any TUI may draw before an error.
+# what any TUI may draw before an error. Its footer begins with ⏵⏵ (the
+# permission mode); with no rule drawn above it, the footer's row is fused to
+# the rule's, and that row ends the input (yardr-bvck3).
 marks:
   input: "❯"
   message: "❯"
+  footer: "⏵⏵"
   error: "⏺⎿●■•▌│┃✗✘⚠!"
 
 flags:

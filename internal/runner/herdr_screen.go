@@ -55,7 +55,7 @@ var inputMarks = []string{"❯", "›"}
 // placeholder is the input's hint when it holds nothing, for a harness
 // that draws one in no faint style; placeholderSGR is the colour such a
 // hint is drawn in, for a harness whose hint's words are not fixed.
-type paneMarks struct{ input, message, edge, placeholder, placeholderSGR string }
+type paneMarks struct{ input, message, edge, placeholder, placeholderSGR, footer string }
 
 // marksOf is the marks of a harness kind, and whether yardr knows them:
 // its file (harnesses/<kind>.yaml, `marks`) names the mark of its input.
@@ -65,7 +65,7 @@ type paneMarks struct{ input, message, edge, placeholder, placeholderSGR string 
 func marksOf(kind string) (paneMarks, bool) {
 	h, _ := agents.Lookup(kind)
 	m := h.Marks
-	return paneMarks{input: m.Input, message: m.Message, edge: m.Edge, placeholder: m.Placeholder, placeholderSGR: m.PlaceholderSGR}, m.Input != ""
+	return paneMarks{input: m.Input, message: m.Message, edge: m.Edge, placeholder: m.Placeholder, placeholderSGR: m.PlaceholderSGR, footer: m.Footer}, m.Input != ""
 }
 
 // begins reports whether line is the first of the input.
@@ -381,7 +381,7 @@ func inputComposer(styled, kind string) (text string, ok bool, reason string) {
 	var lines []string
 	chrome := false
 	for i := input; i < len(plain); i++ {
-		if i > input && (strings.TrimSpace(plain[i]) == "" || isRule(plain[i])) {
+		if i > input && (strings.TrimSpace(plain[i]) == "" || m.endsInput(plain[i])) {
 			break
 		}
 		l := m.unboxed(typed[i])
@@ -569,7 +569,7 @@ func inputDialog(styled, kind string) (dialog, line string) {
 		from--
 	}
 	for i := from; i < len(plain); i++ {
-		if i > input && (strings.TrimSpace(plain[i]) == "" || isRule(plain[i])) {
+		if i > input && (strings.TrimSpace(plain[i]) == "" || m.endsInput(plain[i])) {
 			break
 		}
 		l := m.unboxed(plain[i])
@@ -616,11 +616,33 @@ func loginLine(text, kind string) string {
 func isRule(line string) bool {
 	line = strings.TrimSpace(line)
 	for _, r := range line {
-		if r < 0x2500 || r > 0x257f {
+		if !isBoxRune(r) {
 			return false
 		}
 	}
 	return line != ""
+}
+
+// isBoxRune reports whether r is a box-drawing character.
+func isBoxRune(r rune) bool { return r >= 0x2500 && r <= 0x257f }
+
+// endsInput reports whether line, a row below the input's first, is where the
+// input ends: a rule, or a row of a rule's run followed directly by the
+// harness's footer mark. Claude Code draws its footer over the bottom rule
+// when the pane is narrow or the rule is cut, so the row reads "──⏵⏵ bypass
+// permissions on …" and is no rule (yardr-bvck3). Only that fused shape
+// counts: a row that merely contains the mark, or one that begins with the
+// input mark, is the input's text.
+func (m paneMarks) endsInput(line string) bool {
+	if isRule(line) {
+		return true
+	}
+	if m.footer == "" {
+		return false
+	}
+	t := strings.TrimSpace(line)
+	rest := strings.TrimLeftFunc(t, isBoxRune)
+	return rest != t && strings.HasPrefix(rest, m.footer)
 }
 
 // unstyled splits a pane read with its styling into lines, twice: plain is
