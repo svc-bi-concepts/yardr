@@ -14,8 +14,9 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// CommitPeerEnrollment fills one missing pin, or recognizes an equal pin
-// after a fresh signed pairing when the other yard committed first.
+// CommitPeerEnrollment applies the identity from a fresh signed pairing
+// without replacing the existing link. See enrollPeerIdentity for the
+// mutation and audit invariants.
 func (s *Store) CommitPeerEnrollment(ctx context.Context, proof PeerEnrollmentProof, actor string) (*Peer, error) {
 	var out Peer
 	err := s.write(func(w *wtx) error {
@@ -26,7 +27,7 @@ func (s *Store) CommitPeerEnrollment(ctx context.Context, proof PeerEnrollmentPr
 			return err
 		}
 		var err error
-		out, _, err = w.enrollPeerEncryption(proof.Expected, proof.Invite.Enc, actor)
+		out, _, err = w.enrollPeerIdentity(proof.Expected, proof.Invite.Name, proof.Invite.Enc, actor)
 		return err
 	})
 	if err != nil {
@@ -78,7 +79,9 @@ func (s *Store) validateEnrollmentBinding(tx *bolt.Tx, expected Peer, invite Inv
 	if Commit(transcript.Joiner) != transcript.Commit || transcript.Joiner.URL != "" {
 		return errors.New("peer enrollment transcript does not match its commitment")
 	}
-	if expected.Key != invite.Key || expected.Calls != invite.Name || expected.URL != invite.URL ||
+	// The name may have changed since the peer was linked; the pinned key
+	// and URL may not, and the pairing must name the invite's yard.
+	if expected.Key != invite.Key || expected.URL != invite.URL ||
 		transcript.Host.Name != invite.Name || transcript.Host.Key != invite.Key || transcript.Host.Enc != invite.Enc || transcript.Host.URL != invite.URL {
 		return fmt.Errorf("peer %s identity or authority does not match the invite and pairing", expected.Name)
 	}
@@ -114,7 +117,18 @@ func (s *Store) validateEnrollmentBinding(tx *bolt.Tx, expected Peer, invite Inv
 	return nil
 }
 
-func (w *wtx) enrollPeerEncryption(expected Peer, enc, actor string) (Peer, bool, error) {
+// enrollPeerIdentity is the one private write a proof-verified enrollment
+// makes: it fills the peer's missing encryption pin and takes the name the
+// peer calls itself now, as one write. It is called only by
+// CommitPeerEnrollment and by the host's finishPairing, after the native
+// confirmations; the caller has checked the key, URL and invite agreement.
+//
+// The record must still be expected in full (the compare is the CAS), and
+// an encryption key already saved must be the invite's. Nothing is written
+// when both the name and the key already match. A changed name is audited
+// as peer_identity_enrolled, which carries no key or proof; a fill of the
+// encryption key alone keeps the event it always had.
+func (w *wtx) enrollPeerIdentity(expected Peer, calls, enc, actor string) (Peer, bool, error) {
 	var current Peer
 	ok, err := get(w.Tx, bPeers, expected.Name, &current)
 	if err != nil {
@@ -126,14 +140,30 @@ func (w *wtx) enrollPeerEncryption(expected Peer, enc, actor string) (Peer, bool
 	if !reflect.DeepEqual(current, enrollmentPeerRecord(expected)) {
 		return Peer{}, false, fmt.Errorf("peer %s changed during enrollment", expected.Name)
 	}
-	if current.Enc != "" {
-		if current.Enc == enc {
-			return current, true, nil
-		}
+	if current.Enc != "" && current.Enc != enc {
 		return Peer{}, false, fmt.Errorf("peer %s already has a different encryption key; key rotation is not supported", expected.Name)
 	}
-	if _, err := ParseEncPublic(enc); err != nil {
-		return Peer{}, false, fmt.Errorf("peer %s: %w", expected.Name, err)
+	if current.Enc == enc && current.Calls == calls {
+		return current, true, nil
+	}
+	if current.Enc == "" {
+		if _, err := ParseEncPublic(enc); err != nil {
+			return Peer{}, false, fmt.Errorf("peer %s: %w", expected.Name, err)
+		}
+	}
+	pinAdded := current.Enc == ""
+	if current.Calls != calls {
+		// The old and new names are what the operators compared, so the
+		// audit keeps both; the local alias is the only other field.
+		data := map[string]any{"peer": expected.Name, "old_calls": current.Calls, "new_calls": calls, "encryption_pin_added": pinAdded}
+		current.Enc, current.Calls = enc, calls
+		if err := put(w.Tx, bPeers, expected.Name, &current); err != nil {
+			return Peer{}, false, err
+		}
+		if err := w.event("", "peer_identity_enrolled", actor, data); err != nil {
+			return Peer{}, false, err
+		}
+		return current, false, nil
 	}
 	current.Enc = enc
 	if err := put(w.Tx, bPeers, expected.Name, &current); err != nil {

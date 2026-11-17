@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -413,6 +414,157 @@ func TestLegacyEnrollmentUsesTheConfirmedWireAndCarriesSealedTraffic(t *testing.
 	}
 }
 
+// TestLegacyEnrollmentAcceptsARenamedPeer proves that a peer which renamed itself
+// is enrolled under its new name, with its key, pins and sealed traffic kept.
+func TestLegacyEnrollmentAcceptsARenamedPeer(t *testing.T) {
+	cheapKeys(t)
+	host, joiner := newPairYard(t, "North/Work"), newPairYard(t, "Laptop/Work")
+	ctx := context.Background()
+	if err := host.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.own.SetSetting(ctx, store.OperatorSetting, "jo", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.own.SetSetting(ctx, "name", "Laptop/Work", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.AddPeer(ctx, store.Peer{Name: "laptop", Key: joiner.pub(), Calls: "Laptop/Old", URL: joiner.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	// North renamed itself after this yard linked it: the pinned key and URL
+	// are unchanged, and the name this yard saved is the old one.
+	if _, err := joiner.own.AddPeer(ctx, store.Peer{Name: "north", Key: host.pub(), Calls: "North/Old", URL: host.srv.URL}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	for _, y := range []*pairYard{host, joiner} {
+		peer := "laptop"
+		if y == joiner {
+			peer = "north"
+		}
+		if _, err := y.own.AllowPeer(ctx, peer, store.PeerAllow{Send: []string{store.PeerPing}, Receive: []string{store.PeerPing}}, "jo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Sealed mail queued on both sides before the enrollment, which must stay
+	// queued exactly once under the renamed records.
+	for _, q := range []struct {
+		y    *pairYard
+		peer string
+	}{{host, "laptop"}, {joiner, "north"}} {
+		if _, err := q.y.own.PeerSend(ctx, q.peer, store.PeerPing, json.RawMessage(`{"queued":true}`), "jo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hostOutBefore, err := host.own.PeerOutbox(ctx, "laptop", 0)
+	if err != nil || len(hostOutBefore) != 1 {
+		t.Fatalf("host queue = %+v, %v", hostOutBefore, err)
+	}
+	joinerOutBefore, err := joiner.own.PeerOutbox(ctx, "north", 0)
+	if err != nil || len(joinerOutBefore) != 1 {
+		t.Fatalf("joiner queue = %+v, %v", joinerOutBefore, err)
+	}
+	hostBefore, err := host.own.GetPeer(ctx, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinerBefore, err := joiner.own.GetPeer(ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinerInvite := store.Invite{Name: "Laptop/Work", Key: joiner.pub(), Enc: joiner.enc, URL: joiner.srv.URL}
+	hostOffer := store.PeerEnrollment{PeerName: "laptop", Expected: *hostBefore, Invite: joinerInvite}
+	opened, err := host.own.PairOpen(ctx, store.PairOffer{Name: host.name, Key: host.pub(), Enc: host.enc, URL: host.srv.URL, Enrollment: &hostOffer}, "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := store.CleanCode(opened.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called, err := joiner.caller().PairCall(ctx, host.srv.URL, code, "Laptop/Work", func(p store.Party) error {
+		if p.Name != "North/Work" || p.Key != host.pub() || p.Enc != host.enc || p.URL != host.srv.URL {
+			t.Fatalf("host party = %+v", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answered, err := host.own.PairAnswer(ctx, opened.ID, true, "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The host's own record is the store's source for the old name it shows.
+	if answered.PreviousCalls != "Laptop/Old" || answered.Calls != "Laptop/Work" {
+		t.Fatalf("host pairing shows %q -> %q, want Laptop/Old -> Laptop/Work", answered.PreviousCalls, answered.Calls)
+	}
+	out, exchange, err := joiner.caller().PairAnswerWithProof(ctx, called, true)
+	if err != nil || out.State != store.Confirmed {
+		t.Fatalf("confirmed answer = %+v, %v", out, err)
+	}
+	hostAfter, err := host.own.GetPeer(ctx, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostAfter.Enc != joiner.enc || hostAfter.Key != hostBefore.Key || hostAfter.Name != "laptop" || hostAfter.Calls != "Laptop/Work" {
+		t.Fatalf("host enrollment changed identity: before=%+v after=%+v", hostBefore, hostAfter)
+	}
+	proof := store.PeerEnrollmentProof{Expected: *joinerBefore, Invite: store.Invite{Name: "North/Work", Key: host.pub(), Enc: host.enc, URL: host.srv.URL}, Transcript: called.Transcript,
+		ConfirmRequestURL: exchange.RequestURL, ConfirmRequestTime: exchange.RequestTime, ConfirmRequestBody: exchange.RequestBody, ConfirmRequestSig: exchange.RequestSig,
+		ConfirmResponseStatus: exchange.ResponseStatus, ConfirmResponseBody: exchange.ResponseBody, ConfirmResponseSig: exchange.ResponseSig}
+	if _, err := joiner.own.CommitPeerEnrollment(ctx, proof, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	joinerAfter, err := joiner.own.GetPeer(ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joinerAfter.Enc != host.enc || joinerAfter.Key != joinerBefore.Key || joinerAfter.Name != "north" || joinerAfter.Calls != "North/Work" || joinerAfter.URL != joinerBefore.URL {
+		t.Fatalf("caller enrollment changed identity: before=%+v after=%+v", joinerBefore, joinerAfter)
+	}
+	for _, q := range []struct {
+		y    *pairYard
+		peer string
+		want []store.PeerOut
+	}{{host, "laptop", hostOutBefore}, {joiner, "north", joinerOutBefore}} {
+		if got, err := q.y.own.PeerOutbox(ctx, q.peer, 0); err != nil || !reflect.DeepEqual(got, q.want) {
+			t.Fatalf("%s queue changed by the rename: before=%+v after=%+v err=%v", q.peer, q.want, got, err)
+		}
+	}
+	// A repeat of the confirmed commit is a no-op: no second event, no new queue entry.
+	seen, err := joiner.own.Events(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof.Expected = *joinerAfter
+	if _, err := joiner.own.CommitPeerEnrollment(ctx, proof, "jo"); err != nil {
+		t.Fatalf("repeat after rename: %v", err)
+	}
+	if again, err := joiner.own.Events(ctx, "", 0); err != nil || len(again) != len(seen) {
+		t.Fatalf("repeat wrote events: %d -> %d, %v", len(seen), len(again), err)
+	}
+	// What waited before the rename reaches its peer once in each direction,
+	// under the renamed records.
+	deliverQueued(t, host, "laptop", joiner, hostOutBefore)
+	deliverQueued(t, joiner, "north", host, joinerOutBefore)
+	// The newly pinned keys now carry a real signed and sealed wire request.
+	msg, err := joiner.own.PeerSend(ctx, "north", store.PeerPing, json.RawMessage(`{"enrolled":true}`), "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.caller().Push(ctx, *joinerAfter, msg.PeerMessage); err != nil {
+		t.Fatalf("sealed push after enrollment: %v", err)
+	}
+	batch, err := joiner.caller().Pull(ctx, *joinerAfter, 0, 0)
+	if err != nil {
+		t.Fatalf("sealed pull after enrollment: %v", err)
+	}
+	if batch.Digest == "" || len(batch.Body) == 0 {
+		t.Fatalf("sealed response after enrollment = %+v", batch)
+	}
+}
+
 // TestLegacyEnrollmentRecoversAfterCallerCASFailure proves that a host-side
 // commit is not rolled back when the caller's snapshot changes, and that a
 // new, fully confirmed pairing can finish the still-missing side safely.
@@ -545,6 +697,30 @@ func TestLegacyEnrollmentLostResponseKeepsAsymmetricState(t *testing.T) {
 	if _, err := joiner.own.AddPeer(ctx, store.Peer{Name: "north", Key: host.pub(), Calls: "north", URL: host.srv.URL}, "jo"); err != nil {
 		t.Fatal(err)
 	}
+	for _, a := range []struct {
+		y    *pairYard
+		peer string
+	}{{host, "laptop"}, {joiner, "north"}} {
+		if _, err := a.y.own.AllowPeer(ctx, a.peer, store.PeerAllow{Send: []string{store.PeerPing}, Receive: []string{store.PeerPing}}, "jo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Sealed mail queued on both sides before the lost response: it must
+	// wait there, once, through the lost response and the retry.
+	if _, err := host.own.PeerSend(ctx, "laptop", store.PeerPing, json.RawMessage(`{"queued":"host"}`), "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := joiner.own.PeerSend(ctx, "north", store.PeerPing, json.RawMessage(`{"queued":"joiner"}`), "jo"); err != nil {
+		t.Fatal(err)
+	}
+	hostQueued, err := host.own.PeerOutbox(ctx, "laptop", 0)
+	if err != nil || len(hostQueued) != 1 {
+		t.Fatalf("host queue = %+v, %v", hostQueued, err)
+	}
+	joinerQueued, err := joiner.own.PeerOutbox(ctx, "north", 0)
+	if err != nil || len(joinerQueued) != 1 {
+		t.Fatalf("joiner queue = %+v, %v", joinerQueued, err)
+	}
 	joinerInvite := store.Invite{Name: "laptop", Key: joiner.pub(), Enc: joiner.enc, URL: joiner.srv.URL}
 	before, err := host.own.GetPeer(ctx, "laptop")
 	if err != nil {
@@ -582,6 +758,102 @@ func TestLegacyEnrollmentLostResponseKeepsAsymmetricState(t *testing.T) {
 	if p := host.pairing(t); p.State != store.PairDone {
 		t.Fatalf("host pairing after lost response = %+v", p)
 	}
+	// The lost response left both queues as they were. A fresh confirmed
+	// pairing then finishes the caller, and each queued message is delivered
+	// once, with no duplicate from the retry.
+	for _, q := range []struct {
+		y    *pairYard
+		peer string
+		want []store.PeerOut
+	}{{host, "laptop", hostQueued}, {joiner, "north", joinerQueued}} {
+		if got, err := q.y.own.PeerOutbox(ctx, q.peer, 0); err != nil || !reflect.DeepEqual(got, q.want) {
+			t.Fatalf("%s queue changed by the lost response: before=%+v after=%+v err=%v", q.peer, q.want, got, err)
+		}
+	}
+	hostNow := mustGetPeer(t, host.own, ctx, "laptop")
+	opened, err = host.own.PairOpen(ctx, store.PairOffer{Name: host.name, Key: host.pub(), Enc: host.enc, URL: host.srv.URL,
+		Enrollment: &store.PeerEnrollment{PeerName: "laptop", Expected: *hostNow, Invite: joinerInvite}}, "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err = store.CleanCode(opened.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called, err = joiner.caller().PairCall(ctx, host.srv.URL, code, "laptop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.own.PairAnswer(ctx, opened.ID, true, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	out, exchange, err := joiner.caller().PairAnswerWithProof(ctx, called, true)
+	if err != nil || out.State != store.Confirmed {
+		t.Fatalf("retry pairing = %+v, %v", out, err)
+	}
+	joinerNow := mustGetPeer(t, joiner.own, ctx, "north")
+	retry := store.PeerEnrollmentProof{Expected: *joinerNow, Invite: store.Invite{Name: "north", Key: host.pub(), Enc: host.enc, URL: host.srv.URL}, Transcript: called.Transcript,
+		ConfirmRequestURL: exchange.RequestURL, ConfirmRequestTime: exchange.RequestTime, ConfirmRequestBody: exchange.RequestBody, ConfirmRequestSig: exchange.RequestSig,
+		ConfirmResponseStatus: exchange.ResponseStatus, ConfirmResponseBody: exchange.ResponseBody, ConfirmResponseSig: exchange.ResponseSig}
+	if _, err := joiner.own.CommitPeerEnrollment(ctx, retry, "jo"); err != nil {
+		t.Fatalf("caller retry: %v", err)
+	}
+	if got := mustGetPeer(t, joiner.own, ctx, "north"); got.Enc != host.enc {
+		t.Fatalf("caller not enrolled by the retry: %+v", got)
+	}
+	deliverQueued(t, host, "laptop", joiner, hostQueued)
+	deliverQueued(t, joiner, "north", host, joinerQueued)
+}
+
+// deliverQueued posts what waits in from's outbox for peer: queued, as it was
+// before, and then only the pongs the receiving yard queued on taking one of
+// those pings. Each message is delivered and marked sent; a second post of it
+// is taken as already had, so to holds one copy of each id, and from's queue
+// is empty.
+func deliverQueued(t *testing.T, from *pairYard, peer string, to *pairYard, queued []store.PeerOut) {
+	t.Helper()
+	ctx := context.Background()
+	p := mustGetPeer(t, from.own, ctx, peer)
+	waiting, err := from.own.PeerOutbox(ctx, peer, 0)
+	if err != nil || len(waiting) < len(queued) || !reflect.DeepEqual(waiting[:len(queued)], queued) {
+		t.Fatalf("%s waits %+v, want %+v first: %v", peer, waiting, queued, err)
+	}
+	for _, m := range waiting[len(queued):] {
+		if m.Re == "" {
+			t.Fatalf("%s waits a message nobody queued it for: %+v", peer, m)
+		}
+	}
+	for _, m := range waiting {
+		if err := from.caller().Push(ctx, *p, m.PeerMessage); err != nil {
+			t.Fatalf("push %s to %s: %v", m.ID, peer, err)
+		}
+		if err := from.own.PeerDelivered(ctx, peer, m.Seq); err != nil {
+			t.Fatalf("delivered %s to %s: %v", m.ID, peer, err)
+		}
+		if err := from.caller().Push(ctx, *p, m.PeerMessage); err != nil {
+			t.Fatalf("second post of %s to %s: %v", m.ID, peer, err)
+		}
+		if got := countEvents(to.events(t, "peer_message_received"), m.ID); got != 1 {
+			t.Fatalf("%s received %d times, want once", m.ID, got)
+		}
+		if got := countEvents(from.events(t, "peer_message_sent"), m.ID); got != 1 {
+			t.Fatalf("%s sent %d times, want once", m.ID, got)
+		}
+	}
+	if left, err := from.own.PeerOutbox(ctx, peer, 0); err != nil || len(left) != 0 {
+		t.Fatalf("%s queue after delivery = %+v, %v", peer, left, err)
+	}
+}
+
+// countEvents counts the events whose id is id.
+func countEvents(evs []store.Event, id string) int {
+	n := 0
+	for _, e := range evs {
+		if e.Data["id"] == id {
+			n++
+		}
+	}
+	return n
 }
 
 func mustGetPeer(t *testing.T, s *store.Store, ctx context.Context, name string) *store.Peer {

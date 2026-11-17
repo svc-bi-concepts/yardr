@@ -104,8 +104,26 @@ func TestCommitPeerEnrollmentEffectiveName(t *testing.T) {
 	}
 }
 
+// The seeded custody comparison runs twice: a pin filled under the saved
+// name, and the same with the peer renamed since it was linked. Either way
+// nothing but the authorized Calls and Enc, and the one audit event, changes.
 func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		name := "pin only"
+		if rename {
+			name = "renamed"
+		}
+		t.Run(name, func(t *testing.T) { preservesExistingRecordAndOutbox(t, rename) })
+	}
+}
+
+func preservesExistingRecordAndOutbox(t *testing.T, rename bool) {
 	y, proof := enrollmentFixture(t)
+	wantCalls, wantKind := "the-north", "peer_encryption_enrolled"
+	if rename {
+		wantCalls, wantKind = "the-north-renamed", "peer_identity_enrolled"
+		proof.Invite.Name = wantCalls
+	}
 	if err := y.api.PutDepot(y.ctx, store.Depot{Name: "web", Base: "origin/main"}, "jo"); err != nil {
 		t.Fatal(err)
 	}
@@ -172,12 +190,20 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof.Expected = *before
+	// A caller that may not pair cannot enroll, named or not, and nothing moves.
+	spoof := enrollmentProof(t, y, *before, proof.Invite)
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, spoof, "mallory"); err == nil {
+		t.Fatal("an actor with no right to pair enrolled a peer")
+	}
+	if now, err := y.api.GetPeer(y.ctx, "north"); err != nil || !reflect.DeepEqual(now, before) {
+		t.Fatalf("a refused actor changed the peer: before=%+v after=%+v err=%v", before, now, err)
+	}
+	proof = enrollmentProof(t, y, *before, proof.Invite)
 	got, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	before.Enc = proof.Invite.Enc
+	before.Enc, before.Calls = proof.Invite.Enc, wantCalls
 	if !reflect.DeepEqual(got, before) {
 		t.Fatalf("peer changed beyond its encryption pin:\nwant=%+v\ngot=%+v", before, got)
 	}
@@ -208,7 +234,7 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := events[len(events)-1]; got.Kind != "peer_encryption_enrolled" || got.Data["peer"] != "north" {
+	if got := events[len(events)-1]; got.Kind != wantKind || got.Data["peer"] != "north" {
 		t.Fatalf("enrollment audit event = %+v", got)
 	}
 	// A concurrent local grant change makes the confirmed local compare-and-set
@@ -310,5 +336,169 @@ func TestCommitPeerEnrollmentRefusesInvalidProofAndRotation(t *testing.T) {
 	proof = enrollmentProof(t, y, *current, store.Invite{Name: "the-north", Key: y.key, Enc: otherEnc, URL: current.URL})
 	if _, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo"); err == nil || !strings.Contains(err.Error(), "different encryption key") {
 		t.Fatalf("rotation error = %v", err)
+	}
+}
+
+// A peer that renamed itself since it was linked keeps its key, encryption
+// key, URL and link settings: the enrollment takes the new name from the
+// invite the pairing confirmed, and nothing else changes.
+func TestCommitPeerEnrollmentAcceptsARename(t *testing.T) {
+	y, proof := enrollmentFixture(t)
+	if _, err := y.api.AllowPeer(y.ctx, "north", store.PeerAllow{Send: []string{store.PeerPing, store.PeerMail}, Receive: []string{store.PeerPing, store.PeerMail}}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := proof.Invite
+	renamed.Name = "the-north-renamed"
+	bad := []struct {
+		name string
+		edit func(*store.PeerEnrollmentProof)
+		want string
+	}{
+		{"new signing key", func(p *store.PeerEnrollmentProof) {
+			p.Invite.Key = store.Public(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{9}, ed25519.SeedSize)))
+		}, "identity or authority"},
+		{"new URL", func(p *store.PeerEnrollmentProof) { p.Invite.URL = "http://elsewhere.test" }, "identity or authority"},
+		{"pairing names another yard", func(p *store.PeerEnrollmentProof) { p.Invite.Name = "someone-else" }, "identity or authority"},
+		{"rename not confirmed", func(p *store.PeerEnrollmentProof) {
+			p.ConfirmResponseBody, _ = json.Marshal(store.PairingOutcome{State: store.Ended})
+			p.ConfirmResponseSig = store.SignResponse(ed25519.PrivateKey(y.north), http.StatusOK, p.ConfirmRequestSig, p.ConfirmResponseBody)
+		}, "not confirmed"},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			p := enrollmentProof(t, y, *before, renamed)
+			tc.edit(&p)
+			if _, err := y.api.CommitPeerEnrollment(y.ctx, p, "jo"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CommitPeerEnrollment error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	after, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("refused renames changed the peer: before=%+v after=%+v err=%v", before, after, err)
+	}
+	proof = enrollmentProof(t, y, *before, renamed)
+	got, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo")
+	if err != nil {
+		t.Fatalf("rename enrollment: %v", err)
+	}
+	if got.Calls != "the-north-renamed" || got.Key != before.Key || got.URL != before.URL || got.Enc != proof.Invite.Enc || got.Name != "north" {
+		t.Fatalf("rename enrollment = %+v, before %+v", got, before)
+	}
+	if !reflect.DeepEqual(got.Send, before.Send) || !reflect.DeepEqual(got.Receive, before.Receive) {
+		t.Fatalf("rename dropped link settings: before %+v after %+v", before, got)
+	}
+	// The retry with the renamed record is read-only, as an equal pin is.
+	current, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := y.own.Events(y.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof = enrollmentProof(t, y, *current, renamed)
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo"); err != nil {
+		t.Fatalf("renamed retry: %v", err)
+	}
+	after2, err := y.own.Events(y.ctx, "", 0)
+	if err != nil || len(after2) != len(events) {
+		t.Fatalf("renamed retry wrote an event: %d -> %d, err %v", len(events), len(after2), err)
+	}
+}
+
+// eventsSince returns the events written after seq, by kind and data.
+func eventsSince(t *testing.T, y *peerYard, seq uint64) []store.Event {
+	t.Helper()
+	all, err := y.own.Events(y.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []store.Event
+	for _, e := range all {
+		if e.Seq > seq {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestCommitPeerEnrollmentAuditsTheRenameMinimally pins the audit contract:
+// a name change writes one peer_identity_enrolled with the local alias, the
+// old and new names and whether the pin was added, and nothing of the proof;
+// a pin filled with the name unchanged keeps peer_encryption_enrolled.
+func TestCommitPeerEnrollmentAuditsTheRenameMinimally(t *testing.T) {
+	y, proof := enrollmentFixture(t)
+	before, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := proof.Invite
+	renamed.Name = "the-north-renamed"
+	mark := func() uint64 {
+		all, err := y.own.Events(y.ctx, "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(all) == 0 {
+			return 0
+		}
+		return all[len(all)-1].Seq
+	}
+	seq := mark()
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, enrollmentProof(t, y, *before, renamed), "jo"); err != nil {
+		t.Fatalf("rename enrollment: %v", err)
+	}
+	got := eventsSince(t, y, seq)
+	if len(got) != 1 || got[0].Kind != "peer_identity_enrolled" {
+		t.Fatalf("rename wrote %+v, want one peer_identity_enrolled", got)
+	}
+	want := map[string]any{"peer": "north", "old_calls": "the-north", "new_calls": "the-north-renamed", "encryption_pin_added": true}
+	if !reflect.DeepEqual(got[0].Data, want) {
+		t.Fatalf("rename audit data = %v, want %v", got[0].Data, want)
+	}
+
+	// The safe projection tells exactly the audit's own fields, nothing of a proof.
+	if told, ok := store.EventDataTold("peer_identity_enrolled"); !ok || !reflect.DeepEqual(told, []string{"encryption_pin_added", "new_calls", "old_calls", "peer"}) {
+		t.Fatalf("peer_identity_enrolled projection = %v, %v", told, ok)
+	}
+
+	// The pin is now held and the name is current: a repeat writes nothing.
+	seq = mark()
+	current, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, enrollmentProof(t, y, *current, renamed), "jo"); err != nil {
+		t.Fatalf("renamed retry: %v", err)
+	}
+	if got := eventsSince(t, y, seq); len(got) != 0 {
+		t.Fatalf("unchanged repeat wrote %+v", got)
+	}
+}
+
+// TestCommitPeerEnrollmentPinOnlyKeepsItsEvent: a pin filled under the name
+// already saved is still audited as the encryption enrollment it always was.
+func TestCommitPeerEnrollmentPinOnlyKeepsItsEvent(t *testing.T) {
+	y, proof := enrollmentFixture(t)
+	before, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := y.own.Events(y.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := all[len(all)-1].Seq
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, enrollmentProof(t, y, *before, proof.Invite), "jo"); err != nil {
+		t.Fatalf("pin enrollment: %v", err)
+	}
+	got := eventsSince(t, y, seq)
+	if len(got) != 1 || got[0].Kind != "peer_encryption_enrolled" || !reflect.DeepEqual(got[0].Data, map[string]any{"peer": "north", "key": y.key}) {
+		t.Fatalf("pin wrote %+v, want one peer_encryption_enrolled for north", got)
 	}
 }
