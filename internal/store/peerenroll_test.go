@@ -104,8 +104,26 @@ func TestCommitPeerEnrollmentEffectiveName(t *testing.T) {
 	}
 }
 
+// The seeded custody comparison runs twice: a pin filled under the saved
+// name, and the same with the peer renamed since it was linked. Either way
+// nothing but the authorized Calls and Enc, and the one audit event, changes.
 func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		name := "pin only"
+		if rename {
+			name = "renamed"
+		}
+		t.Run(name, func(t *testing.T) { preservesExistingRecordAndOutbox(t, rename) })
+	}
+}
+
+func preservesExistingRecordAndOutbox(t *testing.T, rename bool) {
 	y, proof := enrollmentFixture(t)
+	wantCalls, wantKind := "the-north", "peer_encryption_enrolled"
+	if rename {
+		wantCalls, wantKind = "the-north-renamed", "peer_identity_enrolled"
+		proof.Invite.Name = wantCalls
+	}
 	if err := y.api.PutDepot(y.ctx, store.Depot{Name: "web", Base: "origin/main"}, "jo"); err != nil {
 		t.Fatal(err)
 	}
@@ -172,12 +190,20 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof.Expected = *before
+	// A caller that may not pair cannot enroll, named or not, and nothing moves.
+	spoof := enrollmentProof(t, y, *before, proof.Invite)
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, spoof, "mallory"); err == nil {
+		t.Fatal("an actor with no right to pair enrolled a peer")
+	}
+	if now, err := y.api.GetPeer(y.ctx, "north"); err != nil || !reflect.DeepEqual(now, before) {
+		t.Fatalf("a refused actor changed the peer: before=%+v after=%+v err=%v", before, now, err)
+	}
+	proof = enrollmentProof(t, y, *before, proof.Invite)
 	got, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	before.Enc = proof.Invite.Enc
+	before.Enc, before.Calls = proof.Invite.Enc, wantCalls
 	if !reflect.DeepEqual(got, before) {
 		t.Fatalf("peer changed beyond its encryption pin:\nwant=%+v\ngot=%+v", before, got)
 	}
@@ -208,7 +234,7 @@ func TestCommitPeerEnrollmentPreservesExistingRecordAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := events[len(events)-1]; got.Kind != "peer_encryption_enrolled" || got.Data["peer"] != "north" {
+	if got := events[len(events)-1]; got.Kind != wantKind || got.Data["peer"] != "north" {
 		t.Fatalf("enrollment audit event = %+v", got)
 	}
 	// A concurrent local grant change makes the confirmed local compare-and-set
