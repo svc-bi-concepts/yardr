@@ -418,6 +418,8 @@ var Access = map[string]Class{
 	"RemovePeerIdentity":   Operator,
 	"PeerSend":             Admin,
 	"MailPeer":             Agent,
+	"MailPeerReceipt":      Agent,
+	"MailReceiptOf":        Agent,
 	"PeerOutbox":           Read,
 	"PeerDelivered":        Admin,
 	"PeerSendFailed":       Admin,

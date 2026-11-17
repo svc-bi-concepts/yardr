@@ -812,6 +812,12 @@ func (c *Client) PeerSend(ctx context.Context, name, kind string, body json.RawM
 func (c *Client) MailPeer(ctx context.Context, to, peer, text, actor string, files ...store.BlobFile) (*store.PeerOut, error) {
 	return callV[*store.PeerOut](c, ctx, "MailPeer", to, peer, text, actor, files)
 }
+func (c *Client) MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...store.BlobFile) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailPeerReceipt", to, peer, text, actor, files)
+}
+func (c *Client) MailReceiptOf(ctx context.Context, seq uint64, actor string) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailReceiptOf", seq, actor)
+}
 func (c *Client) PeerOutbox(ctx context.Context, name string, limit int) ([]store.PeerOut, error) {
 	return callV[[]store.PeerOut](c, ctx, "PeerOutbox", name, limit)
 }

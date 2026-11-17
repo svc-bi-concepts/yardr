@@ -294,6 +294,8 @@ type API interface {
 	RemovePeerIdentity(ctx context.Context, name, crew, source, actor string) (*Peer, error)
 	PeerSend(ctx context.Context, name, kind string, body json.RawMessage, actor string) (*PeerOut, error)
 	MailPeer(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (*PeerOut, error)
+	MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (MailReceipt, error)
+	MailReceiptOf(ctx context.Context, seq uint64, actor string) (MailReceipt, error)
 	PeerOutbox(ctx context.Context, name string, limit int) ([]PeerOut, error)
 	PeerDelivered(ctx context.Context, name string, seq uint64) error
 	PeerSendFailed(ctx context.Context, name string, seq uint64, reason string, retryAt time.Time, final bool) error

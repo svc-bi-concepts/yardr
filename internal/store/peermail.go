@@ -277,6 +277,23 @@ func mailTo(e Event) string {
 // member's pane the mail goes as that session's actor or that crew member,
 // whatever actor says; from anywhere else, as given (paneAuthor).
 func (s *Store) MailPeer(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (*PeerOut, error) {
+	return s.mailPeer(ctx, to, peer, text, actor, files, nil)
+}
+
+// MailPeerReceipt is MailPeer, and returns the receipt the mail was queued
+// under (MailReceipt): written in the same write as the message and its
+// event, so a receipt exists exactly when the mail was queued here.
+func (s *Store) MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (MailReceipt, error) {
+	var got MailReceipt
+	if _, err := s.mailPeer(ctx, to, peer, text, actor, files, &got); err != nil {
+		return MailReceipt{}, err
+	}
+	return got, nil
+}
+
+// mailPeer is MailPeer's send: it sets got, when it is not nil, to the
+// receipt of the mail it queued.
+func (s *Store) mailPeer(ctx context.Context, to, peer, text, actor string, files []BlobFile, got *MailReceipt) (*PeerOut, error) {
 	switch {
 	case strings.TrimSpace(text) == "" && len(files) == 0 || len(text) > MaxPeerMailBytes:
 		return nil, fmt.Errorf("mail to another yard must be 1..%d bytes", MaxPeerMailBytes)
@@ -331,7 +348,21 @@ func (s *Store) MailPeer(ctx context.Context, to, peer, text, actor string, file
 		if len(refs) > 0 {
 			data["files"] = refs
 		}
-		return w.event("", "mail", actor, data)
+		if err := w.event("", "mail", actor, data); err != nil {
+			return err
+		}
+		// The event is the last one written, so its seq is the sequence
+		// the write just took: no scan for it. The receipt goes in this
+		// write, so the mail, its event and its receipt commit together
+		// or not at all.
+		r := MailReceipt{Seq: w.Bucket(bEvents).Sequence(), ID: m.ID, Direction: ReceiptOut, Peer: p.Name, PeerKey: p.Key, From: actor, To: to, At: now()}
+		if err := put(w.Tx, bMailReceipts, seqKey(r.Seq), r); err != nil {
+			return err
+		}
+		if got != nil {
+			*got = r
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
