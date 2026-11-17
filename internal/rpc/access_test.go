@@ -41,7 +41,7 @@ func TestAccessClassesEveryServedMethod(t *testing.T) {
 	if got := Access["PlanRun"]; got != Admin {
 		t.Errorf("PlanRun has class %v, want admin", got)
 	}
-	for _, name := range []string{"SessionScreen", "Line", "Prime", "Teammates", "TelemetryShow", "TelemetrySet", "DevicePairState"} {
+	for _, name := range []string{"SessionScreen", "Line", "Prime", "Teammates", "TelemetryShow", "TelemetrySet", "DevicePairState", "CommitPeerEnrollment"} {
 		if got := Access[name]; got != Operator {
 			t.Errorf("%s has class %v, want operator", name, got)
 		}

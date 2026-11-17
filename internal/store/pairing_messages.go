@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// PairingMessageBound is the maximum body size of a pairing request or
+// answer, and also bounds the proof retained for legacy enrollment.
+const PairingMessageBound = 4 << 10
+
 // A pairing's codes and messages: what two yards say to each other to
 // become peers from a short code one operator reads to the other
 // (docs/peers.md, "Pairing"). Moved from internal/pairing (yardr-rxk9),
@@ -333,6 +337,22 @@ const (
 type PairingOutcome struct {
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// PeerEnrollmentProof is the final native confirmation exchange the caller
+// received for one transcript. It lets the store bind its write to the
+// exact signed request and response instead of trusting the CLI's claim.
+type PeerEnrollmentProof struct {
+	Expected              Peer       `json:"expected"`
+	Invite                Invite     `json:"invite"`
+	Transcript            Transcript `json:"transcript"`
+	ConfirmRequestURL     string     `json:"confirm_request_url"`
+	ConfirmRequestTime    string     `json:"confirm_request_time"`
+	ConfirmRequestBody    []byte     `json:"confirm_request_body"`
+	ConfirmRequestSig     string     `json:"confirm_request_sig"`
+	ConfirmResponseStatus int        `json:"confirm_response_status"`
+	ConfirmResponseBody   []byte     `json:"confirm_response_body"`
+	ConfirmResponseSig    string     `json:"confirm_response_sig"`
 }
 
 // The reasons a pairing ends without a link, as events and answers name

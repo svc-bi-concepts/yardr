@@ -129,7 +129,7 @@ here is who this yard takes messages from.
 
 The link works once each side has added the other, and carries nothing until
 yardr peer allow says what. A name or key that is a peer already is refused:
-remove the peer first to replace it.`,
+remove the peer first to replace it; that deletes queued mail, grants and custody records. Existing legacy links enroll in place with peer pair --enroll <name> --invite <fresh-v2-invite> on each side; compare fresh checks and follow docs/peers.md for partial recovery.`,
 		RunE: func(c *cobra.Command, args []string) error {
 			ctx := c.Context()
 			inv, err := store.ParseInvite(args[1])

@@ -28,8 +28,8 @@ import (
 
 // pairOpts are the flags of yardr peer pair.
 type pairOpts struct {
-	name, url string
-	yes, end  bool
+	name, url, enroll, invite string
+	yes, end                  bool
 	// card opens the pairing for a card in footplate (pairHostCard), or
 	// calls the other yard for one (pairJoinCard): the command returns at
 	// once, and this yard's operator confirms it by typing digits where the
@@ -67,9 +67,9 @@ other yard's name. With an argument or a flag, without a terminal, with
 The yards then give each other their names and public keys, and each shows
 its operator a check of six digits. Compare it with the other operator's,
 over the way you passed the code: it is the same on both only when nothing
-between the yards put a key of its own in. Each operator confirms it, each
-yard saves the other as a peer, and a ping proves the link. Declined, or not
-answered in time, on either side: nothing is saved on either.
+between the yards put a key of its own in. For a new link, each operator
+confirms it, each yard saves the other as a peer, and a ping proves the link.
+Declined, or not answered in time, before both confirm: no new link is saved.
 
 The code is good for 10 minutes and for one pairing, and 5 wrong codes end
 the pairing. It keeps a yard that was not given it from calling at all. The
@@ -104,12 +104,26 @@ hook_addr <host:port>) and says where the other reaches it with --url; the
 default is the listener's own address. The other need not be reachable at
 all: the link then pulls. One of the two has to be.
 
-Without a terminal there is no one to ask: --yes confirms the check without
+For an existing link with no encryption pin, each operator independently
+gets the other yard's fresh v2 invite over a trusted channel. The reachable
+yard runs --enroll <existing-peer-name> --invite <fresh-v2-invite>; the
+caller adds those flags to the address and code command. Both operators
+compare a fresh check. Only the missing pin is filled; link settings and
+queued work stay in place. A different identity or an existing different
+pin is refused. Removing and adding a peer loses its queues, grants and
+custody records.
+
+Enrollment requires a terminal and refuses --yes, --json, --name and --expose.
+See docs/peers.md, "Enrolling a legacy link", for the procedure and recovery.
+
+For a new link without a terminal, --yes confirms the check without
 asking, and prints it. That is for scripts and tests, on a network you trust:
 a check nobody compared has proved nothing. With --json the opening yard
 prints two documents, the code at once and the result at the end.`,
 		Example: `  yardr peer pair --url http://10.0.0.5:8790     # north, which can be reached
   yardr peer pair http://10.0.0.5:8790 K7QM-2XPD # laptop, with the code north shows
+  yardr peer pair --enroll north --invite '<fresh-v2-invite>' # enroll the existing peer on the reachable yard
+  yardr peer pair http://10.0.0.5:8790 K7QM-2XPD --enroll north --invite '<fresh-v2-invite>'
   yardr peer pair --end                          # end the pairing this yard has open
   yardr peer pair --card --name laptop           # open it for a card: the operator confirms in footplate
   yardr peer pair http://10.0.0.5:8790 K7QM-2XPD --card # call it for a card instead`,
@@ -128,6 +142,19 @@ prints two documents, the code at once and the result at the end.`,
 			cfg, err := a.config()
 			if err != nil {
 				return err
+			}
+			if opt.enroll != "" {
+				if opt.card {
+					return errors.New("--enroll is for a pairing that asks its operator to compare the check here: it takes no --card")
+				}
+				if opt.invite == "" {
+					return errors.New("--enroll requires the other yard's fresh yardr-peer-2 invite with --invite")
+				}
+				if opt.yes || c.Flags().Changed("name") || c.Flags().Changed("expose") {
+					return errors.New("enrollment requires a fresh operator comparison; --yes, --name and --expose are not available")
+				}
+			} else if opt.invite != "" {
+				return errors.New("--invite is only used with --enroll")
 			}
 			act := store.ActPair
 			if opt.card {
@@ -195,6 +222,8 @@ prints two documents, the code at once and the result at the end.`,
 		},
 	}
 	cmd.Flags().StringVar(&opt.name, "name", "", "the name to save the other yard under (default: the name it gives itself)")
+	cmd.Flags().StringVar(&opt.invite, "invite", "", "fresh v2 invite independently obtained from the peer operator; required with --enroll")
+	cmd.Flags().StringVar(&opt.enroll, "enroll", "", "fill the missing encryption pin of this existing peer after the authenticated pairing")
 	cmd.Flags().StringVar(&opt.url, "url", "", "where the other yard reaches this one's listener, such as http://10.0.0.5:8790 (default: the listener's address)")
 	cmd.Flags().BoolVar(&opt.yes, "yes", false, "confirm the check without asking, and print it (scripts and tests)")
 	cmd.Flags().StringSliceVar(&opt.expose, "expose", nil, "crew member or user of this yard the other may see and write to (repeatable)")
@@ -251,7 +280,7 @@ type notCalled struct{ error }
 
 // pairFlagged reports whether any of yardr peer pair's own flags was given.
 func pairFlagged(c *cobra.Command) bool {
-	for _, f := range []string{"name", "url", "yes", "end", "timeout", "expose", "card"} {
+	for _, f := range []string{"name", "url", "enroll", "invite", "yes", "end", "timeout", "expose", "card"} {
 		if c.Flags().Changed(f) {
 			return true
 		}
@@ -386,7 +415,11 @@ func (a *app) pairHost(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 		return err
 	}
 	who := a.who()
-	opened, err := st.PairOpen(ctx, store.PairOffer{Name: inv.Name, Key: inv.Key, Enc: inv.Enc, URL: inv.URL, As: opt.name}, who)
+	enrollment, err := peerEnrollment(ctx, st, opt)
+	if err != nil {
+		return err
+	}
+	opened, err := st.PairOpen(ctx, store.PairOffer{Name: inv.Name, Key: inv.Key, Enc: inv.Enc, URL: inv.URL, As: opt.name, Enrollment: enrollment}, who)
 	if err != nil {
 		return err
 	}
@@ -395,7 +428,7 @@ func (a *app) pairHost(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	// or has ended is not changed by it.
 	defer func() { _ = st.PairClose(context.WithoutCancel(ctx), id, who) }()
 
-	command := fmt.Sprintf("yardr peer pair %s %s", inv.URL, opened.Code)
+	command := pairCallerCommand(inv.URL, opened.Code, enrollment != nil)
 	// The form gives the listener's own address, so only the command can
 	// name one the listener is not on.
 	var loopback string
@@ -416,6 +449,9 @@ func (a *app) pairHost(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	} else {
 		fmt.Fprintf(w, "Pairing is open for %s, until %s, for one yard. Read the code to the other operator, who runs:\n\n  %s\n\n",
 			short(store.TTL), opened.Expires.Local().Format("15:04:05"), command)
+		if enrollment != nil {
+			fmt.Fprintln(w, "The caller independently gets this yard's fresh v2 invite over a trusted channel and uses their existing peer name; both operators compare fresh checks.")
+		}
 		if loopback != "" {
 			fmt.Fprintf(w, "%s\n\n", loopback)
 		}
@@ -425,6 +461,13 @@ func (a *app) pairHost(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	p, err := a.pairHosted(w, warn, ctx, st, opened.Pairing, opt)
 	if err != nil {
 		return err
+	}
+	if p.Enroll != "" {
+		peer, err := st.GetPeer(ctx, p.Peer)
+		if err != nil {
+			return peerEnrollmentPartial(p.Enroll, "the host could not read the enrolled peer")
+		}
+		return a.pairEnrollmentDone(w, *peer, p.AlreadyEnrolled)
 	}
 	peer, err := st.GetPeer(ctx, p.Peer)
 	if err != nil {
@@ -517,7 +560,7 @@ func (a *app) pairJoinCard(w io.Writer, ctx context.Context, cfg *config.Config,
 		return err
 	}
 	caller := &yards.Caller{Key: key, Enc: encPriv, HTTP: pairHTTP}
-	accept, peerp := a.pairAccept(ctx, st, inv, addr, opt.name, false, "")
+	accept, peerp := a.pairAccept(ctx, st, inv, addr, opt.name, false, "", nil)
 	called, err := caller.PairCall(ctx, addr, clean, inv.Name, accept)
 	if errors.Is(err, errNotAdded) {
 		return errors.New(strings.TrimPrefix(err.Error(), errNotAdded.Error()+": ") + nothingSaved)
@@ -556,10 +599,19 @@ func (a *app) pairHosted(w, warn io.Writer, ctx context.Context, st store.API, p
 	for {
 		now, err := st.GetPairing(ctx, p.ID)
 		if ctx.Err() != nil {
+			if p.Enroll != "" {
+				return nil, peerEnrollmentPartial(p.Enroll, "the host stopped waiting for the final pairing outcome")
+			}
 			return nil, errors.New("the pairing was ended" + nothingSaved)
 		} else if errors.Is(err, store.ErrNotFound) {
+			if p.Enroll != "" {
+				return nil, peerEnrollmentPartial(p.Enroll, "the host's in-memory pairing is gone")
+			}
 			return nil, errors.New("the pairing is gone: the yard's server stopped or was replaced while it was open, and a pairing lives in its memory. Open another" + nothingSaved)
 		} else if err != nil {
+			if p.Enroll != "" {
+				return nil, peerEnrollmentPartial(p.Enroll, "the host could not read the final pairing outcome")
+			}
 			return nil, err
 		}
 		if now.Tries > tries {
@@ -583,6 +635,9 @@ func (a *app) pairHosted(w, warn io.Writer, ctx context.Context, st store.API, p
 				}
 			}
 			if now, err = st.PairAnswer(ctx, p.ID, yes, a.who()); err != nil {
+				if p.Enroll != "" {
+					return nil, peerEnrollmentPartial(p.Enroll, "the host did not receive its local confirmation outcome")
+				}
 				return nil, err
 			}
 			if now.State == store.PairCalled && opt.form != nil {
@@ -653,7 +708,7 @@ var errNotAdded = errors.New("not added")
 // nothing, and the code is still good for a call with --name. It answers
 // the accept and where it puts what answered. A yard that cannot be one is
 // logged here, and ends the call as errNotAdded's.
-func (a *app) pairAccept(ctx context.Context, st store.API, inv store.Invite, addr, name string, form bool, yardr string) (func(host store.Party) error, *store.Peer) {
+func (a *app) pairAccept(ctx context.Context, st store.API, inv store.Invite, addr, name string, form bool, yardr string, enrollment *store.PeerEnrollment) (func(host store.Party) error, *store.Peer) {
 	var peer store.Peer
 	who := a.who()
 	accept := func(host store.Party) error {
@@ -661,6 +716,18 @@ func (a *app) pairAccept(ctx context.Context, st store.API, inv store.Invite, ad
 		if host.Key == inv.Key {
 			_ = st.PairRefused(ctx, store.Own, host.Name, who)
 			return fmt.Errorf("%w: the yard that answered has this yard's own key, and a yard is not paired with itself", errNotAdded)
+		}
+		if enrollment != nil {
+			// The peer is the one this yard already has: the answer must be
+			// the yard its operator got the fresh invite from, at the address
+			// it has, and nothing of it changes but the missing pin.
+			existing := enrollment.Expected
+			if host.Key != enrollment.Invite.Key || host.Name != enrollment.Invite.Name || host.Enc != enrollment.Invite.Enc ||
+				host.URL != enrollment.Invite.URL || host.URL != existing.URL {
+				return fmt.Errorf("peer %s does not match its independently obtained invite and unchanged URL", existing.Name)
+			}
+			peer = existing
+			return nil
 		}
 		if err := st.CheckPeer(ctx, peer); err != nil {
 			_ = st.PairRefused(ctx, store.AlreadyPeer, host.Name, who)
@@ -697,7 +764,21 @@ func (a *app) pairJoin(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 		return err
 	}
 	who := a.who()
-	if opt.name != "" {
+	var existing *store.Peer
+	var enrollment *store.PeerEnrollment
+	if opt.enroll != "" {
+		enrollment, err = peerEnrollment(ctx, st, opt)
+		if err != nil {
+			return err
+		}
+		existing = &enrollment.Expected
+		if existing.URL == "" {
+			return errors.New("the existing peer has no callable URL; open the pairing from that yard or restore its unchanged address first")
+		}
+		if existing.URL != addr {
+			return fmt.Errorf("peer %s is called at %s, not %s", existing.Name, existing.URL, addr)
+		}
+	} else if opt.name != "" {
 		// Said now, not after the other operator has been kept waiting. The
 		// key is this yard's own, which is no peer's: only the name is asked.
 		if err := st.CheckPeer(ctx, store.Peer{Name: opt.name, Key: inv.Key}); err != nil {
@@ -709,7 +790,7 @@ func (a *app) pairJoin(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 		return err
 	}
 	caller := &yards.Caller{Key: key, Enc: encPriv, HTTP: pairHTTP}
-	accept, peerp := a.pairAccept(ctx, st, inv, addr, opt.name, opt.form != nil, yardrAt(cfg.Home))
+	accept, peerp := a.pairAccept(ctx, st, inv, addr, opt.name, opt.form != nil, yardrAt(cfg.Home), enrollment)
 	called, err := caller.PairCall(ctx, addr, clean, inv.Name, accept)
 	if errors.Is(err, errNotAdded) {
 		return errors.New(strings.TrimPrefix(err.Error(), errNotAdded.Error()+": ") + nothingSaved)
@@ -761,25 +842,104 @@ func (a *app) pairJoin(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 	}
 	wait, cancel := context.WithTimeout(ctx, store.ConfirmTTL)
 	defer cancel()
-	out, err := caller.PairWait(wait, called, pairPoll.caller)
+	out, outProof, err := caller.PairWaitWithProof(wait, called, pairPoll.caller)
 	switch {
 	case ctx.Err() != nil:
 		refuse(store.Closed)
+		if existing != nil {
+			return peerEnrollmentPartial(peer.Name, "the caller stopped waiting for the final confirmed pairing answer")
+		}
 		return errors.New("the pairing was ended" + nothingSaved)
 	case wait.Err() != nil:
 		refuse(store.TimedOut)
+		if existing != nil {
+			return peerEnrollmentPartial(peer.Name, "the caller did not receive a final confirmed pairing answer")
+		}
 		return fmt.Errorf("%s's operator did not confirm within %s%s", peer.Name, short(store.ConfirmTTL), nothingSaved)
 	case err != nil:
+		if existing != nil {
+			return peerEnrollmentPartial(peer.Name, "the confirmed pairing answer may have been saved at only one yard")
+		}
 		// The other yard may have saved this one: its answer did not arrive.
 		return fmt.Errorf("asking %s how the pairing stands: %w\nThis yard saved nothing. If %s shows this yard as a peer, remove it there (`yardr peer rm` with the name it shows for this yard) and pair again", peer.Name, err, peer.Name)
 	case out.State != store.Confirmed:
 		return a.hostSaidNo(ctx, st, peer.Name, host.Name, out.Reason)
 	}
-	saved, err := st.PairPeer(ctx, peer, who)
+	var saved *store.Peer
+	if existing != nil {
+		proof := store.PeerEnrollmentProof{Expected: *existing, Invite: enrollment.Invite, Transcript: called.Transcript,
+			ConfirmRequestURL: outProof.RequestURL, ConfirmRequestTime: outProof.RequestTime, ConfirmRequestBody: outProof.RequestBody, ConfirmRequestSig: outProof.RequestSig,
+			ConfirmResponseStatus: outProof.ResponseStatus, ConfirmResponseBody: outProof.ResponseBody, ConfirmResponseSig: outProof.ResponseSig}
+		saved, err = st.CommitPeerEnrollment(ctx, proof, who)
+	} else {
+		saved, err = st.PairPeer(ctx, peer, who)
+	}
 	if err != nil {
+		if existing != nil {
+			return peerEnrollmentPartial(peer.Name, "the other yard confirmed; this yard refused its local compare-and-set")
+		}
 		return fmt.Errorf("%s has saved this yard, and this yard could not save it: %w\nRemove this yard there (`yardr peer rm` with the name it shows for this yard) and pair again", peer.Name, err)
 	}
+	if existing != nil {
+		return a.pairEnrollmentDone(w, *saved, existing.Enc != "")
+	}
 	return a.pairDone(w, warn, ctx, cfg, st, paired{Role: "joiner", Peer: saved, Check: called.Check()}, opt)
+}
+
+// peerEnrollment reads the --enroll flags into what the pairing is opened
+// with: the existing peer as it is now, and the fresh invite the operator
+// obtained for it. Nothing is changed here; the store refuses a peer that
+// has moved on since.
+func peerEnrollment(ctx context.Context, st store.API, opt pairOpts) (*store.PeerEnrollment, error) {
+	if opt.enroll == "" {
+		return nil, nil
+	}
+	invite, err := store.ParseInvite(opt.invite)
+	if err != nil {
+		return nil, err
+	}
+	if invite.Enc == "" {
+		return nil, errors.New("peer enrollment requires a yardr-peer-2 invite with an encryption key")
+	}
+	expected, err := st.GetPeer(ctx, opt.enroll)
+	if err != nil {
+		return nil, fmt.Errorf("peer %s: %w", opt.enroll, err)
+	}
+	if expected.Key != invite.Key || expected.Calls != invite.Name || expected.URL != invite.URL ||
+		(expected.Enc != "" && expected.Enc != invite.Enc) {
+		return nil, fmt.Errorf("peer %s identity or authority does not match the fresh invite", opt.enroll)
+	}
+	return &store.PeerEnrollment{PeerName: opt.enroll, Expected: *expected, Invite: invite}, nil
+}
+
+// peerEnrollmentPartial says an enrollment ended with an outcome this yard
+// cannot see, and how to find out and retry without losing the peer.
+func peerEnrollmentPartial(peer, reason string) error {
+	return fmt.Errorf("peer %s enrollment has a partial or unknown outcome: %s. Inspect `yardr peer show %s` on both yards. If both current peer records and independently obtained fresh invites still agree, open a new pairing on the reachable yard with `yardr peer pair --enroll %s --invite <fresh-v2-invite>`, then call it with `yardr peer pair <address> <new-code> --enroll %s --invite <fresh-v2-invite>`; both operators compare fresh checks. Do not remove, re-add, clear a pin, or replay queued work", peer, reason, peer, peer, peer)
+}
+
+// pairCallerCommand is the command the other yard's operator runs. An
+// enrollment's caller needs its own existing peer name and an invite it
+// obtained independently, neither of which this yard knows.
+func pairCallerCommand(address, code string, enroll bool) string {
+	command := fmt.Sprintf("yardr peer pair %s %s", address, code)
+	if enroll {
+		command += " --enroll <existing-peer-name> --invite '<fresh-v2-invite>'"
+	}
+	return command
+}
+
+// pairEnrollmentDone says what an enrollment did, and that the link's
+// settings and queued work were kept.
+func (a *app) pairEnrollmentDone(w io.Writer, p store.Peer, already bool) error {
+	label := "enrolled"
+	if already {
+		label = "already enrolled"
+	}
+	return a.out(w, map[string]any{"peer": p, "status": label}, func(w io.Writer) {
+		fmt.Fprintf(w, "peer %s: %s; its link settings and queued work were preserved\n", p.Name, label)
+		fmt.Fprintf(w, "Inspect both sides with yardr peer show %s; no permissions or ping were added\n", p.Name)
+	})
 }
 
 // hostSaidNo says why the yard that was called ended the pairing, and logs

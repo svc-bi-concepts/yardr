@@ -234,6 +234,7 @@ var allowSerial = map[string]string{
 	"TestPairFormKeepsPing":                                 "stubAsk",
 	"TestPairFormLeftAfterTheCheck":                         "formYards",
 	"TestPairFormNoAtTheCheck":                              "formYards",
+	"TestPairEnrollmentInterruptedAfterCommit":              "assign:pairHTTP,pairYards",
 	"TestPairFormSetsTheAddress":                            "setInteractive,stub:answers,stub:listenWait,stub:restartServer,stubAsk",
 	"TestPairFormWithFile":                                  "formYards",
 	"TestPairFormWithoutMail":                               "formYards",

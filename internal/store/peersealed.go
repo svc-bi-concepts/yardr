@@ -147,10 +147,10 @@ func SealedSize(plain int) int {
 func SealedFileBound() int { return SealedSize(MaxPeerFileBody) }
 
 // ReLinkLine is what peer ping, show and doctor say of a peer stored
-// before sealed bodies (no encryption key): the one recovery, in one
-// line, said before anything is dialled for it.
+// before sealed bodies (no encryption key): enrollment preserves the
+// existing link and is said before anything is dialled for it.
 func ReLinkLine(name string) string {
-	return fmt.Sprintf("%s was linked before sealed bodies: re-link it — yardr peer rm %s, then link it again by its address or its new invite", name, name)
+	return fmt.Sprintf("%s was linked before sealed bodies: enroll its missing encryption pin with yardr peer pair --enroll %s --invite <fresh-v2-invite> on both yards", name, name)
 }
 
 // NoEncLine is what adding a peer says of an invite that carries no

@@ -52,7 +52,7 @@ const (
 // MaxSkew is how far a request's timestamp may be from the receiver's
 // clock, either way, which is also how long a recorded request can be
 // played again.
-const MaxSkew = 5 * time.Minute
+const MaxSkew = store.PairRequestMaxSkew
 
 // enc, clip and bodySum are the store's own (internal/store, yardkey.go),
 // which this package cannot use unexported: the encoding every signature
@@ -110,7 +110,7 @@ func Ensure(path string) (key ed25519.PrivateKey, made bool, err error) {
 // key: a request signed for one peer is then no request to another the
 // sender is linked with.
 func request(to, method, path, ts string, body []byte) []byte {
-	return []byte(strings.Join([]string{"yardr-peer-request-1", to, method, path, ts, bodySum(body)}, "\n"))
+	return store.PairRequestBytes(to, method, path, ts, body)
 }
 
 // SignRequest signs a request to the yard whose public key is to: its
@@ -222,23 +222,7 @@ func LoadEncBytes(path string) ([]byte, error) {
 // failure is store.ErrSignature, with the reason in its text for the
 // receiver's own log.
 func VerifyRequest(from, to, method, path, ts, sig string, body []byte, now time.Time) error {
-	pub, err := store.ParsePublic(from)
-	if err != nil {
-		return fmt.Errorf("%w: bad key", store.ErrSignature)
-	}
-	raw, err := enc.DecodeString(sig)
-	if err != nil || !ed25519.Verify(pub, request(to, method, path, ts, body), raw) {
-		return fmt.Errorf("%w: bad signature", store.ErrSignature)
-	}
-	// After the signature: the timestamp is then the sender's own.
-	sec, err := strconv.ParseInt(ts, 10, 64)
-	if err != nil {
-		return fmt.Errorf("%w: bad timestamp", store.ErrSignature)
-	}
-	if d := now.Sub(time.Unix(sec, 0)); d > MaxSkew || d < -MaxSkew {
-		return fmt.Errorf("%w: timestamp %s off", store.ErrSignature, d.Round(time.Second))
-	}
-	return nil
+	return store.VerifyPairRequest(from, to, method, path, ts, sig, body, now)
 }
 
 // The link is the WebSocket a yard that connects to an edge keeps open to

@@ -135,6 +135,10 @@ func TestSocketRefusesABeadsPaneWhatIsNotAnAgents(t *testing.T) {
 			_, err := c.Prime(ctx, "yardmaster")
 			return err
 		}},
+		{"CommitPeerEnrollment", func() error {
+			_, err := c.CommitPeerEnrollment(ctx, store.PeerEnrollmentProof{}, "jo")
+			return err
+		}},
 	}
 	for _, r := range refused {
 		if err := r.call(); err == nil || !strings.HasPrefix(err.Error(), r.method+" is ") {
