@@ -293,6 +293,22 @@ func kimiPane(joins string, lines ...string) string {
 // among the nudges held, so the brakeman never rotated. The rows of a box
 // are read one by one however the read joined them, and nothing after the
 // box's bottom is the input's.
+func TestRedrawInputOnlySendsCtrlLToTheHandlePane(t *testing.T) {
+	t.Parallel()
+	log := filepath.Join(t.TempDir(), "keys")
+	h := &Herdr{Bin: deafHerdrBin(t, `echo "$*" >> `+log)}
+	if err := h.RedrawInput(context.Background(), map[string]any{"pane": "w1:p1"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(log)
+	if err != nil || strings.TrimSpace(string(got)) != "pane send-keys w1:p1 C-l" {
+		t.Fatalf("keys sent = %q, %v; want only Ctrl-L to the handle pane", got, err)
+	}
+	if err := h.RedrawInput(context.Background(), map[string]any{}); err == nil {
+		t.Fatal("redraw without a verified pane succeeded")
+	}
+}
+
 func TestInputTextOfABoxReadUnwrapped(t *testing.T) {
 	t.Parallel()
 	if text, ok := inputText(kimiCaptured, "kimi"); text != "" || !ok {
