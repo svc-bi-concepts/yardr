@@ -267,7 +267,12 @@ name and independently obtained invite:
 yardr peer pair <address> <code> --enroll <existing-peer-name> --invite '<fresh-v2-invite>'
 ```
 
-Both operators compare a fresh check. Enrollment requires a terminal and
+Both operators compare a fresh check. When the other yard has renamed
+itself since the link was made, the invite carries its new name: the check
+shows the change, and both operators confirm it as they would any check.
+The pinned signing key, encryption key and URL must still match. The saved
+name is then the new one; the link settings and queued messages stay.
+Enrollment requires a terminal and
 refuses `--yes`, `--json`, `--name` and `--expose`. The authenticated check
 binds the encryption key to the existing signing identity. Only the missing pin is
 filled; identities, link settings, permissions, queued messages and accepted

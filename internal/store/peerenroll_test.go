@@ -312,3 +312,75 @@ func TestCommitPeerEnrollmentRefusesInvalidProofAndRotation(t *testing.T) {
 		t.Fatalf("rotation error = %v", err)
 	}
 }
+
+// A peer that renamed itself since it was linked keeps its key, encryption
+// key, URL and link settings: the enrollment takes the new name from the
+// invite the pairing confirmed, and nothing else changes.
+func TestCommitPeerEnrollmentAcceptsARename(t *testing.T) {
+	y, proof := enrollmentFixture(t)
+	if _, err := y.api.AllowPeer(y.ctx, "north", store.PeerAllow{Send: []string{store.PeerPing, store.PeerMail}, Receive: []string{store.PeerPing, store.PeerMail}}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := proof.Invite
+	renamed.Name = "the-north-renamed"
+	bad := []struct {
+		name string
+		edit func(*store.PeerEnrollmentProof)
+		want string
+	}{
+		{"new signing key", func(p *store.PeerEnrollmentProof) {
+			p.Invite.Key = store.Public(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{9}, ed25519.SeedSize)))
+		}, "identity or authority"},
+		{"new URL", func(p *store.PeerEnrollmentProof) { p.Invite.URL = "http://elsewhere.test" }, "identity or authority"},
+		{"pairing names another yard", func(p *store.PeerEnrollmentProof) { p.Invite.Name = "someone-else" }, "identity or authority"},
+		{"rename not confirmed", func(p *store.PeerEnrollmentProof) {
+			p.ConfirmResponseBody, _ = json.Marshal(store.PairingOutcome{State: store.Ended})
+			p.ConfirmResponseSig = store.SignResponse(ed25519.PrivateKey(y.north), http.StatusOK, p.ConfirmRequestSig, p.ConfirmResponseBody)
+		}, "not confirmed"},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			p := enrollmentProof(t, y, *before, renamed)
+			tc.edit(&p)
+			if _, err := y.api.CommitPeerEnrollment(y.ctx, p, "jo"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CommitPeerEnrollment error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	after, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("refused renames changed the peer: before=%+v after=%+v err=%v", before, after, err)
+	}
+	proof = enrollmentProof(t, y, *before, renamed)
+	got, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo")
+	if err != nil {
+		t.Fatalf("rename enrollment: %v", err)
+	}
+	if got.Calls != "the-north-renamed" || got.Key != before.Key || got.URL != before.URL || got.Enc != proof.Invite.Enc || got.Name != "north" {
+		t.Fatalf("rename enrollment = %+v, before %+v", got, before)
+	}
+	if !reflect.DeepEqual(got.Send, before.Send) || !reflect.DeepEqual(got.Receive, before.Receive) {
+		t.Fatalf("rename dropped link settings: before %+v after %+v", before, got)
+	}
+	// The retry with the renamed record is read-only, as an equal pin is.
+	current, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := y.own.Events(y.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof = enrollmentProof(t, y, *current, renamed)
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, proof, "jo"); err != nil {
+		t.Fatalf("renamed retry: %v", err)
+	}
+	after2, err := y.own.Events(y.ctx, "", 0)
+	if err != nil || len(after2) != len(events) {
+		t.Fatalf("renamed retry wrote an event: %d -> %d, err %v", len(events), len(after2), err)
+	}
+}

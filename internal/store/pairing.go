@@ -318,7 +318,10 @@ func (s *Store) PairOpen(ctx context.Context, o PairOffer, actor string) (*Pairi
 		if err != nil || e.Invite.Enc == "" || parsed != e.Invite {
 			return nil, errors.New("pairing enrollment requires a valid fresh sealed-wire invite")
 		}
-		if !reflect.DeepEqual(*peer, enrollmentPeerRecord(e.Expected)) || peer.Key != e.Invite.Key || peer.Calls != e.Invite.Name || peer.URL != e.Invite.URL {
+		// The name a peer calls itself may have changed since it was linked:
+		// the key, encryption key and URL are what must stay pinned, and the
+		// name is taken from the invite and shown in the check.
+		if !reflect.DeepEqual(*peer, enrollmentPeerRecord(e.Expected)) || peer.Key != e.Invite.Key || peer.URL != e.Invite.URL {
 			return nil, fmt.Errorf("peer %s identity or authority changed; inspect the peer before starting enrollment", e.PeerName)
 		}
 		if peer.Enc != "" && peer.Enc != e.Invite.Enc {
@@ -464,7 +467,7 @@ func (s *Store) finishPairing(ctx context.Context, p *hostPairing) {
 				return err
 			}
 			var err error
-			_, already, err = w.enrollPeerEncryption(p.enroll.Expected, p.enroll.Invite.Enc, p.actor)
+			_, already, err = w.enrollPeerEncryption(p.enroll.Expected, p.enroll.Invite, p.actor)
 			return err
 		})
 		if err != nil {
