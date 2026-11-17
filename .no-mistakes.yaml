@@ -1,4 +1,4 @@
-# The local gate does not wait for GitHub Actions; this repository has no CI.
+# GitHub Actions are disabled on this fork; .github/workflows/ci.yml does not run here.
 commands:
   test: 'sh .yardr/test'
 no_ci: true
