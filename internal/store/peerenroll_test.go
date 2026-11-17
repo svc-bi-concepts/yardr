@@ -384,3 +384,90 @@ func TestCommitPeerEnrollmentAcceptsARename(t *testing.T) {
 		t.Fatalf("renamed retry wrote an event: %d -> %d, err %v", len(events), len(after2), err)
 	}
 }
+
+// eventsSince returns the events written after seq, by kind and data.
+func eventsSince(t *testing.T, y *peerYard, seq uint64) []store.Event {
+	t.Helper()
+	all, err := y.own.Events(y.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []store.Event
+	for _, e := range all {
+		if e.Seq > seq {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestCommitPeerEnrollmentAuditsTheRenameMinimally pins the audit contract:
+// a name change writes one peer_identity_enrolled with the local alias, the
+// old and new names and whether the pin was added, and nothing of the proof;
+// a pin filled with the name unchanged keeps peer_encryption_enrolled.
+func TestCommitPeerEnrollmentAuditsTheRenameMinimally(t *testing.T) {
+	y, proof := enrollmentFixture(t)
+	before, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := proof.Invite
+	renamed.Name = "the-north-renamed"
+	mark := func() uint64 {
+		all, err := y.own.Events(y.ctx, "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(all) == 0 {
+			return 0
+		}
+		return all[len(all)-1].Seq
+	}
+	seq := mark()
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, enrollmentProof(t, y, *before, renamed), "jo"); err != nil {
+		t.Fatalf("rename enrollment: %v", err)
+	}
+	got := eventsSince(t, y, seq)
+	if len(got) != 1 || got[0].Kind != "peer_identity_enrolled" {
+		t.Fatalf("rename wrote %+v, want one peer_identity_enrolled", got)
+	}
+	want := map[string]any{"peer": "north", "old_calls": "the-north", "new_calls": "the-north-renamed", "encryption_pin_added": true}
+	if !reflect.DeepEqual(got[0].Data, want) {
+		t.Fatalf("rename audit data = %v, want %v", got[0].Data, want)
+	}
+
+	// The pin is now held and the name is current: a repeat writes nothing.
+	seq = mark()
+	current, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, enrollmentProof(t, y, *current, renamed), "jo"); err != nil {
+		t.Fatalf("renamed retry: %v", err)
+	}
+	if got := eventsSince(t, y, seq); len(got) != 0 {
+		t.Fatalf("unchanged repeat wrote %+v", got)
+	}
+}
+
+// TestCommitPeerEnrollmentPinOnlyKeepsItsEvent: a pin filled under the name
+// already saved is still audited as the encryption enrollment it always was.
+func TestCommitPeerEnrollmentPinOnlyKeepsItsEvent(t *testing.T) {
+	y, proof := enrollmentFixture(t)
+	before, err := y.api.GetPeer(y.ctx, "north")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := y.own.Events(y.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := all[len(all)-1].Seq
+	if _, err := y.api.CommitPeerEnrollment(y.ctx, enrollmentProof(t, y, *before, proof.Invite), "jo"); err != nil {
+		t.Fatalf("pin enrollment: %v", err)
+	}
+	got := eventsSince(t, y, seq)
+	if len(got) != 1 || got[0].Kind != "peer_encryption_enrolled" || !reflect.DeepEqual(got[0].Data, map[string]any{"peer": "north", "key": y.key}) {
+		t.Fatalf("pin wrote %+v, want one peer_encryption_enrolled for north", got)
+	}
+}

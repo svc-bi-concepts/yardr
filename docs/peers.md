@@ -398,6 +398,10 @@ itself since the link was made, the invite carries its new name: the check
 shows the change, and both operators confirm it as they would any check.
 The pinned signing key, encryption key and URL must still match. The saved
 name is then the new one; the link settings and queued messages stay.
+Both screens show the old name beside the new one, before the check: the
+saved name, then what the other yard calls itself now. The audit records the
+change as one `peer_identity_enrolled` event (the local name, the old and new
+names, and whether the encryption pin was added).
 Enrollment requires a terminal and
 refuses `--yes`, `--json`, `--name` and `--expose`. The authenticated check
 binds the encryption key to the existing signing identity. Only the missing pin is

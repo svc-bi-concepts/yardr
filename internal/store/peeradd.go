@@ -26,7 +26,7 @@ func (s *Store) CommitPeerEnrollment(ctx context.Context, proof PeerEnrollmentPr
 			return err
 		}
 		var err error
-		out, _, err = w.enrollPeerEncryption(proof.Expected, proof.Invite, actor)
+		out, _, err = w.enrollPeerIdentity(proof.Expected, proof.Invite.Name, proof.Invite.Enc, actor)
 		return err
 	})
 	if err != nil {
@@ -116,11 +116,18 @@ func (s *Store) validateEnrollmentBinding(tx *bolt.Tx, expected Peer, invite Inv
 	return nil
 }
 
-// enrollPeerEncryption pins the invite's encryption key on the peer and
-// takes the name it calls itself from the invite: the key and URL were
-// checked against the invite and the pairing before this, and a changed
-// name is the one thing that may differ from the record.
-func (w *wtx) enrollPeerEncryption(expected Peer, invite Invite, actor string) (Peer, bool, error) {
+// enrollPeerIdentity is the one private write a proof-verified enrollment
+// makes: it fills the peer's missing encryption pin and takes the name the
+// peer calls itself now, as one write. It is called only by
+// CommitPeerEnrollment and by the host's finishPairing, after the native
+// confirmations; the caller has checked the key, URL and invite agreement.
+//
+// The record must still be expected in full (the compare is the CAS), and
+// an encryption key already saved must be the invite's. Nothing is written
+// when both the name and the key already match. A changed name is audited
+// as peer_identity_enrolled, which carries no key or proof; a fill of the
+// encryption key alone keeps the event it always had.
+func (w *wtx) enrollPeerIdentity(expected Peer, calls, enc, actor string) (Peer, bool, error) {
 	var current Peer
 	ok, err := get(w.Tx, bPeers, expected.Name, &current)
 	if err != nil {
@@ -132,11 +139,10 @@ func (w *wtx) enrollPeerEncryption(expected Peer, invite Invite, actor string) (
 	if !reflect.DeepEqual(current, enrollmentPeerRecord(expected)) {
 		return Peer{}, false, fmt.Errorf("peer %s changed during enrollment", expected.Name)
 	}
-	enc := invite.Enc
 	if current.Enc != "" && current.Enc != enc {
 		return Peer{}, false, fmt.Errorf("peer %s already has a different encryption key; key rotation is not supported", expected.Name)
 	}
-	if current.Enc == enc && current.Calls == invite.Name {
+	if current.Enc == enc && current.Calls == calls {
 		return current, true, nil
 	}
 	if current.Enc == "" {
@@ -144,17 +150,25 @@ func (w *wtx) enrollPeerEncryption(expected Peer, invite Invite, actor string) (
 			return Peer{}, false, fmt.Errorf("peer %s: %w", expected.Name, err)
 		}
 	}
-	data := map[string]any{"peer": expected.Name, "key": expected.Key}
-	if current.Calls != invite.Name {
-		// The event keeps both names, so a rename the operators confirmed
-		// is on the record as well as in the peer's current name.
-		data["calls_from"], data["calls_to"] = current.Calls, invite.Name
+	pinAdded := current.Enc == ""
+	if current.Calls != calls {
+		// The old and new names are what the operators compared, so the
+		// audit keeps both; the local alias is the only other field.
+		data := map[string]any{"peer": expected.Name, "old_calls": current.Calls, "new_calls": calls, "encryption_pin_added": pinAdded}
+		current.Enc, current.Calls = enc, calls
+		if err := put(w.Tx, bPeers, expected.Name, &current); err != nil {
+			return Peer{}, false, err
+		}
+		if err := w.event("", "peer_identity_enrolled", actor, data); err != nil {
+			return Peer{}, false, err
+		}
+		return current, false, nil
 	}
-	current.Enc, current.Calls = enc, invite.Name
+	current.Enc = enc
 	if err := put(w.Tx, bPeers, expected.Name, &current); err != nil {
 		return Peer{}, false, err
 	}
-	if err := w.event("", "peer_encryption_enrolled", actor, data); err != nil {
+	if err := w.event("", "peer_encryption_enrolled", actor, map[string]any{"peer": expected.Name, "key": expected.Key}); err != nil {
 		return Peer{}, false, err
 	}
 	return current, false, nil

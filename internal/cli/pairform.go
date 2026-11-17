@@ -367,9 +367,12 @@ func large(check string) string {
 
 // askSame shows the check large, with what the other yard calls itself,
 // and asks the one question both operators answer. Leaving it is a no.
-func askSame(w io.Writer, calls, check string) (bool, error) {
-	fmt.Fprintf(w, "\nThe two yards have reached each other. The other one calls itself %s.\n"+
-		"Both screens now show a number. This one's:\n\n%s\n    %s\n\n", calls, large(check), check)
+func askSame(w io.Writer, calls, previous, check string) (bool, error) {
+	fmt.Fprintf(w, "\nThe two yards have reached each other. The other one calls itself %s.\n", calls)
+	if previous != "" && previous != calls {
+		fmt.Fprintf(w, "This yard has it saved as %s: confirm only if the other operator knows it was renamed.\n", previous)
+	}
+	fmt.Fprintf(w, "Both screens now show a number. This one's:\n\n%s\n    %s\n\n", large(check), check)
 	same := false
 	err := ask(huh.NewConfirm().Key("pair_same").Title("Does the other screen show the same?").
 		Description(fmt.Sprintf("Ask the other operator to read theirs out. The same number on both means this yard has\n"+
