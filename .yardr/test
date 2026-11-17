@@ -1,6 +1,6 @@
 #!/bin/sh
 gate_slot=$HOME/ws_yardr/integrations/gate-slot.sh
-if [ "${1:-}" != sizes ] && [ -z "${YARDR_TEST_PLAN:-}" ] &&
+if [ "${1:-}" != sizes ] && [ "${1:-}" != --race-queue ] && [ -z "${YARDR_TEST_PLAN:-}" ] &&
   [ -z "${YARD_GATE_SLOT_HELD:-}" ] && [ -f "$gate_slot" ]; then
   YARD_GATE_FRESH=1
   export YARD_GATE_FRESH
