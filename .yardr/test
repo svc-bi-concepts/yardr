@@ -1,6 +1,11 @@
 #!/bin/sh
 gate_slot=$HOME/ws_yardr/integrations/gate-slot.sh
-if [ -z "${YARD_GATE_SLOT_HELD:-}" ] && [ -f "$gate_slot" ]; then exec sh "$gate_slot" -- sh "$0" "$@"; fi
+if [ "${1:-}" != sizes ] && [ -z "${YARDR_TEST_PLAN:-}" ] &&
+  [ -z "${YARD_GATE_SLOT_HELD:-}" ] && [ -f "$gate_slot" ]; then
+  YARD_GATE_FRESH=1
+  export YARD_GATE_FRESH
+  exec sh "$gate_slot" -- sh "$0" "$@"
+fi
 # yardr's tests: the depot's test command (yardr depot add yardr . --test
 # .yardr/test). A builder and a reviewer run it in their worktree, as it is
 # on their branch, before they hand on; the assembly runs main's copy of it
