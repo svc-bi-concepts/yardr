@@ -92,7 +92,7 @@ func parseGroupAdd(rest []string) ([]string, error) {
 			return fmt.Errorf("--run takes %s: %s is the operator's alone, typed in a terminal and never proposed as a run ask: env is the operator's alone, so add the group without it and give it one in a terminal with yardr group set <name> env_file=<file>", groupAddUse, k)
 		case "log":
 			return fmt.Errorf("--run takes %s: log is a file the yard appends to, and a file path rides no card: add the group without it and set it in a terminal with yardr group set <name> log=<file>, in the same trip as env_file", groupAddUse)
-		case GroupPeer, GroupRemote, GroupTries:
+		case GroupPeer, GroupRemote, GroupTries, GroupAfter:
 			// Said once the runner is known: it is a peer group's.
 			peerKey = k
 		default:

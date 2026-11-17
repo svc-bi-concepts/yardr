@@ -700,6 +700,10 @@ type RouteChoice struct {
 	// not Unknown, which is what could not be evaluated: these were
 	// evaluated, and held for the time left.
 	Held []string `json:"held,omitempty"`
+	// Wait is the peer group the bead has not waited long enough for (its
+	// after setting), with why in words, when Group is "": the bead waits
+	// for it. nil when no peer group was held back by its after.
+	Wait *PassedGroup `json:"wait,omitempty"`
 }
 
 // PassedGroup is a group a route passed over, with why in words.
@@ -765,51 +769,7 @@ func (r Route) Choose(quota func(group, source string) Quota, model func(group s
 // comparison that ends in a duration: the dispatcher hands in the clock it
 // runs the pass by.
 func (r Route) ChooseAt(now time.Time, quota func(group, source string) Quota, model func(group string) string) RouteChoice {
-	var c RouteChoice
-	for _, g := range r.Groups() {
-		if g.Name == RouteWait {
-			return c
-		}
-		limits := noWindowUsedUp
-		if g.When != "" {
-			// AddRoute stored only what parses; a record that does not is
-			// treated as what cannot be evaluated.
-			parsed, err := ParseQuota(g.When)
-			if err != nil {
-				c.Group, c.Unknown = g.Name, err.Error()
-				return c
-			}
-			limits = withProviderWindows(parsed)
-		} else if quota == nil {
-			c.Group = g.Name
-			return c
-		}
-		// Each source a condition names is asked once, "" being the
-		// group's provider.
-		asked := map[string]Quota{}
-		get := func(source string) Quota {
-			q, ok := asked[source]
-			if !ok {
-				q = quota(g.Name, source)
-				asked[source] = q
-			}
-			return q
-		}
-		m := ""
-		if model != nil {
-			m = model(g.Name)
-		}
-		failed, unknown, held, resets := judge(now, limits, get, m)
-		if len(failed) == 0 {
-			c.Group, c.Held = g.Name, held
-			if len(unknown) > 0 {
-				c.Unknown = "the limits of " + g.Name + " were not known: " + strings.Join(unknown, "; ")
-			}
-			return c
-		}
-		c.Passed = append(c.Passed, PassedGroup{Group: g.Name, Reason: strings.Join(failed, "; "), ResetsAt: resets})
-	}
-	return c
+	return r.ChooseOver(now, Overflow{}, quota, model)
 }
 
 // judge compares the windows with limits: the comparisons that failed, in
@@ -1384,11 +1344,30 @@ func checkRouteTie(tx *bolt.Tx, r Route, operator string) error {
 // burns no provider, so a condition on one names a source alone; and with
 // one group whichever takes a bead, one runner works the stage.
 func quotaGroupsOK(r Route, runners map[string]string) error {
+	// A peer group takes the bead another yard works, so it is the route's
+	// last group: a bead passed over to it has nowhere further to go, and
+	// it carries no condition, since the windows of its work are the other
+	// yard's. Checked before Quotaed, since a peer group alone needs no
+	// route of several groups.
+	gs := r.Groups()
+	for i, g := range gs {
+		if g.Name == RouteWait || runners[g.Name] != PeerRunner {
+			continue
+		}
+		switch {
+		case g.When != "":
+			return fmt.Errorf("group %s is a peer group: it takes no condition, since the work it takes is another yard's", g.Name)
+		case i+1 < len(gs) && gs[i+1].Name == RouteWait:
+			return fmt.Errorf("--else wait after peer group %s: a peer group is the route's last group, and wait ends a route the same way, so the wait adds nothing; remove it", g.Name)
+		case i != len(gs)-1:
+			return fmt.Errorf("group %s is a peer group: it must be the route's last group, since nothing is tried after it", g.Name)
+		}
+	}
 	if !r.Quotaed() {
 		return nil
 	}
 	var real []RouteGroup
-	for _, g := range r.Groups() {
+	for _, g := range gs {
 		if g.Name != RouteWait {
 			real = append(real, g)
 		}
@@ -1396,6 +1375,9 @@ func quotaGroupsOK(r Route, runners map[string]string) error {
 	for _, g := range real {
 		switch runners[g.Name] {
 		case "herdr":
+			continue
+		case PeerRunner:
+			// Checked above: last, and unconditional.
 			continue
 		case "exec":
 		default:

@@ -61,33 +61,6 @@ type Job struct {
 	Pull *Pull
 }
 
-// NextStage is one stage a flow allows the bead to move to, with who would
-// pick it up there, so a brief can say when to choose it.
-type NextStage struct {
-	Stage    string
-	Terminal bool   // entering it closes the bead
-	Group    string // the group routed for the stage; "" when none is
-	Runner   string // that group's runner
-	Peer     string // the linked yard that works the stage, for a peer group
-	// Else are the further groups of the stage's route, in order: the
-	// bead is not there yet, so none is chosen, and the quota when it gets
-	// there is not known. They start agents, as Group then does.
-	Else []string
-}
-
-// NextOutcome is one outcome the bead's stage offers and where it leads.
-type NextOutcome struct {
-	Outcome string
-	// NextStage is where reporting the outcome takes this bead now, with who
-	// picks it up there: the stage a limit sends it to once its rounds are
-	// used, not the flow's own edge.
-	NextStage
-	// Limit is the outcome as the bead's rounds stand for it, for an outcome
-	// that has a limit: which round reporting it would be, or that its rounds
-	// are used. Nil for one that has none.
-	Limit *store.OutcomeNow
-}
-
 // Runner starts and supervises whatever works a bead: an agent, a process,
 // a notification. The handle it returns is stored on the session and handed
 // back on later calls, so runners keep no state the store does not have.
@@ -1251,7 +1224,10 @@ func (d *Dispatcher) route(ctx context.Context, groups map[string]store.Group, a
 		// Which of the route's groups: the first whose quota condition
 		// holds. A route whose groups start no agents and name no condition
 		// asks nobody (chooseGroup).
-		choice, ok := d.chooseGroup(ctx, b, r, groups, active, settings[store.DefaultKindSetting])
+		// A pass at max_sessions hands its full groups to the choice, which
+		// passes them over toward a peer group only; a paused yard passes none.
+		choice, ok := d.chooseGroup(ctx, b, r, groups, active, settings[store.DefaultKindSetting],
+			yardCap{Full: capped && most > 0 && d.running >= most, Max: most}, rb.StayStart)
 		if !ok {
 			continue
 		}
@@ -1270,12 +1246,7 @@ func (d *Dispatcher) route(ctx context.Context, groups map[string]store.Group, a
 		// keeps from starting. At 0 the yard is paused: nothing starts,
 		// whatever runs, and the event says paused instead of counting.
 		if capped && store.RunsHere(g.Runner) && d.running >= most {
-			reason := fmt.Sprintf(
-				"the yard runs as many sessions as max_sessions (%d) allows; the bead starts when one ends, or the setting is raised (yardr settings set max_sessions <n>)", most)
-			if most == 0 {
-				reason = "max_sessions is 0 (paused); the bead starts when the setting is raised (yardr settings set max_sessions <n>)"
-			}
-			d.reportOnce(ctx, b, "capped", reason)
+			d.reportOnce(ctx, b, "capped", capReason(most))
 			continue
 		}
 		// Last, since it reads the bead's events: only a bead that would
@@ -1472,7 +1443,16 @@ func (d *Dispatcher) nextStages(ctx context.Context, b store.Bead, routes []stor
 		moved.Stage = st
 		if r := Match(routes, moved, operator, groups); r != nil && !n.Terminal {
 			g := groups[r.Worker()]
-			n.Group, n.Runner, n.Peer, n.Else = r.Worker(), g.Runner, g.AtPeer(), r.Further()
+			n.Group, n.Runner, n.Peer = r.Worker(), g.Runner, g.AtPeer()
+			// A peer group after the others is the yard a full group passes
+			// the bead to, not a group that takes it in the quota's place.
+			for _, name := range r.Further() {
+				if o := groups[name]; o.Runner == store.PeerRunner {
+					n.Overflow, n.OverflowAfter = o.AtPeer(), o.PeerAfter()
+					continue
+				}
+				n.Else = append(n.Else, name)
+			}
 		}
 		return n
 	}
