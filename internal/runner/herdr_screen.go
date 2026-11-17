@@ -342,6 +342,16 @@ func (h *Herdr) InputComposer(ctx context.Context, handle map[string]any) (text 
 	return text, known, reason, nil
 }
 
+// RedrawInput asks the same pane InputText reads to redraw its screen. It
+// does not clear the input: the dispatcher makes a new read before typing.
+func (h *Herdr) RedrawInput(ctx context.Context, handle map[string]any) error {
+	pane, _ := handle["pane"].(string)
+	if pane == "" {
+		return fmt.Errorf("handle has no pane")
+	}
+	return h.sendKey(ctx, pane, "C-l")
+}
+
 // inputText finds, in a pane of a harness of kind read with its styling,
 // the text of the agent's input: what follows the mark on the pane's last
 // line that begins with one (see promptPlace), and the lines after it down

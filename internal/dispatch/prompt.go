@@ -141,6 +141,12 @@ type ComposerReader interface {
 	InputComposer(ctx context.Context, handle map[string]any) (text string, known bool, composer string, err error)
 }
 
+// InputRedrawer redraws the input of the verified pane in handle without
+// changing its contents. The dispatcher reads it again before typing.
+type InputRedrawer interface {
+	RedrawInput(ctx context.Context, handle map[string]any) error
+}
+
 // DialogReader is implemented by runners that know questions a harness
 // draws in place of its input (the herdr runner, from the kind's file):
 // dialog is the word for the one the agent of handle is at and line its
@@ -163,6 +169,7 @@ type LoginReader interface {
 type draft struct {
 	since time.Time // when it was first seen
 	said  bool      // the nudge_held event of this wait is logged
+	drawn bool      // Ctrl-L was sent once during this held spell
 }
 
 // hold is what the one nudge_held event of a wait has to say, on the pass
@@ -227,25 +234,59 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 	if at, why := d.loginAt(ctx, r, key, handle); at {
 		return true, why
 	}
-	var text, composer string
-	var known bool
-	var err error
+	read := func() (text string, known bool, composer string, err error, ok bool) {
+		switch rd := r.(type) {
+		case ComposerReader:
+			text, known, composer, err = rd.InputComposer(ctx, handle)
+			return text, known, composer, err, true
+		case InputReader:
+			text, known, err = rd.InputText(ctx, handle)
+			return text, known, "", err, true
+		}
+		return "", false, "", nil, false
+	}
 	done := askTimer(ctx, askPane)
-	switch rd := r.(type) {
-	case ComposerReader:
-		text, known, composer, err = rd.InputComposer(ctx, handle)
-	case InputReader:
-		text, known, err = rd.InputText(ctx, handle)
-	default:
+	text, known, composer, err, ok := read()
+	if !ok {
 		done()
 		return false, hold{}
 	}
 	done()
-	if err != nil || !known || strings.TrimSpace(text) == "" {
-		delete(d.drafts, key)
-		if err == nil {
-			delete(d.dialogs, key) // no mark, or nothing after it: no dialog is there
+	if err != nil || !known {
+		// A broken or incomplete pane read says nothing about whether the
+		// user's draft is still there. Redraw once, then retain the wait and
+		// check again soon if the new read is still inconclusive.
+		redrawer, canRedraw := r.(InputRedrawer)
+		if !canRedraw {
+			return false, hold{}
 		}
+		w := d.drafts[key]
+		if w == nil {
+			w = &draft{}
+			d.drafts[key] = w
+		}
+		if !w.drawn {
+			w.drawn = true
+			if redrawer.RedrawInput(ctx, handle) == nil && waitContext(ctx, heldRedrawWait) == nil {
+				done := askTimer(ctx, askPane)
+				text, known, composer, err, _ = read()
+				done()
+				if err == nil && known && strings.TrimSpace(text) == "" {
+					delete(d.drafts, key)
+					delete(d.dialogs, key)
+					return false, hold{}
+				}
+				if err == nil && known && w.since.IsZero() {
+					w.since = d.now()
+				}
+			}
+		}
+		d.lookAt(d.now().Add(heldInputRetry))
+		return true, hold{}
+	}
+	if strings.TrimSpace(text) == "" {
+		delete(d.drafts, key)
+		delete(d.dialogs, key) // no mark, or nothing after it: no dialog is there
 		return false, hold{}
 	}
 	now := d.now()
@@ -253,7 +294,29 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 	if w == nil {
 		w = &draft{since: now}
 		d.drafts[key] = w
+	} else if w.since.IsZero() {
+		w.since = now
 	}
+	if !w.drawn {
+		if redrawer, ok := r.(InputRedrawer); ok {
+			w.drawn = true
+			if err := redrawer.RedrawInput(ctx, handle); err == nil {
+				// Ctrl-L only redraws the same pane. A short bounded settle
+				// lets the harness repaint before a fresh, authoritative read.
+				if waitContext(ctx, heldRedrawWait) == nil {
+					done := askTimer(ctx, askPane)
+					text, known, composer, err, _ = read()
+					done()
+					if err == nil && known && strings.TrimSpace(text) == "" {
+						delete(d.drafts, key)
+						delete(d.dialogs, key)
+						return false, hold{}
+					}
+				}
+			}
+		}
+	}
+	d.lookAt(now.Add(heldInputRetry))
 	if at, why := d.dialogAt(ctx, r, key, handle); at {
 		w.said = true // the dialog's event is this wait's
 		return true, why
@@ -263,6 +326,22 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 		return true, hold{waited: now.Sub(w.since), composer: composer}
 	}
 	return true, hold{}
+}
+
+const (
+	heldInputRetry = 3 * time.Minute
+	heldRedrawWait = 250 * time.Millisecond
+)
+
+func waitContext(ctx context.Context, delay time.Duration) error {
+	t := time.NewTimer(delay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // dialogAt reports whether the agent of handle is at a dialog its harness

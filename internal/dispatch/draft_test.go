@@ -61,6 +61,39 @@ func TestNudgeWaitsForTextInTheInput(t *testing.T) {
 	}
 }
 
+type redrawCrewRunner struct {
+	*crewRunner
+	redraws int
+	reads   int
+}
+
+func (r *redrawCrewRunner) InputText(context.Context, map[string]any) (string, bool, error) {
+	r.reads++
+	if r.reads == 1 {
+		return "", false, nil
+	}
+	return "", true, nil
+}
+
+func (r *redrawCrewRunner) RedrawInput(context.Context, map[string]any) error {
+	r.redraws++
+	return nil
+}
+
+func TestNudgeRedrawsAnUncertainPaneAndTypesOnlyAfterEmptyRead(t *testing.T) {
+	t.Parallel()
+	s, f, d := crewSetup(t, store.CrewMember{})
+	r := &redrawCrewRunner{crewRunner: f}
+	d.Runners["fake"] = r
+	ctx := context.Background()
+	must(t, d.Reconcile(ctx))
+	must(t, s.Mail(ctx, "yardmaster", "deploy freeze", "chris"))
+	must(t, d.Reconcile(ctx))
+	if r.redraws != 1 || r.reads != 2 || len(f.nudges) != 1 {
+		t.Fatalf("redraws %d, reads %d, nudges %q; want one redraw, two reads and one nudge", r.redraws, r.reads, f.nudges)
+	}
+}
+
 // A harness whose input the runner cannot tell, and a pane it cannot read,
 // say nothing about the input: the nudge is typed as it was before yardr
 // looked.
