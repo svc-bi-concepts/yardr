@@ -873,3 +873,27 @@ func TestPairFormAsksWhomToTrust(t *testing.T) {
 	wantText(t, out, "Reach: sam@up-north -> sam: every ask for sam is also sent there, the ask whole, with its bead's handle, title, topic, stage, labels and cut body, and the handle, title and stage of each bead it is about,",
 		"(nothing is sent while the link carries no ask out: yardr peer allow up-north --send ask)")
 }
+
+// The form's check shows the name the other yard calls itself and, when this
+// yard saved another, that one too, before the operator is asked to compare.
+// The question itself is huh's and needs a terminal: it is stubbed here, and
+// only what is printed beside it is checked.
+func TestAskSameShowsTheSavedNameOfARenamedPeer(t *testing.T) {
+	old := ask
+	t.Cleanup(func() { ask = old })
+	ask = func(...huh.Field) error { return nil }
+	var renamed bytes.Buffer
+	if _, err := askSame(&renamed, "Laptop/Work", "Laptop/Old", "1234"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(renamed.String(), "calls itself Laptop/Work") || !strings.Contains(renamed.String(), "saved as Laptop/Old") {
+		t.Fatalf("renamed peer's check does not show old -> new:\n%s", renamed.String())
+	}
+	var same bytes.Buffer
+	if _, err := askSame(&same, "Laptop/Work", "Laptop/Work", "1234"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(same.String(), "saved as") {
+		t.Fatalf("unchanged peer's check shows a rename:\n%s", same.String())
+	}
+}
