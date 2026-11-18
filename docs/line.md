@@ -150,7 +150,10 @@ its test line wrote everything but the outcome, so its nudge names the command:
 `your note is on the bead; report the outcome: yardr bead done <id>`. A session
 still in its stall window, one judged stalled, one with a first prompt still
 unsubmitted, one with a note already due, and one whose own note carries no test
-line are not nudged.
+line are not nudged. When the session's last move on the bead was refused, the
+nudge adds it: for an unread note it names the ack (`yardr bead note <id> --ack
+<seq>`), after which the yard runs the move again itself; for any other reason it
+names the refused command, to run again once it is allowed.
 
 **A move refused to an agent is logged.** A move that works ends the
 agent's session, so an agent whose `yardr bead done` was refused sits idle
