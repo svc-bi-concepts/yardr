@@ -62,6 +62,10 @@ type app struct {
 	actorLoaded bool
 	// homeDir is --home: the yard this run and all it starts work in.
 	homeDir string
+	// ownHome is the yard this run starts in, before --home moves it: the
+	// yard that writes mail into another home (yardr --home <other> mail), and
+	// whose key names it there. "" without --home.
+	ownHome string
 	// env is the run's environment by full key, less the process facts
 	// (see environ): what names its yard, who acts, and what its children
 	// start with. Nil reads nothing (see getenv): Execute seeds it, and
@@ -154,6 +158,12 @@ func (a *app) rootCmd() *cobra.Command {
 			// Before anything reads the home: the config of this run, and
 			// the environment of what it starts, follow the flag.
 			if c.Flags().Changed("home") {
+				// The yard the run starts in, read before the flag moves it. A home
+				// that cannot be read leaves ownHome empty: mail is then not
+				// qualified with a sender's yard (mailCmd).
+				if own, err := config.LoadReadOnlyWith(a.yardrenv); err == nil {
+					a.ownHome = own.Home
+				}
 				if err := a.useHome(a.homeDir); err != nil {
 					return err
 				}
