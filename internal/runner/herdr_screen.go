@@ -345,17 +345,18 @@ const (
 	// a draft is, since nothing says whose it is.
 	ComposerGarbled = "garbled"
 	// ComposerChrome is an empty input with the harness's own line under it
-	// (see claudeChrome). The input reads empty, so nothing holds the nudge.
+	// (see claudeChromeLines). The input reads empty, so nothing holds the nudge.
 	ComposerChrome = "chrome"
 )
 
 // claudeChromeLines are the lines Claude Code draws under an empty input
 // that are not text: the recap it ends a turn with, its footer for
 // background agents, and its offer to clear the session to save tokens. Each
-// is matched whole, so a line that only begins the same way is no match.
+// pattern is anchored at both ends, so a line that only begins or contains
+// the same words is no match.
 var claudeChromeLines = []*regexp.Regexp{
-	regexp.MustCompile(`^※ recap: `),
-	regexp.MustCompile(`(^| · )← \d+ agents?( · |$)`),
+	regexp.MustCompile(`^※ recap: \S.*$`),
+	regexp.MustCompile(`^⏵⏵ [a-z ]+ on · ← \d+ agents?$`),
 	regexp.MustCompile(`^(new task\? )?/clear to save [\d.,]+[kKmM]? tokens$`),
 }
 

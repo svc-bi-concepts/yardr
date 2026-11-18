@@ -210,6 +210,8 @@ func TestInputText(t *testing.T) {
 		"claude, chrome under a typed line is text":      {"claude", rule + "❯ typed\r\n※ recap: fixed\r\n" + rule + claudeFooter, "typed\n※ recap: fixed", true},
 		"claude, typed clear offer is a draft":           {"claude", rule + "❯ new task? /clear to save 114.8k tokens\r\n" + rule + claudeFooter, "new task? /clear to save 114.8k tokens", true},
 		"claude, a line that only begins as chrome":      {"claude", rule + "❯ \r\n← 2 agents, said by hand\r\n" + rule, "← 2 agents, said by hand", true},
+		"claude, a survey under an empty input is text":  {"claude", rule + "❯ \r\nHow is Claude doing this session? (optional)\r\n1: Bad  2: Fine  3: Good  0: Dismiss\r\n" + rule + claudeFooter, "How is Claude doing this session? (optional)\n1: Bad  2: Fine  3: Good  0: Dismiss", true},
+		"claude, agents words inside a longer line":      {"claude", rule + "❯ \r\nsee ← 2 agents · more\r\n" + rule, "see ← 2 agents · more", true},
 		"claude, one character a line is text still":     {"claude", rule + "❯ \r\nw\r\na\r\nt\r\n" + rule + claudeFooter, "w\na\nt", true},
 		"claude, recap above the input is not the input": {"claude", "※ recap: fixed the parser\r\n" + claudeEmpty, "", true},
 	} {
@@ -235,6 +237,7 @@ func TestInputComposerNamesItsReason(t *testing.T) {
 		"recap under empty":  {"claude", rule + "❯ \r\n※ recap: fixed\r\n" + rule + claudeFooter, "", ComposerChrome},
 		"agents under empty": {"claude", rule + "❯ \r\n⏵⏵ bypass permissions on · ← 2 agents\r\n" + rule, "", ComposerChrome},
 		"clear offer, typed": {"claude", rule + "❯ new task? /clear to save 114.8k tokens\r\n" + rule, "new task? /clear to save 114.8k tokens", ComposerDraft},
+		"survey under empty": {"claude", rule + "❯ \r\nHow is Claude doing this session? (optional)\r\n1: Bad  2: Fine  3: Good  0: Dismiss\r\n" + rule, "How is Claude doing this session? (optional)\n1: Bad  2: Fine  3: Good  0: Dismiss", ComposerDraft},
 		"garbled redraw":     {"claude", rule + "❯ \r\nw\r\na\r\nt\r\n" + rule, "w\na\nt", ComposerGarbled},
 		"codex draft":        {"codex", codexDraft, "half a thought", ComposerDraft},
 		"no mark":            {"acme", noMark, "", ""},
