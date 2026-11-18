@@ -348,10 +348,10 @@ func stayOf(tx *bolt.Tx, uuid string) (entered, unheld uint64, err error) {
 //
 // A bead that cannot be sent ends its stage here, as one that was sent and
 // not taken does later: undelivered when the peer is gone or its link
-// carries no beads out, refused when the bead is larger than crosses a
-// link, or when its branch has commits of this yard's own since a yard
-// returned it. Nothing is queued for any of these, and each reads as not
-// sent.
+// carries no beads out, refused when the bead is larger than crosses a link.
+// A branch with commits of this yard's own is pushed first (startOf), and
+// the sending is tried again on a later pass while the push fails. Nothing
+// is queued for any of these, and each reads as not sent.
 func (s *Store) PeerBeadSend(ctx context.Context, session string) (*BeadPeer, error) {
 	sess, err := s.GetSession(ctx, session)
 	if err != nil {
@@ -386,10 +386,10 @@ func (s *Store) PeerBeadSend(ctx context.Context, session string) (*BeadPeer, er
 		if err != nil {
 			return nil, err
 		}
-		gctx, cancel := context.WithTimeout(ctx, peerFetchTimeout)
-		from, moved = againOf(gctx, *depot, pre.ID, baseOf(gctx, *depot, fam.Base), last)
-		cancel()
 		if err := s.checkPeerRemote(ctx, *depot, sess.Group, pre.ID); err != nil {
+			return nil, err
+		}
+		if from, moved, err = s.startOf(ctx, *depot, pre.ID, sess.Group, baseOf(ctx, *depot, fam.Base), last); err != nil {
 			return nil, err
 		}
 	}

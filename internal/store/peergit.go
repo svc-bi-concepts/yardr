@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 // Code crosses a link through a git remote both yards use, never through
@@ -276,8 +278,14 @@ func remoteForm(ctx context.Context, depot Depot, remote string) (string, error)
 // gitFetch runs git fetch in dir for a caller nobody watches: a remote
 // that asks for credentials fails at once.
 func gitFetch(ctx context.Context, dir string, args ...string) error {
+	return gitNetwork(ctx, dir, append([]string{"fetch", "--quiet", "--no-tags"}, args...)...)
+}
+
+// gitNetwork runs git in dir with args, a fetch or a push, for a caller
+// nobody watches: a remote that asks for credentials fails at once.
+func gitNetwork(ctx context.Context, dir string, args ...string) error {
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "fetch", "--quiet", "--no-tags"}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "SSH_ASKPASS=true")
 	cmd.Stderr = &stderr
 	// git may leave a child (ssh) holding its output open after it is
@@ -285,9 +293,9 @@ func gitFetch(ctx context.Context, dir string, args ...string) error {
 	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("git fetch: %w", ctx.Err())
+			return fmt.Errorf("git %s: %w", args[0], ctx.Err())
 		}
-		return fmt.Errorf("git fetch: %w: %s", err, gitWords(stderr.String()))
+		return fmt.Errorf("git %s: %w: %s", args[0], err, gitWords(stderr.String()))
 	}
 	return nil
 }
@@ -342,25 +350,21 @@ func baseOf(ctx context.Context, depot Depot, base string) *PeerGit {
 	return &PeerGit{Base: branch, BaseCommit: strings.TrimSpace(string(out)), Remote: form}
 }
 
-// againOf is where the work on a bead of depot starts that is sent to a yard
-// again, after a return whose branch this yard took (last, as that return
-// named it): on this yard's branch of the bead, which stands at the
-// returned commit or behind it, so the yard that built that commit has what
-// the branch has, and what it returns comes after the branch. g is what the
-// bead would start from otherwise (baseOf) and is what is returned when
-// there is nothing to continue: no return with code, no branch here any
-// more, or a branch that holds nothing its base does not.
-//
-// why is set when the branch holds commits that neither the return nor the
-// base has. The other yard does not have those, and nothing sends them to
-// it, so the bead is not sent (PeerBeadSend).
-func againOf(ctx context.Context, depot Depot, bead string, g, last *PeerGit) (from *PeerGit, why string) {
-	if g == nil || last == nil || !gitCommit.MatchString(last.Commit) {
-		return g, ""
+// againOf is where the work on a bead of depot starts when it is sent to a
+// yard: on this yard's branch of the bead when that branch holds commits the
+// base does not, which are pushed first (startOf), and otherwise on the
+// base, or on the commit a yard returned when the branch stands at it or
+// behind it, so the yard that built that commit has what the branch has.
+// g is what the bead would start from otherwise (baseOf). ahead is set when
+// the branch holds commits that neither the base nor the return has: the
+// other yard does not have them, and they reach it only as a push.
+func againOf(ctx context.Context, depot Depot, bead string, g, last *PeerGit) (from *PeerGit, ahead bool) {
+	if g == nil {
+		return nil, false
 	}
 	out, err := ResolveRef(ctx, depot.Path, "refs/heads/"+Branch(bead)+"^{commit}")
 	if err != nil {
-		return g, ""
+		return g, false
 	}
 	head := strings.TrimSpace(string(out))
 	within := func(commit string) bool {
@@ -368,15 +372,98 @@ func againOf(ctx context.Context, depot Depot, bead string, g, last *PeerGit) (f
 		return err == nil
 	}
 	switch {
-	case within(last.Commit):
+	case last != nil && gitCommit.MatchString(last.Commit) && within(last.Commit):
 		// Named by the branch the other yard pushed, which is where a yard
 		// that no longer has the commit fetches it from (checkBase).
-		return &PeerGit{Base: last.Branch, BaseCommit: head, Remote: g.Remote}, ""
+		return &PeerGit{Base: last.Branch, BaseCommit: head, Remote: g.Remote}, false
 	case within(g.BaseCommit):
-		return g, ""
+		return g, false
 	}
-	return nil, fmt.Sprintf("its branch %s is at %s here, with commits made here since the other yard returned %s at %s. That yard does not have them, and a bead's own commits are not sent to the yard that works it. Move the branch back to %s, or work the bead in this yard",
-		Branch(bead), short(head), last.Branch, short(last.Commit), short(last.Commit))
+	return &PeerGit{Base: Branch(bead), BaseCommit: head}, true
+}
+
+// startOf is where the work on a bead of depot starts when it is sent to the
+// peer of group (againOf). A branch that holds commits of this yard's own
+// is pushed first, by its name, to the remote the group names for the
+// returns (GroupRemote), which the peer fetches from too, or else to the
+// base's remote; the bead then starts from the pushed head. The push runs
+// outside any write.
+//
+// moved is the reason the bead cannot be sent, refused by this yard: the
+// depot has no remote to push its branch to. err is a push that failed, and
+// is tried again on a later pass (pushFailed).
+func (s *Store) startOf(ctx context.Context, depot Depot, bead, group string, g, last *PeerGit) (from *PeerGit, moved string, err error) {
+	var grp Group
+	if err := s.read(func(tx *bolt.Tx) error { _, err := get(tx, bGroups, group, &grp); return err }); err != nil {
+		return nil, "", err
+	}
+	from, ahead := againOf(ctx, depot, bead, g, last)
+	if !ahead {
+		return from, "", nil
+	}
+	remote := setting(grp.Config[GroupRemote])
+	if remote == "" {
+		remote, _ = BaseRemote(ctx, depot)
+	}
+	if remote == "" {
+		return nil, fmt.Sprintf("its branch %s has commits of this yard's own that the other yard does not have, and depot %s has no remote to push them to", Branch(bead), depot.Name), nil
+	}
+	form, err := remoteForm(ctx, depot, remote)
+	if err == nil {
+		err = pushBranch(ctx, depot, bead, remote)
+	}
+	if err != nil {
+		return nil, "", s.pushFailed(bead, remote, err)
+	}
+	from.Remote = form
+	return from, "", nil
+}
+
+// peerPushTimeout bounds the push of one branch to a peer: as branchTimeout
+// bounds the taking of one.
+const peerPushTimeout = 60 * time.Second
+
+// pushBranch pushes the branch of bead in depot to remote under its own name,
+// so that the commit a bead starts from is on the remote the peer fetches
+// from. A remote that holds another commit under that name refuses the
+// push, as git refuses any branch that is not a fast-forward.
+func pushBranch(ctx context.Context, depot Depot, bead, remote string) error {
+	if !gitRemoteName.MatchString(remote) {
+		return fmt.Errorf("%q is not the name of a remote", remote)
+	}
+	ctx, cancel := context.WithTimeout(ctx, peerPushTimeout)
+	defer cancel()
+	ref := "refs/heads/" + Branch(bead)
+	return gitNetwork(ctx, depot.Path, "push", "--quiet", remote, ref+":"+ref)
+}
+
+// pushFailed records a push that failed in a sending of bead to remote, as an
+// event on the bead, and returns the error the sending ends with: the start
+// of the session fails, so the pass tries again after its backoff, and the
+// dispatcher holds the bead for a person once the stage has failed to start
+// too many times (Dispatcher.MaxAttempts), as it does for any runner.
+func (s *Store) pushFailed(bead, remote string, cause error) error {
+	why := fmt.Sprintf("its branch %s could not be pushed to %s for the yard to fetch it: %v", Branch(bead), remote, cause)
+	err := s.write(func(w *wtx) error {
+		entered, _, err := stayOf(w.Tx, bead)
+		if err != nil {
+			return err
+		}
+		n := 0
+		for _, k := range keys(w.Tx, bEventsBy, bead+"\x00") {
+			var e Event
+			if ok, err := get(w.Tx, bEvents, k[len(bead)+1:], &e); err != nil {
+				return err
+			} else if ok && e.Kind == "peer_bead_push_failed" && e.Seq > entered {
+				n++
+			}
+		}
+		return w.event(bead, "peer_bead_push_failed", "yard", map[string]any{"branch": Branch(bead), "remote": remote, "reason": why, "attempts": n + 1})
+	})
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%s; tried again on a later pass", why)
 }
 
 // checkBase says why a bead whose work starts at g cannot start there in
