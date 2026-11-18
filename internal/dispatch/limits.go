@@ -467,7 +467,11 @@ func (d *Dispatcher) idleNudge(ctx context.Context, r Runner, s *store.Session, 
 	if command, why, ok := d.refusedMove(ctx, s); ok {
 		// The agent took its refused done for done: it is told which
 		// command the yard refused, and that it runs again once cleared.
-		text += fmt.Sprintf(" Your last move was refused (%s); to hand on, run %s again once it is allowed.", why, command)
+		if why == store.RefusedUnread {
+			text += " Your last move was refused (unread note); ack the notes it names with `yardr bead note " + s.Bead + " --ack <seq>` and the yard runs it again itself."
+		} else {
+			text += fmt.Sprintf(" Your last move was refused (%s); to hand on, run %s again once it is allowed.", why, command)
+		}
 	}
 	told, delivery, err := d.nudgeSession(ctx, r, s, text)
 	if err != nil {
