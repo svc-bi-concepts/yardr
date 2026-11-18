@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -16,8 +17,10 @@ import (
 
 // HarnessScreen reports whether the pane of handle shows the screen of its
 // harness, which is known by the mark of its input (dispatch.ScreenWatcher).
-// known is false where yardr cannot tell: a kind whose mark it does not
-// know, a handle without a pane, a pane that cannot be read.
+// known is false where yardr cannot tell: a handle without a pane, a pane
+// that cannot be read, or a kind whose mark it does not know and whose
+// readiness herdr does not report (see agentReady, which answers for a kind
+// with no mark).
 //
 // Found live (yardr-bcx5): three Codex sessions started while a release of
 // Codex was out, and each upgraded itself in its pane before it drew
@@ -28,8 +31,11 @@ import (
 func (h *Herdr) HarnessScreen(ctx context.Context, handle map[string]any) (up, known bool) {
 	kind, _ := handle[harnessKind].(string)
 	m, ok := marksOf(kind)
+	if !ok {
+		return h.agentReady(ctx, handle)
+	}
 	pane, _ := handle["pane"].(string)
-	if !ok || pane == "" {
+	if pane == "" {
 		return false, false
 	}
 	text, err := h.readPane(ctx, pane, promptScan)
@@ -38,6 +44,39 @@ func (h *Herdr) HarnessScreen(ctx context.Context, handle map[string]any) (up, k
 	}
 	lines, _ := rowsOf(kind, strings.Split(text, "\n"), nil)
 	return slices.ContainsFunc(lines, m.begins), true
+}
+
+// agentReady is herdr's own readiness of the agent of handle: the
+// interactive_ready herdr keeps for every agent, which `agent get` gives. It
+// answers for a kind whose input yardr cannot read (no mark in its file), since
+// the pane of such a kind shows nothing a screen can be told by. known is false
+// when herdr does not say, which tells nothing.
+//
+// Found live (yardr-cdj5): a pi crew's first prompt was typed in the seconds
+// after its start, when pi had no input to take it. With no mark there was no
+// screen to wait on, so the dispatcher sent it three times in thirty seconds,
+// each lost (session_prompt_lost 3 of 3, then session_prompt_gave_up). herdr
+// had the agent idle and interactive_ready the whole time, and the same prompt
+// sent by hand, later, was taken.
+func (h *Herdr) agentReady(ctx context.Context, handle map[string]any) (up, known bool) {
+	name, _ := handle["agent"].(string)
+	if name == "" {
+		return false, false
+	}
+	raw, err := h.run(ctx, "agent", "get", name)
+	if err != nil {
+		return false, false
+	}
+	var info struct {
+		Agent struct {
+			// A pointer tells a false from a field herdr did not give.
+			Ready *bool `json:"interactive_ready"`
+		} `json:"agent"`
+	}
+	if json.Unmarshal(raw, &info) != nil || info.Agent.Ready == nil {
+		return false, false
+	}
+	return *info.Agent.Ready, true
 }
 
 // inputMarks begin the first line of a harness's input: Claude Code's "❯"
