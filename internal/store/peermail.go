@@ -356,7 +356,7 @@ func (s *Store) mailPeer(ctx context.Context, to, peer, text, actor string, file
 		// write, so the mail, its event and its receipt commit together
 		// or not at all.
 		r := MailReceipt{Seq: w.Bucket(bEvents).Sequence(), ID: m.ID, Direction: ReceiptOut, Peer: p.Name, PeerKey: p.Key, From: actor, To: to, At: now()}
-		if err := put(w.Tx, bMailReceipts, seqKey(r.Seq), r); err != nil {
+		if err := writeReceipt(w.Tx, r); err != nil {
 			return err
 		}
 		if got != nil {

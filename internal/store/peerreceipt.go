@@ -8,40 +8,52 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// bMailReceipts holds a MailReceipt per mail this yard queued for a peer,
-// keyed by the seq of the mail's event in this yard's log. It is kept
-// apart from the outbox on purpose: the outbox message goes when the peer
-// has it (PeerDelivered), and a receipt must outlive that, as the event
-// does. Nothing here prunes it; it is as long-lived as the event it names.
-var bMailReceipts = []byte("mail_receipts") // <event seq>: what a mail to a peer was
+// bMailReceipts holds a MailReceipt per mail this yard wrote, local or
+// queued for a peer, keyed by the seq of the mail's event in this yard's
+// log. It is kept apart from the outbox on purpose: the outbox message
+// goes when the peer has it (PeerDelivered), and a receipt must outlive
+// that, as the event does. Nothing here prunes it; it is as long-lived as
+// the event it names.
+var bMailReceipts = []byte("mail_receipts") // <event seq>: what a mail was
 
 func init() { allBuckets = append(allBuckets, bMailReceipts) }
 
-// ReceiptOut is the direction of a receipt for mail this yard sent to a
-// peer. It is the only one written so far: mail received from a peer has
-// no receipt yet.
-const ReceiptOut = "out"
+// ReceiptLocal and ReceiptOut are the directions of a receipt: mail this
+// yard delivered to its own inboxes, and mail it queued for a peer.
+const (
+	ReceiptLocal = "local"
+	ReceiptOut   = "out"
+)
 
-// MailReceipt is this yard's record of one mail queued for a peer: the
-// seq of its event in this yard's log, the wire id the peer is sent the
-// message under, the direction, the peer as the link named it and the
-// public key the link authenticated for it, and the participants, From
-// this yard and To the crew member or user at the peer.
+// MailReceipt is this yard's record of one mail it wrote: the seq of its
+// event in this yard's log, the wire id the peer is sent the message
+// under (a peer mail only), the direction, the peer as the link named it
+// and the public key the link authenticated for it (a peer mail only),
+// and the participants, From this yard and To the crew member or user it
+// names.
 //
-// A receipt proves only what this yard committed: the mail was written
-// to the log and queued in the outbox for the peer, in one write. It is
-// not evidence that the peer took the message. Peer is the name the link
-// had when the mail was queued; a later rename does not change it, and
-// PeerKey is what identifies the peer.
+// A receipt proves only what this yard committed: the mail was written to
+// the log, and for a peer mail queued in the outbox for the peer, in one
+// write. It is not evidence that the peer took the message. Peer is the
+// name the link had when the mail was queued; a later rename does not
+// change it, and PeerKey is what identifies the peer.
 type MailReceipt struct {
 	Seq       uint64    `json:"seq"`
-	ID        string    `json:"id"`
+	ID        string    `json:"id,omitempty"`
 	Direction string    `json:"direction"`
-	Peer      string    `json:"peer"`
-	PeerKey   string    `json:"peer_key"`
+	Peer      string    `json:"peer,omitempty"`
+	PeerKey   string    `json:"peer_key,omitempty"`
 	From      string    `json:"from"`
 	To        string    `json:"to"`
 	At        time.Time `json:"at"`
+}
+
+// writeReceipt puts r in the transaction its mail is written in, so the
+// receipt exists exactly when the mail does. It is a variable only so the
+// rollback test can fail the last write of a mail, after its event and
+// outbox message are in the same transaction.
+var writeReceipt = func(tx *bolt.Tx, r MailReceipt) error {
+	return put(tx, bMailReceipts, seqKey(r.Seq), r)
 }
 
 // MailReceiptOf is the receipt of the mail whose event is seq, for actor:
@@ -70,13 +82,18 @@ func (s *Store) MailReceiptOf(ctx context.Context, seq uint64, actor string) (Ma
 // MailPeerReceipts sends text to the crew member or user to of peer, as
 // MailPeerReceipt sends one mail, in as many mails as SplitMail makes of
 // it (as MailText does for local mail), and returns the receipt of each
-// part sent, in order. A part that is not taken ends the send: the
-// receipts of the parts before it are returned with the error, and no
-// later part is sent without it, as with mailParts.
-func MailPeerReceipts(api API, ctx context.Context, to, peer, text, actor string) ([]MailReceipt, error) {
+// part sent, in order. Files go with the first part only. A part that is
+// not taken ends the send: the receipts of the parts before it are
+// returned with the error, and no later part is sent without it, as with
+// mailParts.
+func MailPeerReceipts(api API, ctx context.Context, to, peer, text, actor string, files ...BlobFile) ([]MailReceipt, error) {
 	var got []MailReceipt
-	err := mailParts(to, text, func(_ int, part string) error {
-		r, err := api.MailPeerReceipt(ctx, to, peer, part, actor)
+	err := mailParts(to, text, func(i int, part string) error {
+		var first []BlobFile
+		if i == 0 {
+			first = files
+		}
+		r, err := api.MailPeerReceipt(ctx, to, peer, part, actor, first...)
 		if err != nil {
 			return err
 		}

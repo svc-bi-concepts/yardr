@@ -515,6 +515,12 @@ func (c *Client) Mail(ctx context.Context, to, text, actor string, files ...stor
 func (c *Client) MailReply(ctx context.Context, to, text, actor string, answered uint64) error {
 	return c.call(ctx, "MailReply", nil, to, text, actor, answered)
 }
+func (c *Client) MailLocalReceipt(ctx context.Context, to, text, actor string, files ...store.BlobFile) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailLocalReceipt", to, text, actor, files)
+}
+func (c *Client) MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailReplyReceipt", to, text, actor, answered)
+}
 func (c *Client) React(ctx context.Context, seq uint64, emoji, actor string) error {
 	return c.call(ctx, "React", nil, seq, emoji, actor)
 }

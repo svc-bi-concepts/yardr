@@ -227,3 +227,120 @@ func TestMailPeerReceiptsWholeText(t *testing.T) {
 		t.Fatalf("store holds %d receipts, want %d", n, want)
 	}
 }
+
+// mailEvents is how many mail events the log holds.
+func mailEvents(t *testing.T, s *Store) int {
+	t.Helper()
+	evs, err := s.EventsOfKind(context.Background(), "mail", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(evs)
+}
+
+// TestMailLocalReceiptIsWrittenWithTheMail pins a local receipt: it names
+// the mail's own event, its direction is local, it has no peer, and the
+// sender reads it back, as with a peer mail's.
+func TestMailLocalReceiptIsWrittenWithTheMail(t *testing.T) {
+	ctx := context.Background()
+	s := receiptYard(t, filepath.Join(t.TempDir(), "a.db"), true)
+	defer s.Close(ctx)
+
+	r, err := s.MailLocalReceipt(ctx, "mckean", "hello", "mckean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Seq == 0 || r.Direction != ReceiptLocal || r.Peer != "" || r.ID != "" || r.From != "mckean" || r.To != "mckean" {
+		t.Fatalf("receipt = %+v", r)
+	}
+	evs, err := s.EventsOfKind(ctx, "mail", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Seq != r.Seq {
+		t.Fatalf("mail events = %+v, want the receipt's %d", evs, r.Seq)
+	}
+	got, err := s.MailReceiptOf(ctx, r.Seq, "mckean")
+	if err != nil || got != r {
+		t.Fatalf("MailReceiptOf = %+v, %v; want %+v", got, err, r)
+	}
+	// An answer is a local mail too, under its own receipt.
+	ra, err := s.MailReplyReceipt(ctx, "mckean", "re: hello", "mckean", r.Seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ra.Seq == r.Seq || ra.Direction != ReceiptLocal {
+		t.Fatalf("answer's receipt = %+v", ra)
+	}
+	if n := receiptKeys(t, s); n != 2 {
+		t.Fatalf("receipts = %d, want one per mail (2)", n)
+	}
+}
+
+// TestMailTextReceiptsWholeText holds a local text sent in parts to a
+// receipt per part, in order, and the answer's parts to the same.
+func TestMailTextReceiptsWholeText(t *testing.T) {
+	ctx := context.Background()
+	s := receiptYard(t, filepath.Join(t.TempDir(), "a.db"), true)
+	defer s.Close(ctx)
+	text := strings.Repeat("z", 2*MaxMailBytes)
+	want := len(SplitMail(text))
+	got, err := MailTextReceipts(s, ctx, "mckean", text, "mckean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != want {
+		t.Fatalf("receipts = %d, want one per part (%d)", len(got), want)
+	}
+	for i, r := range got {
+		if r.Direction != ReceiptLocal || (i > 0 && r.Seq <= got[i-1].Seq) {
+			t.Fatalf("receipt %d = %+v, not local and in order", i, r)
+		}
+	}
+	first := got[0].Seq
+	rep, err := MailReplyTextReceipts(s, ctx, "mckean", text, "mckean", first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep) != want {
+		t.Fatalf("answer's receipts = %d, want %d", len(rep), want)
+	}
+	if n := receiptKeys(t, s); n != 2*want {
+		t.Fatalf("receipts = %d, want %d", n, 2*want)
+	}
+}
+
+// TestMailReceiptRollsBackWithTheMail fails the receipt's write, the last
+// write of a mail, after its event and its outbox message are in the same
+// transaction. The mail must not be written at all: no event, no message
+// and no receipt, for local mail and for mail to a peer.
+func TestMailReceiptRollsBackWithTheMail(t *testing.T) {
+	ctx := context.Background()
+	s := receiptYard(t, filepath.Join(t.TempDir(), "a.db"), true)
+	defer s.Close(ctx)
+
+	failing := writeReceipt
+	writeReceipt = func(*bolt.Tx, MailReceipt) error { return errors.New("receipt write refused") }
+	defer func() { writeReceipt = failing }()
+
+	before := mailEvents(t, s)
+	if _, err := s.MailLocalReceipt(ctx, "mckean", "local", "mckean"); err == nil {
+		t.Fatal("local mail was written with its receipt refused")
+	}
+	if _, err := s.MailPeerReceipt(ctx, "mckean", "b", "peer", "mckean"); err == nil {
+		t.Fatal("peer mail was queued with its receipt refused")
+	}
+	if n := mailEvents(t, s); n != before {
+		t.Fatalf("mail events = %d after the refused writes, want %d", n, before)
+	}
+	if n := receiptKeys(t, s); n != 0 {
+		t.Fatalf("receipts = %d after the refused writes, want 0", n)
+	}
+	out, err := s.PeerOutbox(ctx, "b", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("outbox = %d messages after the refused write, want 0", len(out))
+	}
+}

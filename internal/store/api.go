@@ -193,6 +193,8 @@ type API interface {
 	Journal(ctx context.Context, name, kind, text, actor string) (bool, error)
 	Mail(ctx context.Context, to, text, actor string, files ...BlobFile) error
 	MailReply(ctx context.Context, to, text, actor string, answered uint64) error
+	MailLocalReceipt(ctx context.Context, to, text, actor string, files ...BlobFile) (MailReceipt, error)
+	MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (MailReceipt, error)
 	React(ctx context.Context, seq uint64, emoji, actor string) error
 	PutBlob(ctx context.Context, data []byte) (*BlobRef, error)
 	Inbox(ctx context.Context, name string, limit int) (*InboxPage, error)
