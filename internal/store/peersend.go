@@ -389,7 +389,7 @@ func (s *Store) PeerBeadSend(ctx context.Context, session string) (*BeadPeer, er
 		if err := s.checkPeerRemote(ctx, *depot, sess.Group, pre.ID); err != nil {
 			return nil, err
 		}
-		if from, moved, err = s.startOf(ctx, *depot, pre.ID, sess.Group, baseOf(ctx, *depot, fam.Base), last); err != nil {
+		if from, moved, err = s.startOf(ctx, *depot, pre.ID, sess.Group, fam.Base, last); err != nil {
 			return nil, err
 		}
 	}

@@ -392,12 +392,14 @@ func againOf(ctx context.Context, depot Depot, bead string, g, last *PeerGit) (f
 // moved is the reason the bead cannot be sent, refused by this yard: the
 // depot has no remote to push its branch to. err is a push that failed, and
 // is tried again on a later pass (pushFailed).
-func (s *Store) startOf(ctx context.Context, depot Depot, bead, group string, g, last *PeerGit) (from *PeerGit, moved string, err error) {
+func (s *Store) startOf(ctx context.Context, depot Depot, bead, group, base string, last *PeerGit) (from *PeerGit, moved string, err error) {
 	var grp Group
 	if err := s.read(func(tx *bolt.Tx) error { _, err := get(tx, bGroups, group, &grp); return err }); err != nil {
 		return nil, "", err
 	}
-	from, ahead := againOf(ctx, depot, bead, g, last)
+	gctx, cancel := context.WithTimeout(ctx, peerFetchTimeout)
+	from, ahead := againOf(gctx, depot, bead, baseOf(gctx, depot, base), last)
+	cancel()
 	if !ahead {
 		return from, "", nil
 	}
