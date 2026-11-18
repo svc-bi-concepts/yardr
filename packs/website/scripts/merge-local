@@ -51,6 +51,11 @@
 # run ended by a signal is run once more, and held if a
 # signal ends it again. A depot with no test command lands untested, and the
 # note says so. It never forces and never pushes anything but a fast-forward.
+# Before the rebase, the branch must contain the commit the reviewer approved
+# (the newest "Reviewed <sha>" or "approved <sha>" note of the bead, as
+# infra-land.sh reads it): a branch on another line of commits is refused back
+# to its builders, with both shas and the commits it has past the approved
+# one. A bead with no approval lands as before, and the log says so.
 #
 # With YARDR_LAND=squash the branch is made one commit after the rebase and
 # before the tests, so that the commit tested is the commit landed. Its
@@ -271,6 +276,53 @@ if [ ! -d "$WT" ]; then
 fi
 [ "$(git -C "$WT" symbolic-ref -q HEAD)" = "refs/heads/$BR" ] || hold "$WT is not on $BR"
 [ -z "$(git -C "$WT" status --porcelain)" ] || hold "worktree $WT has uncommitted changes"
+
+# The commit the reviewer approved, from the bead's notes: the newest note whose
+# text says "Reviewed <sha>" or "approved <sha>", the rule infra-land.sh reads
+# (yard-hxkm), so that both landers agree. The notes come from bead show as
+# JSON, one "text" line per note, oldest first, with the newlines of a note
+# escaped as \n: each note is read from its own line, the escapes become
+# spaces, and the sha must be a whole word of 7 to 40 hex digits. Prints it,
+# or nothing for a bead with no such note.
+approved_from_json() {
+  sed -n 's/^ *"text": *"\(.*\)",\{0,1\}$/\1/p' | sed 's/\\n/ /g' |
+    awk '{
+      s = " " $0; found = ""
+      while (match(s, /[ \t]([Rr]eviewed|approved)[ :]+[0-9a-f]+/)) {
+        m = substr(s, RSTART, RLENGTH)
+        s = substr(s, RSTART + RLENGTH)
+        sub(/^.*[ :]/, "", m)
+        if (length(m) >= 7 && length(m) <= 40 && substr(s, 1, 1) !~ /[0-9A-Za-z]/) { found = m; break }
+      }
+      if (found != "") last = found
+    }
+    END { print last }'
+}
+# Before the rebase, which gives every commit of the branch a new sha: the
+# reviewer approved one commit, and the branch must contain it. A branch on
+# another line of commits does not land, though its tip may be tested and
+# green. Commits past the approved one are allowed. A bead with no recorded
+# approval is a legacy bead and lands as before, with a line in the log saying
+# so. An approved sha that is not in the depot holds: there is no judging it.
+json=$("$Y" --json bead show "$BEAD") || hold "cannot read the notes of $BEAD for its reviewer-approved commit"
+approved=$(printf '%s\n' "$json" | approved_from_json)
+if [ -z "$approved" ]; then
+  echo "no reviewer-approved commit recorded on $BEAD; landing $BR as before"
+else
+  full_approved=$(git -C "$REPO" rev-parse -q --verify "$approved^{commit}") ||
+    hold "the reviewer-approved commit $approved is not in $REPO; cannot check $BR against it"
+  br_head=$(git -C "$REPO" rev-parse "refs/heads/$BR") || hold "cannot read $BR"
+  after=$(git -C "$REPO" log --oneline "$br_head" --not "$full_approved") ||
+    hold "cannot list the commits of $BR past the reviewer-approved commit $approved"
+  if git -C "$REPO" merge-base --is-ancestor "$full_approved" "$br_head"; then
+    echo "== $BR at $(git -C "$REPO" rev-parse --short "$br_head") contains the reviewer-approved $(git -C "$REPO" rev-parse --short "$full_approved"); commits past it:"
+    echo "${after:-none}"
+  else
+    back "$BR at $br_head does not contain the reviewer-approved commit $full_approved: the branch is on another line of commits. Commits on $BR that the approved commit lacks:
+${after:-none}
+The builder runs the bead again on a branch that contains the reviewed commit, or the review is run again on what the branch holds."
+  fi
+fi
 
 # Bring the base up to what it is pushed to before the branch is rebased
 # onto it, so the bead is tested against and lands on the remote's commits

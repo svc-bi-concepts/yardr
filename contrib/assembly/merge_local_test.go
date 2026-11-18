@@ -857,6 +857,69 @@ func (y *yard) refusedOf(id string) []string {
 	return out
 }
 
+// The reviewer's approved commit, from the bead's notes, must be on the branch
+// before it is rebased and landed (yard-sa1r, as infra-land.sh does for PRs).
+// A branch that contains it lands; a branch on another line of commits is
+// refused back to its builders, with both shas named; a bead with no approval
+// lands as before and the log says so.
+func TestMergeLocalApprovedCommit(t *testing.T) {
+	t.Parallel() // as its subtests are: see TestMain
+	t.Run("branch descends from the approved commit lands", func(t *testing.T) {
+		y := newYard(t)
+		approved := y.commit(y.wt, "b.txt", "reviewed\n")
+		y.commit(y.wt, "c.txt", "later\n")
+		y.yardrIn("Reviewed "+approved+" by the review.\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: the branch contains the approved commit\n%s", b.Stage, y.log)
+		}
+		if !strings.Contains(y.log, "contains the reviewer-approved") {
+			t.Fatalf("the log does not say the approved commit is on the branch:\n%s", y.log)
+		}
+	})
+
+	t.Run("branch on another line of commits is refused with both shas", func(t *testing.T) {
+		y := newYard(t)
+		main := y.git(y.repo, "rev-parse", "main")
+		// The reviewed commit sits on a line the branch does not have: a commit
+		// on main's tree, made without a checkout.
+		approved := y.git(y.repo, "commit-tree", y.git(y.repo, "rev-parse", "main^{tree}"), "-p", "main", "-m", "reviewed")
+		branch := y.commit(y.wt, "b.txt", "bead\n")
+		y.yardrIn("approved "+approved+"\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "new" {
+			t.Fatalf("bead in %s, want new: the branch lacks the approved commit\n%s", b.Stage, y.log)
+		}
+		notes := y.notes()
+		for _, sha := range []string{approved, branch} {
+			if !strings.Contains(notes, sha) {
+				t.Fatalf("the refusal does not name %s:\n%s", sha, notes)
+			}
+		}
+		if got := y.git(y.repo, "rev-parse", "main"); got != main {
+			t.Fatal("main moved on a refused branch")
+		}
+	})
+
+	t.Run("no approval recorded lands with a log line", func(t *testing.T) {
+		y := newYard(t)
+		y.commit(y.wt, "b.txt", "bead\n")
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: no approval is recorded\n%s", b.Stage, y.log)
+		}
+		if !strings.Contains(y.log, "no reviewer-approved commit recorded on r-1; landing yard/r-1 as before") {
+			t.Fatalf("the log does not say no approval is recorded:\n%s", y.log)
+		}
+	})
+}
+
 func TestMergeLocalClean(t *testing.T) {
 	y := newYardCLI(t)
 	y.hooks = true
