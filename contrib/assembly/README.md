@@ -65,7 +65,9 @@ bead; one that exits 2 for a failing test, as make does, is wrapped
 (`--test 'make test || exit 1'`). Where the command is the path of a file
 the base has (`--test .yardr/test`), the base's copy of that file is what
 runs, with sh: a bead cannot change the script that judges it, and a change
-to the script counts from the next bead on. A depot with no test command
+to the script counts from the next bead on. Its `$0` is the file's path in
+the worktree, so a script that finds its root with `dirname "$0"` works; what
+it sources or calls through that path is the branch's. A depot with no test command
 lands untested, and the note says so.
 The note of a red run starts with the branch, the commit, the base and what
 ran, and carries the last 200 lines of the output: what matters of a long

@@ -973,6 +973,53 @@ func TestMergeLocalRunsTheBasesCopyOfTheTestScript(t *testing.T) {
 	}
 }
 
+// The base's entry script keeps its contents while $0 names its worktree
+// location, so a test may derive the checkout root without running the
+// candidate's replacement script.
+func TestMergeLocalBaseTestScriptUsesWorktreePathForLayout(t *testing.T) {
+	y := newYard(t)
+	if err := os.Mkdir(filepath.Join(y.repo, "ci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := y.commit(y.repo, "ci/run-tests.sh", "#!/bin/sh\ncd \"$(dirname \"$0\")/..\" || exit 2\ntest -e candidate-file\n")
+	y.tests("ci/run-tests.sh")
+	y.git(y.wt, "merge", "-q", "--ff-only", "main")
+	y.commit(y.wt, "candidate-file", "present\n")
+	y.commit(y.wt, "ci/run-tests.sh", "#!/bin/sh\nexit 1\n")
+
+	y.assembly()
+
+	if b := y.bead(); b.Stage != "merged" || b.Status != "closed" {
+		t.Fatalf("bead %s/%s, want merged and closed:\n%s", b.Stage, b.Status, y.notes())
+	}
+	if got := y.git(y.repo, "rev-parse", "main"); got == main {
+		t.Fatal("the branch did not land after the base script found its worktree file")
+	}
+	if strings.Contains(y.notes(), "candidate script") {
+		t.Fatalf("the base script was not recorded as the test:\n%s", y.notes())
+	}
+}
+
+// A syntax error in the trusted base script is a hold (exit 2), matching the
+// test command's cannot-run contract rather than reporting a red test.
+func TestMergeLocalHoldsWhenTheBasesTestScriptHasASyntaxError(t *testing.T) {
+	y := newYard(t)
+	y.commit(y.repo, "run-tests.sh", "if then\n")
+	y.tests("run-tests.sh")
+	y.git(y.wt, "merge", "-q", "--ff-only", "main")
+	y.commit(y.wt, "run-tests.sh", "#!/bin/sh\nexit 0\n")
+
+	y.assembly()
+
+	b := y.bead()
+	if !b.Hold || b.Stage != "approved" {
+		t.Fatalf("bead %s hold=%v, want held in approved:\n%s", b.Stage, b.Hold, y.notes())
+	}
+	if !strings.Contains(y.notes(), "could not run") {
+		t.Fatalf("hold does not say the base test could not run:\n%s", y.notes())
+	}
+}
+
 // A script only the branch has is no file of the base: it runs as a command,
 // the branch's copy, which is how a depot's first test script lands.
 func TestMergeLocalTestScriptNewOnTheBranchRunsAsACommand(t *testing.T) {
