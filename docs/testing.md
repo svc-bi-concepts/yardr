@@ -84,8 +84,9 @@ load, which `testload` reads as the fuse is armed, in a plain run too
 gate's `sizewaits`, which says the same rule). It was 4 until yardr-b2er: the
 mini runs at a load of 50 to 77 on 10 cores, a factor of 5 to 8, and at 4 a 60 s
 fuse was 240 s there and expired (the killed-gate test). A met wait still returns
-early, so the higher cap only lengthens a red wait under real load. So a fuse is sized to the load the suite runs in, not the load its leg
-started in, and is not raised by hand after it flakes in a landing. The
+early, so the higher cap only lengthens a red wait under real load. So a
+fuse is sized to the load the suite runs in, not the load its leg started in,
+and is not raised by hand after it flakes in a landing. The
 deadline a test gives the program under test is that program's input, not
 a fuse, and is not scaled. A wait on a program that makes a hundred process
 starts, and so takes as long as the machine makes it (contrib/isolated-yard's
