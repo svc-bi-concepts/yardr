@@ -490,7 +490,6 @@ names is refused too: clear the setting first (yardr settings set upgrade_from "
 
 // depotFlow names the flow governing depot's beads (pins and types aside) and
 // where it comes from, for listings.
-
 func depotFlow(ctx context.Context, st store.API, depot string) string {
 	rfs, err := st.DepotFlows(ctx, depot)
 	if err != nil {
