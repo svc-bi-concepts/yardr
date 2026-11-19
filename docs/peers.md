@@ -1180,6 +1180,34 @@ message does, pushed or pulled. The command returns once it is queued:
 `yardr peer show north` lists it (`waiting: mail <id> from yardmaster to
 yardmaster@north`) until the peer has it.
 
+**Receipts and replies.** Each mail this yard queues for a peer, or writes to
+its own inboxes, has a receipt (`MailReceipt`) written in the same transaction as
+its outbox message and its event: the event's seq, the wire id, the peer as the
+link named it and the peer's key, and the participants. A receipt proves only
+that this yard committed the mail. It lives with the event it names and carries
+no body: the text stays in the event and the outbox, as before.
+
+A reply carries the wire id of the mail it answers as `re`, and the receiving
+yard relates it to that mail only when its own receipt for that id was queued to
+this peer's key, and the reply runs back along the same two names. Only then does
+the mail event say `in_reply_to`. The receipt index (`mail_receipt_ids`) is
+built once, for a store that had receipts before it, and is written with them.
+
+The mail event this yard writes for it says so in its data: `id` is the wire id
+of the mail, `re` the id the peer's reply names as sent, kept for provenance,
+and `in_reply_to` the seq, in this yard's own log, of the outgoing mail it
+answers, present only when the relation is validated. `in_reply_to` is never the
+peer's seq for the reply.
+
+The mapping's lifetime follows the custody it serves, with no timer of its own.
+A receipt goes when the event it names is pruned and the outbox no longer holds
+its message. Acknowledging the message does not expire the receipt while the
+event is kept, and a prune that removes the event while the message is still
+queued keeps the receipt until a later prune finds the message gone. A peer
+renamed keeps its relation, since the key is what identifies it; a name made
+again under another key does not inherit one. Mail from before receipts existed
+has none, and stays ordinary mail.
+
 **Who may send.** For a crew member two things must hold, for a user of the
 yard the first alone:
 

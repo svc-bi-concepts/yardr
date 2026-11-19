@@ -491,6 +491,20 @@ func (w *wtx) deliverMail(p *Peer, m PeerMessage, mail *peerMail, fl *filing) er
 	if mail.as != "" {
 		data["as"] = mail.as
 	}
+	// The wire id the reply names is kept as it came, for provenance. It
+	// is a relation only when this yard sent the mail it answers, to this
+	// peer, back along the same participants (answeredMail): that is the
+	// one this yard's own event seq, not the peer's.
+	if m.Re != "" {
+		data["re"] = m.Re
+		orig, ok, err := w.answeredMail(p, m.Re, mail)
+		if err != nil {
+			return err
+		}
+		if ok {
+			data["in_reply_to"] = orig.Seq
+		}
+	}
 	return w.event("", "mail", mail.From+"@"+p.Name, data)
 }
 

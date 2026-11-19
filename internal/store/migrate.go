@@ -353,6 +353,9 @@ func openMigrations(home string, moved, depotsMoved bool) []migration {
 		{run: indexPanesAndPending},
 		{run: indexSessionOrder},
 		{run: indexOpenBeads},
+		// Before createBuckets, which would create the index empty: the
+		// index is filled from the receipts of a store that has them.
+		{run: indexMailReceipts},
 		{run: createBuckets},
 		{run: migrateFlows},
 		{run: migrateDepotKinds},
