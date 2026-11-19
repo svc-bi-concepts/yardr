@@ -1464,15 +1464,18 @@ source and sender, showing who the sender is, the channel the
 message arrived in, and how many messages wait. The person on the
 card can read each full body there; it stays out of notes, events,
 `bead show` and every agent-readable view until the answer. Where a held
-delivery would reach a crew member, by its mention or by that member's
-subscriptions to the source (routed as a kept delivery would be), the
+delivery matches a crew member's subscriptions to the source, including
+mention-scoped subscriptions (routed as a kept delivery would be), the
 member's inbox gets one `identity_held` line: the card, the source, the
 sender, the channel and how many wait, with `yardr bead show <card>` to
 answer it. The line carries no message text. A card is told once, and again
 only when it has grown since and an hour has passed since its last notice;
 a card that empties is told afresh when the next stranger writes. Users are
-not sent it. The operator's `yardr inbox` lists each open card that holds a
-delivery, one line each, so the card is seen when they look. At most
+not sent it. The operator's `yardr inbox` lists each open card addressed to
+them that holds a delivery, including cards put aside, one line each after
+the mail. `--mail` includes the list; `--notifications` alone does not.
+The list stays until the card is settled or empties; `--ack` does not clear
+it. At most
 5 wait on one card, each within the hook's size
 limit, and a further message while 5 wait is dropped and counted as
 any drop is. Its picks are the yard's users, each naming the

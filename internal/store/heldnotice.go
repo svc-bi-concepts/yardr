@@ -8,18 +8,11 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// A held delivery (held.go) reaches no inbox: the receiver keeps it on its
-// mapping card and nothing else is logged, so a crew member it mentions
-// never hears of it and the operator finds the card only by chance. These
-// two notices close that: the crew gets an identity_held event, and the
-// operator's inbox lists the cards that hold something.
-
 // KindIdentityHeld is the kind of the event a held delivery is logged as
-// when the crew would hear of it: the crew members its envelope mentions or
-// that their yardr subscriptions would nudge on (heldNotice). It is about no
-// bead, and it carries the card, the source, the sender, the channel and how
-// many wait, never the message: its text stays on the card until the card is
-// answered.
+// when its envelope matches a crew member's source subscriptions
+// (heldNotice). It is about no bead, and it carries the card, the source,
+// the sender, the channel and how many wait, never the message: its text
+// stays on the card until the card is answered.
 const KindIdentityHeld = "identity_held"
 
 // HeldNoticeGap is how long a card's notice stands: a delivery that makes
@@ -43,11 +36,11 @@ type heldTold struct {
 // heldNotice tells the crew of a held delivery on the card uuid, which
 // sourceName's sender sent from channel and envelope describes, with count
 // deliveries waiting now. The event is routed as a kept delivery is
-// (hookDeliveries), so it reaches the crew members the envelope mentions and
-// those whose subscriptions would nudge on it, and no user: the operator
-// finds the card in HeldCards. Nothing is written where no crew member is
-// reached, and a card is told once, then again only when it has grown since
-// its last notice and HeldNoticeGap has passed.
+// (hookDeliveries), so it reaches crew members with matching source
+// subscriptions, and no user: the operator finds the card in HeldCards.
+// Nothing is written where no crew member is reached, and a card is told
+// once, then again only when it has grown since its last notice and
+// HeldNoticeGap has passed.
 func (w *wtx) heldNotice(uuid, sourceName, sender, channel string, envelope map[string]any, count int) error {
 	var last heldTold
 	told, err := get(w.Tx, bHeldTold, uuid, &last)
