@@ -505,14 +505,18 @@ func (a *app) replyMail(c *cobra.Command, st store.API, seq uint64, e store.Even
 		if from == "" {
 			return fmt.Errorf("event %d is mail with no sender to answer", seq)
 		}
-		m, err := st.MailPeer(ctx, from, peer, body, name)
+		// The store answers the mail by its seq: it takes the sender, the
+		// link and the wire id from the event (MailPeerReply), so the reply
+		// names the mail it answers.
+		r, err := st.MailPeerReply(ctx, seq, body, name)
 		if err != nil {
 			return err
 		}
 		if err := a.ackAnsweredMail(ctx, st, name, seq); err != nil {
 			return err
 		}
-		queued := map[string]any{"seq": seq, "crew": name, "to": from, "peer": peer, "id": m.ID, "sent": "queued"}
+		wire, _ := e.Data["id"].(string)
+		queued := map[string]any{"seq": seq, "crew": name, "to": from, "peer": peer, "id": r.ID, "re": wire, "receipt": r, "sent": "queued"}
 		return a.out(c.OutOrStdout(), queued, func(w io.Writer) {
 			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", from, peer, peer)
 		})

@@ -94,6 +94,14 @@ func (w *wtx) answeredMail(p *Peer, re string, mail *peerMail) (MailReceipt, boo
 	if r.Direction != ReceiptOut || r.ID != re || r.PeerKey != p.Key || r.To != mail.From || r.From != mail.To {
 		return MailReceipt{}, false, nil
 	}
+	// A receipt outlives its event while the outbox still holds its
+	// message (pruneMailReceipts), so the seq it names may be pruned. Then
+	// this yard has no event for the reply to relate to, and the reply
+	// stays uncorrelated: re is kept, and no in_reply_to names a seq that
+	// is gone.
+	if w.Bucket(bEvents).Get([]byte(seqKey(r.Seq))) == nil {
+		return MailReceipt{}, false, nil
+	}
 	return r, true, nil
 }
 

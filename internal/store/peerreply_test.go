@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"yardr.dev/yardr/internal/store"
 	"yardr.dev/yardr/internal/storetest"
@@ -499,5 +500,124 @@ func TestRelationSurvivesRemovingAndAddingTheSameKey(t *testing.T) {
 	}
 	if seq, ok := relatedTo(mailOf(t, p.a, "rk-1")); !ok || seq != r.Seq {
 		t.Fatalf("in_reply_to = %d, %v; want %d", seq, ok, r.Seq)
+	}
+}
+
+// TestPeerReplyNamesTheMailItAnswers is the native reply across two real
+// yards: b answers the mail it took by its own seq, and the reply goes back
+// to a under the wire id a sent it, so a relates it to its own event.
+func TestPeerReplyNamesTheMailItAnswers(t *testing.T) {
+	t.Parallel()
+	p := linkedPair(t)
+	r, out := p.send(t, "when is the freeze?")
+	if got := p.deliver(t, out); got.Refused != "" || got.Duplicate {
+		t.Fatalf("b refused the mail: %+v", got)
+	}
+	inbox := mailOf(t, p.b, out.ID)
+
+	rr, err := p.b.MailPeerReply(p.ctx, inbox.Seq, "friday", "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rr.Direction != store.ReceiptOut || rr.Peer != "a" || rr.PeerKey != p.keyA || rr.From != "ada" || rr.To != "jo" {
+		t.Fatalf("receipt = %+v", rr)
+	}
+	msgs, err := p.b.PeerOutbox(p.ctx, "a", 0)
+	if err != nil || len(msgs) != 1 || msgs[0].ID != rr.ID || msgs[0].Re != out.ID {
+		t.Fatalf("outbox = %+v, %v; want the reply %s naming re %s", msgs, err, rr.ID, out.ID)
+	}
+	got, err := p.a.PeerReceive(p.ctx, "b", p.keyB, []store.PeerMessage{msgs[0].PeerMessage})
+	if err != nil || len(got) != 1 || got[0].Refused != "" {
+		t.Fatalf("a took %+v, %v", got, err)
+	}
+	e := mailOf(t, p.a, rr.ID)
+	if seq, ok := relatedTo(e); !ok || seq != r.Seq {
+		t.Fatalf("in_reply_to = %v (%v), want a's own event %d", e.Data["in_reply_to"], ok, r.Seq)
+	}
+	if e.Data["re"] != out.ID {
+		t.Fatalf("re = %v, want the wire id %s", e.Data["re"], out.ID)
+	}
+}
+
+// TestPeerReplyRefusesWhatItCannotAnswer holds the operation to the mail it
+// may answer: only mail to the actor, from another yard, and an existing
+// message. Each refusal queues nothing.
+func TestPeerReplyRefusesWhatItCannotAnswer(t *testing.T) {
+	t.Parallel()
+	p := linkedPair(t)
+	_, out := p.send(t, "q")
+	p.deliver(t, out)
+	inbox := mailOf(t, p.b, out.ID)
+	local, err := p.b.MailLocalReceipt(p.ctx, "ada", "local", "jo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, text, actor string
+		seq               uint64
+	}{
+		{"not the receiver", "x", "jo", inbox.Seq},
+		{"local mail", "x", "ada", local.Seq},
+		{"empty text", " ", "ada", inbox.Seq},
+		{"no such message", "x", "ada", 999999},
+	}
+	for _, c := range cases {
+		if _, err := p.b.MailPeerReply(p.ctx, c.seq, c.text, c.actor); err == nil {
+			t.Fatalf("%s: answered, want a refusal", c.name)
+		}
+	}
+	if msgs, err := p.b.PeerOutbox(p.ctx, "a", 0); err != nil || len(msgs) != 0 {
+		t.Fatalf("refusals queued %+v, %v", msgs, err)
+	}
+}
+
+// TestReplyToPrunedMailStaysUncorrelated: a's event for its mail is pruned
+// while the outbox still holds the message, which keeps the receipt. A reply
+// that names the mail is accepted as ordinary mail: re is kept as sent, and
+// no in_reply_to names the seq that is gone.
+func TestReplyToPrunedMailStaysUncorrelated(t *testing.T) {
+	t.Parallel()
+	p := linkedPair(t)
+	r, out := p.send(t, "held")
+	if err := p.a.Mail(p.ctx, "al", "later", "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.a.Prune(p.ctx, store.Retention{Events: time.Nanosecond}, "ada"); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := p.a.Events(p.ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range evs {
+		if e.Seq == r.Seq {
+			t.Fatalf("a's event %d survived the prune", r.Seq)
+		}
+	}
+	if _, err := p.a.MailReceiptOf(p.ctx, r.Seq, "jo"); err != nil {
+		t.Fatalf("custody lost the receipt: %v", err)
+	}
+
+	if got := p.deliver(t, out); got.Refused != "" {
+		t.Fatalf("b refused the mail: %+v", got)
+	}
+	inbox := mailOf(t, p.b, out.ID)
+	rr, err := p.b.MailPeerReply(p.ctx, inbox.Seq, "reply", "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := p.b.PeerOutbox(p.ctx, "a", 0)
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("outbox = %+v, %v", msgs, err)
+	}
+	if got, err := p.a.PeerReceive(p.ctx, "b", p.keyB, []store.PeerMessage{msgs[0].PeerMessage}); err != nil || len(got) != 1 || got[0].Refused != "" {
+		t.Fatalf("a took %+v, %v", got, err)
+	}
+	e := mailOf(t, p.a, rr.ID)
+	if v, ok := e.Data["in_reply_to"]; ok {
+		t.Fatalf("in_reply_to = %v, want none for a pruned event", v)
+	}
+	if e.Data["re"] != out.ID {
+		t.Fatalf("re = %v, want %s kept as sent", e.Data["re"], out.ID)
 	}
 }
