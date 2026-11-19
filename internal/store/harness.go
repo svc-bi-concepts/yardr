@@ -110,7 +110,7 @@ type Harness struct {
 // reads empty. PlaceholderSGR is the colour such a hint is drawn in, for a
 // harness whose hint's words are not fixed: text drawn in it reads as no
 // text, as faint text does. Footer begins the harness's footer where it is
-// drawn fused to the rule above its input (a box-drawing run, then the mark,
+// drawn fused to the rule below its input (a box-drawing run, then the mark,
 // on one row): that row ends the input as a rule does. Error is every mark
 // the harness's TUI may draw before a message of its own, taken off a line
 // before it is read for an error.
