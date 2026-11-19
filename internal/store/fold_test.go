@@ -443,7 +443,7 @@ func foldPartBounds(total, procs int) [][2]int {
 
 // The split of TestFoldBeads's rows must cover every row once, in order, and
 // never run past the end, whatever the machine's parallelism. The machine
-// decides procs, so every count is checked here: 14 procs on 72 rows panicked.
+// decides procs, so a range of counts is checked here: 14 procs on 72 rows panicked.
 func TestFoldPartBounds(t *testing.T) {
 	for total := 1; total <= 100; total++ {
 		for procs := 1; procs <= 64; procs++ {
@@ -1741,7 +1741,7 @@ func TestFoldBeads(t *testing.T) {
 		{name: "no bead is refused", depot: "plain", opts: FoldOptions{To: "ready"}, wantErr: "needs beads"},
 	}
 
-	// The rows run in as many parts as the machine runs parallel tests,
+	// The rows run in at most as many parts as the machine runs parallel tests,
 	// each part over a yard of its own: a part's rows run in turn as they
 	// always did, and no row shares with another part.
 	for c, bounds := range foldPartBounds(len(rows), runtime.GOMAXPROCS(0)) {
