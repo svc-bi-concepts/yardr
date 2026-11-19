@@ -137,7 +137,7 @@ func TestSourceCheckSlackPrintsSelectedFields(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"user_id":"U999BOT99","team_id":"T012AB3CD","bot_id":"B012AB3CD","user":"yardr","team":"hooli"}`))
+		_, _ = w.Write([]byte(`{"ok":true,"user_id":"U999BOT99","team_id":"T012AB3CD","bot_id":"B012AB3CD","user":"fixturebot","team":"hooli"}`))
 	}))
 	defer srv.Close()
 	a := openApp(t)
@@ -188,7 +188,7 @@ func TestSourceCheckSlackPrintsSelectedFields(t *testing.T) {
 			t.Errorf("source check lacks %q:\n%s", want, out)
 		}
 	}
-	for _, not := range []string{token, "hooli", "yardr", "slack: ok: "} {
+	for _, not := range []string{token, "hooli", "fixturebot", "slack: ok: "} {
 		if strings.Contains(out, not) {
 			t.Errorf("source check shows %q:\n%s", not, out)
 		}

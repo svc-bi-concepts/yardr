@@ -35,10 +35,11 @@ const yardTest = ".yardr/test"
 // landing's (docs/testing.md R4).
 const plainWhy = ": testing without -race (race runs at landing only, docs/testing.md R4)"
 
-// noYardHome is the YARDR_HOME a case's script gets: a fixed path under the
-// temp dir that no test creates, so a real yardr reached anyway reads no
-// yard and fails, and the script's filing only warns.
-var noYardHome = filepath.Join(os.TempDir(), "yardr-test-no-yard")
+// noYardHome is the YARDR_HOME a case's script gets: a fixed path that no test
+// creates, so a real yardr reached anyway reads no yard and fails, and the
+// script's filing only warns. It is not under the temp dir: on the Mini that
+// is a cache path other runs share, and a yard home can exist there.
+var noYardHome = string(filepath.Separator) + "nonexistent-yardr-test-no-yard"
 
 // Every run of the gate's script in a fixture repository makes git calls of
 // its own, and the fixtures make theirs, many in all: on macOS each is two
