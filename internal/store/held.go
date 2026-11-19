@@ -218,6 +218,11 @@ func putHeld(tx *bolt.Tx, uuid string, held []HeldDelivery) error {
 		}
 	}
 	if len(held) == 0 {
+		// Nothing waits any more, so the last notice of a wait is over too
+		// (heldNotice): the next delivery starts a card's notices afresh.
+		if err := tx.Bucket(bHeldTold).Delete([]byte(uuid)); err != nil {
+			return err
+		}
 		return tx.Bucket(bHeld).Delete([]byte(uuid))
 	}
 	for _, h := range held {

@@ -590,6 +590,9 @@ func (c *Client) DevicePairCodeSelf(ctx context.Context, user string) (*store.De
 func (c *Client) UserInbox(ctx context.Context, name string, limit int, actor string) (*store.Mailbox, error) {
 	return callV[*store.Mailbox](c, ctx, "UserInbox", name, limit, actor)
 }
+func (c *Client) HeldCards(ctx context.Context, name, actor string) ([]store.HeldCard, error) {
+	return callV[[]store.HeldCard](c, ctx, "HeldCards", name, actor)
+}
 func (c *Client) AckUserInbox(ctx context.Context, name string, through uint64, actor string) error {
 	return c.call(ctx, "AckUserInbox", nil, name, through, actor)
 }

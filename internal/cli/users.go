@@ -573,38 +573,6 @@ func userViews(ctx context.Context, st store.API, name, actor string) ([]userVie
 	return out, nil
 }
 
-// printPeerParties lists whom the linked yards expose to this one, under
-// the users: the address mail to each goes to, whether they are a person
-// or a crew member there, whether mail reaches them, and the line their
-// yard gives of what they do. Nothing for none.
-func printPeerParties(w io.Writer, parties []store.PeerParty) {
-	if len(parties) == 0 {
-		return
-	}
-	rows := [][]string{}
-	for _, e := range parties {
-		is := "crew"
-		if e.Kind == store.RosterUser {
-			is = "person"
-		}
-		rows = append(rows, []string{e.Address(), is, takesMail(e), or(e.Role, "-")})
-	}
-	fmt.Fprintln(w)
-	table(w, "OF A LINKED YARD\tIS\tMAIL\tROLE", rows)
-}
-
-// takesMail is whether mail from this yard reaches e, and whose grant is
-// missing where it does not: both sides of a link allow mail.
-func takesMail(e store.PeerParty) string {
-	switch {
-	case !e.Sends:
-		return fmt.Sprintf("no (yardr peer allow %s --send mail)", e.Peer)
-	case !e.Mail:
-		return fmt.Sprintf("no (%s takes none from this yard)", e.Peer)
-	}
-	return "yes"
-}
-
 // mayMailUser is the one rule about who writes to a user: not an agent
 // working a bead. What it has to say to a person belongs on its bead,
 // where the next stage and the person both read it. It is a rule of this
@@ -678,6 +646,8 @@ func (a *app) unknownLogin(ctx context.Context, st store.API) error {
 type userBox struct {
 	*store.Mailbox
 	Notifications *store.NotificationPage `json:"notifications,omitempty"`
+	// Held are the open cards that hold deliveries, for the operator.
+	Held []store.HeldCard `json:"held,omitempty"`
 }
 
 // userInbox is yardr inbox run as a user: of each part asked for, the
@@ -689,6 +659,9 @@ func (a *app) userInbox(w io.Writer, ctx context.Context, st store.API, name str
 	var err error
 	if mail {
 		if box.Mailbox, err = st.UserInbox(ctx, name, limit, a.who()); err != nil {
+			return err
+		}
+		if box.Held, err = st.HeldCards(ctx, name, a.who()); err != nil {
 			return err
 		}
 	}
@@ -792,6 +765,7 @@ func (a *app) userInbox(w io.Writer, ctx context.Context, st store.API, name str
 				printReactions(w, l)
 			}
 			partFoot(w, rest["mail"], acked["mail"], ack, newer["mail"])
+			printHeldCards(w, box.Held)
 		}
 		if mail && notes {
 			fmt.Fprintln(w)

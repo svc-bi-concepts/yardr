@@ -1463,7 +1463,16 @@ gets a card on a question bead titled with the question, one per
 source and sender, showing who the sender is, the channel the
 message arrived in, and how many messages wait. The person on the
 card can read each full body there; it stays out of notes, events,
-`bead show` and every agent-readable view until the answer. At most
+`bead show` and every agent-readable view until the answer. Where a held
+delivery would reach a crew member, by its mention or by that member's
+subscriptions to the source (routed as a kept delivery would be), the
+member's inbox gets one `identity_held` line: the card, the source, the
+sender, the channel and how many wait, with `yardr bead show <card>` to
+answer it. The line carries no message text. A card is told once, and again
+only when it has grown since and an hour has passed since its last notice;
+a card that empties is told afresh when the next stranger writes. Users are
+not sent it. The operator's `yardr inbox` lists each open card that holds a
+delivery, one line each, so the card is seen when they look. At most
 5 wait on one card, each within the hook's size
 limit, and a further message while 5 wait is dropped and counted as
 any drop is. Its picks are the yard's users, each naming the

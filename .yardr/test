@@ -2067,7 +2067,7 @@ filesizes='
 internal/chat/chat.go 1070 the chat TUI model, state and rendering
 internal/cli/bead_ask.go 1105 the ask and answer commands with secret-giving and setup approval
 internal/cli/beads.go 1099 the bead show, list and history commands and their printing
-internal/cli/crew.go 2212 the crew, inbox, mail and memory commands
+internal/cli/crew.go 2207 the crew, inbox, mail and memory commands
 internal/cli/doctor.go 1255 the doctor examinations and its report
 internal/cli/init.go 1600 yard init, onboarding and settings
 internal/cli/ops.go 1793 the server, daemon, depot, group, route and session commands
@@ -2077,7 +2077,7 @@ internal/cli/routereport.go 1513 the route report and its rendering
 internal/cli/sourcecmd.go 2147 the source command and its builtin checks
 internal/cli/subscriptions.go 1148 the identity, subscribe and thread commands
 internal/cli/updown.go 1302 yard up and down with their handoffs
-internal/cli/users.go 1055 the user command, inboxes and conversations
+internal/cli/users.go 1029 the user command, inboxes and conversations
 internal/dispatch/dispatch.go 1564 the daemon routing pass and its runners
 internal/dispatch/harnesslogin.go 1094 harness login leading and onboarding marks
 internal/pack/export.go 1047 pack export and its object shapes
