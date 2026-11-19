@@ -327,6 +327,7 @@ var Access = map[string]Class{
 	"DevicePairCloseSelf":  Operator,
 	"DevicePairCodeSelf":   Operator,
 	"UserInbox":            Read,
+	"HeldCards":            Read, // the operator's held cards, read as the user's own inbox is (mayReadInbox)
 	"AckUserInbox":         Admin,
 	"UserNotifications":    Read,
 	"AckUserNotifications": Admin,
