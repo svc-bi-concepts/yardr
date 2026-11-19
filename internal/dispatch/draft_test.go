@@ -82,6 +82,13 @@ func (r *redrawCrewRunner) InputText(context.Context, map[string]any) (string, b
 	return r.script[i].text, r.script[i].known, nil
 }
 
+// InputComposer shadows the embedded fake's, which a dispatcher would ask
+// first and which would not follow the script.
+func (r *redrawCrewRunner) InputComposer(ctx context.Context, h map[string]any) (string, bool, string, error) {
+	text, known, err := r.InputText(ctx, h)
+	return text, known, "", err
+}
+
 func (r *redrawCrewRunner) RedrawInput(context.Context, map[string]any) (bool, error) {
 	if r.noMark {
 		return false, nil
