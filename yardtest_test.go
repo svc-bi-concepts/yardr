@@ -35,10 +35,11 @@ const yardTest = ".yardr/test"
 // landing's (docs/testing.md R4).
 const plainWhy = ": testing without -race (race runs at landing only, docs/testing.md R4)"
 
-// noYardHome is the YARDR_HOME a case's script gets: a fixed path under the
-// temp dir that no test creates, so a real yardr reached anyway reads no
-// yard and fails, and the script's filing only warns.
-var noYardHome = filepath.Join(os.TempDir(), "yardr-test-no-yard")
+// noYardHome is the YARDR_HOME a case's script gets: a fixed path that no test
+// creates, so a real yardr reached anyway reads no yard and fails, and the
+// script's filing only warns. It is not under the temp dir: on the Mini that
+// is a cache path other runs share, and a yard home can exist there.
+var noYardHome = string(filepath.Separator) + "nonexistent-yardr-test-no-yard"
 
 // Every run of the gate's script in a fixture repository makes git calls of
 // its own, and the fixtures make theirs, many in all: on macOS each is two
@@ -314,6 +315,12 @@ func goModTemplate(t *testing.T) (template, base, short string) {
 // a CI runner's without room, would refuse every case that runs it, and the
 // fake gos would see the go env call that reads it. The case that means the
 // floor sets it, against a stubbed df.
+// It drops what an outer gate run exported: the slot variables (YARD_GATE_*)
+// and the scratch directories (TMPDIR, GOTMPDIR) on the Mini's /Volumes/Yard.
+// The script re-execs itself under the machine's gate-slot.sh unless
+// YARD_GATE_SLOT_HELD is set, and the wrapper sets TMPDIR for what it runs, so
+// a case's script would queue behind the host's slots and find the outer run's
+// directory, not its own. YARD_GATE_SLOT_HELD=1 makes the script run directly.
 // A case sets what it means the script to have, after these, so its own load
 // wins: one that runs the script sets YARDR_RACE_HELD, so its race step shares
 // the hold instead of taking the machine's lock, except the lock's own test,
@@ -326,9 +333,12 @@ func scriptEnv() []string {
 func scriptEnvFrom(environ []string) []string {
 	env := slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
-		return slices.Contains([]string{"YARDR_BASE", "YARDR_LANDING", "YARDR_TEST_PLAN", "YARDR_TEST_RPC", "GOOS", "GOFLAGS", "YARDR_RACE_HELD", "YARDR_R1_STRICT", "YARDR_QUIET_RUN", "YARDR_CONFORMANCE", "YARDR_TEST_LOAD", "YARDR_TEST_BEADS", "YARDR_HOME", "YARDR_BEAD", "YARDR_DEPOT", "YARDR_ACTOR", "YARDR_SESSION", "GITHUB_ACTIONS"}, k)
+		if strings.HasPrefix(k, "YARD_GATE_") {
+			return true
+		}
+		return slices.Contains([]string{"YARDR_BASE", "YARDR_LANDING", "YARDR_TEST_PLAN", "YARDR_TEST_RPC", "GOOS", "GOFLAGS", "YARDR_RACE_HELD", "YARDR_R1_STRICT", "YARDR_QUIET_RUN", "YARDR_CONFORMANCE", "YARDR_TEST_LOAD", "YARDR_TEST_BEADS", "YARDR_HOME", "YARDR_BEAD", "YARDR_DEPOT", "YARDR_ACTOR", "YARDR_SESSION", "GITHUB_ACTIONS", "TMPDIR", "GOTMPDIR"}, k)
 	})
-	return append(env, "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10", "YARDR_TEST_FLOOR_GIB=0", "YARDR_HOME="+noYardHome)
+	return append(env, "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10", "YARDR_TEST_FLOOR_GIB=0", "YARDR_HOME="+noYardHome, "YARD_GATE_SLOT_HELD=1")
 }
 
 // gateScript is the test command as this checkout has it.
@@ -6868,6 +6878,35 @@ func TestYardTestBudgets(t *testing.T) {
 		}
 		if _, err := os.Stat(home); !os.IsNotExist(err) {
 			t.Errorf("YARDR_HOME %q exists, want a path that cannot be a yard", home)
+		}
+	})
+
+	t.Run("the outer gate's slot and scratch do not reach the script", func(t *testing.T) {
+		t.Parallel()
+		// A land gate runs this suite inside a slot of the Mini's gate pool,
+		// with TMPDIR and GOTMPDIR on /Volumes/Yard/tmp (yardr-8bc7). A case's
+		// script must not inherit them, nor the wrapper's re-exec: it would
+		// queue behind the host's slots, and df would be asked of the outer
+		// run's directory, which the case never made.
+		inheritedEnv := append(os.Environ(),
+			"YARD_GATE_SLOT=2", "YARD_GATE_SLOT_DIR=/Users/u/.local/state/yard-gate",
+			"YARD_GATE_TMPDIR=/Volumes/Yard/tmp/gate-1", "YARD_GATE_FRESH=1",
+			"TMPDIR=/Volumes/Yard/tmp/gate-1", "GOTMPDIR=/Volumes/Yard/tmp/gate-1/go",
+			"YARD_GATE_SLOT_HELD=")
+		var held []string
+		for _, kv := range scriptEnvFrom(inheritedEnv) {
+			k, v, _ := strings.Cut(kv, "=")
+			switch {
+			case strings.HasPrefix(k, "YARD_GATE_") && k != "YARD_GATE_SLOT_HELD":
+				t.Fatalf("scriptEnv carries %q from the outer gate", kv)
+			case k == "TMPDIR" || k == "GOTMPDIR":
+				t.Fatalf("scriptEnv carries %q from the outer gate", kv)
+			case k == "YARD_GATE_SLOT_HELD":
+				held = append(held, v)
+			}
+		}
+		if !slices.Equal(held, []string{"1"}) {
+			t.Errorf("scriptEnv sets YARD_GATE_SLOT_HELD to %q, want once to 1 so the script runs directly", held)
 		}
 	})
 
