@@ -407,6 +407,11 @@ func (s *Store) pruneEvents(floor uint64, cutoff time.Time, expired map[string]i
 				return err
 			}
 		}
+		// The receipts of the events just removed go with them, in this
+		// write (pruneMailReceipts).
+		if err := pruneMailReceipts(w.Tx); err != nil {
+			return err
+		}
 		n = len(dead)
 		if n == 0 {
 			return nil
