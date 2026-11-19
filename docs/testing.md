@@ -76,11 +76,15 @@ question, a ticket) with a deadline that is only a fuse against a hang,
 never the measurement. In the contrib suites that fuse is written for an
 idle box and goes through `testload.Scale`, which multiplies it by the
 larger of two factors, each the machine's load over its cores from 1 to
-4: the one the race leg is given (`YARDR_TEST_LOAD`; `.yardr/test` reads
+8: the one the race leg is given (`YARDR_TEST_LOAD`; `.yardr/test` reads
 it as the leg starts and names it in a line), and the machine's own live
 load, which `testload` reads as the fuse is armed, in a plain run too
 (`/proc/loadavg`, else `sysctl vm.loadavg`; a load it cannot read counts
-1). So a fuse is sized to the load the suite runs in, not the load its leg
+1). The cap on either factor is 8 (`maxFactor` in `internal/testload`, and the
+gate's `sizewaits`, which says the same rule). It was 4 until yardr-b2er: the
+mini runs at a load of 50 to 77 on 10 cores, a factor of 5 to 8, and at 4 a 60 s
+fuse was 240 s there and expired (the killed-gate test). A met wait still returns
+early, so the higher cap only lengthens a red wait under real load. So a fuse is sized to the load the suite runs in, not the load its leg
 started in, and is not raised by hand after it flakes in a landing. The
 deadline a test gives the program under test is that program's input, not
 a fuse, and is not scaled. A wait on a program that makes a hundred process

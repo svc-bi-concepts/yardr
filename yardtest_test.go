@@ -4772,7 +4772,7 @@ func TestYardTestRaceLockDiesWithTheRun(t *testing.T) {
 //
 // The race leg also gives its go the load factor that sizes the waits of the
 // contrib suites (YARDR_TEST_LOAD, internal/testload), read when the leg starts
-// and named in a line: the machine's load over its cores from 1 to 4. Nothing
+// and named in a line: the machine's load over its cores from 1 to 8. Nothing
 // else gets it, the re-run alone included, so that a slow path of the product
 // still shows there; a factor the caller had is no one's but the gate's.
 func TestYardTestBudgetRerunSharesTheRaceHold(t *testing.T) {
@@ -7094,7 +7094,7 @@ loadedmachine() {
 		}
 	})
 
-	t.Run("the race leg's wait factor is the load over the cores, from 1 to 4", func(t *testing.T) {
+	t.Run("the race leg's wait factor is the load over the cores, from 1 to 8", func(t *testing.T) {
 		t.Parallel()
 		// sizewaits reads the load as loadedmachine does, so a quiet machine
 		// and an unreadable one are both 1, and says what it set under to.
@@ -7109,7 +7109,9 @@ loadedmachine() {
 			{"a fraction of a core over", "25.3", "10", "2.5", "load 25.3 on 10 cores"},
 			{"fewer cores", "6.8", "4", "1.7", "load 6.8 on 4 cores"},
 			{"four times the cores", "40", "10", "4.0", "load 40 on 10 cores"},
-			{"past four times the cores", "72.4", "10", "4.0", "load 72.4 on 10 cores"},
+			{"eight times the cores", "80", "10", "8.0", "load 80 on 10 cores"},
+			{"the mini at 77 on 10 cores", "77", "10", "7.7", "load 77 on 10 cores"},
+			{"past eight times the cores", "120", "10", "8.0", "load 120 on 10 cores"},
 			{"a load that is no number", "bogus", "10", "1.0", quiet},
 			{"cores that are no number", "20", "many", "1.0", quiet},
 			{"no cores", "20", "0", "1.0", quiet},
