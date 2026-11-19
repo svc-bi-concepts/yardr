@@ -14,13 +14,13 @@ func recoverDetachedWorktree(ctx context.Context, repo, path, branch string) (bo
 	if _, err := os.Stat(path); err != nil {
 		return false, nil
 	}
-	list, err := gitOut(ctx, repo, "worktree", "list", "--porcelain")
+	list, err := gitOutRaw(ctx, repo, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return false, fmt.Errorf("list worktrees: %w", err)
 	}
 	registered := false
 	wantPath, _ := filepath.EvalSymlinks(path)
-	for _, line := range strings.Split(list, "\n") {
+	for _, line := range strings.Split(list, "\x00") {
 		if strings.HasPrefix(line, "worktree ") {
 			listedPath, _ := filepath.EvalSymlinks(strings.TrimPrefix(line, "worktree "))
 			if listedPath == wantPath {
@@ -51,7 +51,7 @@ func recoverDetachedWorktree(ctx context.Context, repo, path, branch string) (bo
 	if head != origin {
 		return false, fmt.Errorf("detached HEAD %s differs from origin/%s at %s", head, branch, origin)
 	}
-	if err := git(ctx, repo, "branch", "-f", branch, "HEAD"); err != nil {
+	if err := git(ctx, repo, "branch", "-f", branch, head); err != nil {
 		return false, fmt.Errorf("move branch to detached HEAD: %w", err)
 	}
 	if err := git(ctx, path, "checkout", branch); err != nil {
