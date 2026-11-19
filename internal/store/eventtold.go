@@ -243,7 +243,8 @@ var eventDataTold = map[string][]string{
 	"peer_bead_read":           {"answer", "from", "held", "id", "notes", "notes_left_out", "peer", "re", "stage", "stale", "to", "way"},
 	"peer_bead_fetched":        {"attempts", "branch", "commit", "into", "peer"},
 	"peer_bead_not_fetched":    {"attempts", "branch", "commit", "held", "peer"},
-	"peer_bead_refused":        {"id", "outcome", "peer", "sent", "stage"},
+	"peer_bead_push_failed":    {"attempts", "branch"},
+	"peer_bead_refused":       {"id", "outcome", "peer", "sent", "stage"},
 	"peer_bead_undelivered":    {"attempts", "id", "outcome", "peer", "sent", "stage"},
 
 	// Previews: which app, and what became of it. Its command, directory
