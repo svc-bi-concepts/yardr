@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -279,17 +280,26 @@ func promptPlace(text, prompt, kind string) (taken, typed, bare bool) {
 // Enter sent their half sentence and the nudge as one message. So what types
 // into an input looks here first.
 func (h *Herdr) InputText(ctx context.Context, handle map[string]any) (text string, known bool, err error) {
+	text, known, _, err = h.InputComposer(ctx, handle)
+	return text, known, err
+}
+
+// InputComposer is InputText with the reason the input reads as it does: one
+// of the fixed Composer codes, "" for an input that holds no text or whose
+// reason is not told. The reason is for a diagnostic, never for what is
+// typed: a draft and a garbled redraw are held alike.
+func (h *Herdr) InputComposer(ctx context.Context, handle map[string]any) (text string, known bool, reason string, err error) {
 	pane, _ := handle["pane"].(string)
 	if pane == "" {
-		return "", false, fmt.Errorf("handle has no pane")
+		return "", false, "", fmt.Errorf("handle has no pane")
 	}
 	styled, err := h.readPaneStyled(ctx, pane, promptScan)
 	if err != nil {
-		return "", false, err
+		return "", false, "", err
 	}
 	kind, _ := handle[harnessKind].(string)
-	text, known = inputText(styled, kind)
-	return text, known, nil
+	text, known, reason = inputComposer(styled, kind)
+	return text, known, reason, nil
 }
 
 // inputText finds, in a pane of a harness of kind read with its styling,
@@ -320,19 +330,56 @@ func (h *Herdr) InputText(ctx context.Context, handle map[string]any) (text stri
 // hint in 38;2;103;108;116 and what a person typed in 38;2;204;211;219
 // (read live, 21 Oct 2026).
 func inputText(styled, kind string) (text string, ok bool) {
+	text, ok, _ = inputComposer(styled, kind)
+	return text, ok
+}
+
+// The reasons an input reads as it does, for the diagnostics of a held nudge
+// (nudge_held's composer). They are fixed codes: no text of the pane is ever
+// given as a reason.
+const (
+	// ComposerDraft is text in the input, taken as someone's.
+	ComposerDraft = "draft"
+	// ComposerGarbled is text of one character a line: the shape of a pane
+	// drawn without its line breaks, which a Ctrl-L redraws. It is held as
+	// a draft is, since nothing says whose it is.
+	ComposerGarbled = "garbled"
+	// ComposerChrome is an empty input with the harness's own line under it
+	// (see claudeChromeLines). The input reads empty, so nothing holds the nudge.
+	ComposerChrome = "chrome"
+)
+
+// claudeChromeLines are the lines Claude Code draws under an empty input
+// that are not text: the recap it ends a turn with, its footer for
+// background agents, and its offer to clear the session to save tokens. Each
+// pattern is anchored at both ends, so a line that only begins or contains
+// the same words is no match.
+var claudeChromeLines = []*regexp.Regexp{
+	regexp.MustCompile(`^※ recap: \S.*$`),
+	regexp.MustCompile(`^⏵⏵ [a-z ]+ on · ← \d+ agents?$`),
+	regexp.MustCompile(`^(new task\? )?/clear to save [\d.,]+[kKmM]? tokens$`),
+}
+
+// inputComposer is inputText with the reason the input reads as it does. A
+// line under an input that holds nothing is chrome only for Claude Code, and
+// only when no text comes before it: a person's line that reads as chrome
+// under their own text stays text, and so does one that is their only text.
+// A run of single-character lines is ComposerGarbled and still text.
+func inputComposer(styled, kind string) (text string, ok bool, reason string) {
 	kindMarks, _ := marksOf(kind)
 	plain, typed := unstyled(styled, kindMarks.placeholderSGR)
 	plain, typed = rowsOf(kind, plain, typed)
 	input, m := inputLine(plain, kind)
 	if input < 0 {
-		return "", false
+		return "", false, ""
 	}
 	if m.placeholder != "" && isPlaceholder(m.unboxed(typed[input]), m.input, m.placeholder) {
 		// The input holds only the harness's gray hint (Kiro's): it
 		// reads empty, the hints under it with it.
-		return "", true
+		return "", true, ""
 	}
 	var lines []string
+	chrome := false
 	for i := input; i < len(plain); i++ {
 		if i > input && (strings.TrimSpace(plain[i]) == "" || isRule(plain[i])) {
 			break
@@ -341,11 +388,31 @@ func inputText(styled, kind string) (text string, ok bool) {
 		if i == input {
 			l = strings.TrimPrefix(l, m.input)
 		}
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
+		if l = strings.TrimSpace(l); l == "" {
+			continue
 		}
+		if i > input && len(lines) == 0 && kind == "claude" && isClaudeChrome(l) {
+			chrome = true
+			break
+		}
+		lines = append(lines, l)
 	}
-	return strings.Join(lines, "\n"), true
+	if chrome {
+		return "", true, ComposerChrome
+	}
+	if len(lines) == 0 {
+		return "", true, ""
+	}
+	if len(lines) >= 3 && slices.IndexFunc(lines, func(l string) bool { return len([]rune(l)) != 1 }) < 0 {
+		return strings.Join(lines, "\n"), true, ComposerGarbled
+	}
+	return strings.Join(lines, "\n"), true, ComposerDraft
+}
+
+// isClaudeChrome reports whether line, under an empty input, is one of the
+// lines Claude Code draws there (claudeChromeLines).
+func isClaudeChrome(line string) bool {
+	return slices.ContainsFunc(claudeChromeLines, func(re *regexp.Regexp) bool { return re.MatchString(line) })
 }
 
 // isPlaceholder reports whether line, the first line of an input without
