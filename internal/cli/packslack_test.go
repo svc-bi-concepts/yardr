@@ -43,7 +43,7 @@ func TestPackApplySlackCarriesDeclarationAndScripts(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"\nsource slack is declared: 2 calls under https://slack.com/api (yardr source show slack)\n",
+		"\nsource slack is declared: 4 calls under https://slack.com/api (yardr source show slack)\n",
 		"source slack: SLACK_BOT_TOKEN is set in " + srcEnv + "\n",
 		"setup notes of pack slack, from SETUP.md (from the pack, not checked by yardr):",
 	} {
