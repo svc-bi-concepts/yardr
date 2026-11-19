@@ -2211,7 +2211,7 @@ func TestSlackPack(t *testing.T) {
 			botScopes = append(botScopes, name)
 		}
 	}
-	if want := []string{"app_mentions:read", "channels:history", "groups:history", "im:history", "mpim:history", "chat:write"}; !slices.Equal(botScopes, want) {
+	if want := []string{"app_mentions:read", "channels:history", "channels:join", "channels:read", "groups:history", "groups:read", "im:history", "mpim:history", "chat:write"}; !slices.Equal(botScopes, want) {
 		t.Errorf("the manifest's bot scopes = %q, want %q", botScopes, want)
 	}
 	var forbidden []string
@@ -2251,8 +2251,8 @@ func TestSlackPack(t *testing.T) {
 		"api.slack.com/apps",
 		"packs/slack/app-manifest.yaml",
 		"carries no event subscriptions and no Request URL",
-		"`mpim:history` in particular is a reading\n   scope only",
-		"no\n   `message.mpim` event is ever subscribed",
+		"`channels:join` lets the",
+		"`join` call puts it in each public",
 		`yardr bead ask <bead> "Add Slack to the yard?" --run "pack apply slack"`,
 		`yardr bead ask <bead> "The Slack bot token" --secret slack`,
 		"SLACK_BOT_TOKEN",
@@ -2275,6 +2275,8 @@ func TestSlackPack(t *testing.T) {
 		"yardr subscribe yardmaster slack --scope mentions --where type=message",
 		"yardr subscribe yardmaster slack --scope all --where type=message --where room=dm",
 		"/invite @<bot>",
+		"the `join` call puts it in each public",
+		"what is said where it stands is\n   still stored",
 		"hears mapped members as themselves",
 		"--where speaker=<user>",
 		"mapping card",
@@ -2285,7 +2287,7 @@ func TestSlackPack(t *testing.T) {
 		"arrive under `message.im` and are ignored",
 		"dropped before hearing, with no mapping card",
 		"Group\ndirect messages are untested",
-		"group direct messages stay untested until the",
+		"direct messages stay untested until the live trial",
 		"are the operator's in Slack's pages",
 		"browser is the operator's",
 	} {
@@ -2308,22 +2310,19 @@ func TestSlackPack(t *testing.T) {
 			t.Errorf("setup notes keep a terminal way beside the cards: %q", not)
 		}
 	}
-	// Step 6 is the place the two bot events are subscribed: its list
-	// names exactly app_mention and message.im, and its one naming of
-	// message.mpim says never.
+	// Step 6 is the place the bot events are subscribed: its list names
+	// exactly app_mention, message.im, message.channels, message.groups and
+	// message.mpim, each once.
 	start, end := strings.Index(p.SetupText, "\n6. "), strings.Index(p.SetupText, "\n7. ")
 	if start < 0 || end < 0 || end <= start {
 		t.Fatalf("the setup has no steps 6 and 7 to cut step 6 between")
 	}
 	six := p.SetupText[start:end]
-	if !strings.Contains(six, "```text\n   app_mention\n   message.im\n   ```") {
-		t.Errorf("the setup's step 6 names no two-event list of app_mention and message.im")
+	if !strings.Contains(six, "```text\n   app_mention\n   message.im\n   message.channels\n   message.groups\n   message.mpim\n   ```") {
+		t.Errorf("the setup's step 6 names no five-event list of app_mention, message.im, message.channels, message.groups and message.mpim")
 	}
-	if !strings.Contains(six, "Never subscribe `message.mpim`") {
-		t.Errorf("the setup's step 6 never refuses message.mpim")
-	}
-	if n := strings.Count(six, "message.mpim"); n != 1 {
-		t.Errorf("the setup's step 6 names message.mpim %d times, want once, in its refusal", n)
+	if strings.Contains(six, "Never subscribe") {
+		t.Errorf("the setup's step 6 still refuses a subscription")
 	}
 }
 
