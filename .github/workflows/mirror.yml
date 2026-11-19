@@ -26,6 +26,10 @@ concurrency:
 jobs:
   gate:
     name: yardr gate
+    # Only the mirror runs this gate: a copy of this file in any other
+    # repository with Actions on would otherwise wait forever for a
+    # self-hosted runner that is not there.
+    if: github.repository == 'svc-bi-concepts/yardr-ci'
     runs-on: [self-hosted, hetzner]
     # The same limit as ci.yml's test job: the depot's test command takes 11
     # to 14 minutes on a runner's four cores, and its 30 minutes are about
@@ -47,6 +51,22 @@ jobs:
             echo "$out"
             exit 1
           fi
+      # The Hetzner runners have no shellcheck, and .yardr/test exits 1
+      # without it, by design. It is fetched here at a pinned release and
+      # checked against the sha256 that release publishes for this asset
+      # (GitHub's digest for shellcheck-v0.11.0.linux.x86_64.tar.xz, released
+      # 2025-08-04); no apt, so no sudo on the runner. A version that moves
+      # would run code no review saw, so it is pinned here, not "latest".
+      - name: shellcheck (pinned v0.11.0)
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/shellcheck"
+          mkdir -p "$dir"
+          curl -sSfL -o "$dir/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz"
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $dir/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$dir/shellcheck.tar.xz" -C "$dir"
+          echo "$dir/shellcheck-v0.11.0" >> "$GITHUB_PATH"
       # There is no base on the mirror: the checkout has no origin/main to
       # compare with, or on main it has one equal to HEAD, which would select
       # nothing. YARDR_BASE names a ref that is never there, so the gate's
