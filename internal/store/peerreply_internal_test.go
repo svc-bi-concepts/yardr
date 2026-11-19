@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -166,5 +167,81 @@ func TestWireIndexBuiltForAStoreWithReceipts(t *testing.T) {
 	}
 	if seq, ok := receiptIndexed(t, s, r.ID); !ok || seq != r.Seq {
 		t.Fatalf("rebuilt index = %d, %v; want %d", seq, ok, r.Seq)
+	}
+}
+
+// TestLegacyOutboxMessageHasNoRelation is a mail queued before receipts
+// existed: its message is in the outbox but nothing maps its wire id, so a
+// reply to it is taken as ordinary mail.
+func TestLegacyOutboxMessageHasNoRelation(t *testing.T) {
+	ctx := context.Background()
+	s := receiptYard(t, filepath.Join(t.TempDir(), "a.db"), true)
+	defer s.Close(ctx)
+	r, err := s.MailPeerReceipt(ctx, "mckean", "b", "hello", "mckean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		if err := tx.Bucket(bMailReceiptIDs).Delete([]byte(r.ID)); err != nil {
+			return err
+		}
+		return tx.Bucket(bMailReceipts).Delete([]byte(seqKey(r.Seq)))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AllowPeer(ctx, "b", PeerAllow{Receive: []string{PeerMail}, Expose: []string{"mckean"}}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.PeerReceive(ctx, "b", r.PeerKey, []PeerMessage{mailReplyMsg(t, "legacy", r.ID)})
+	if err != nil || len(got) != 1 || got[0].Refused != "" {
+		t.Fatalf("PeerReceive = %+v, %v", got, err)
+	}
+	evs, err := s.Events(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range evs {
+		if e.Kind == "mail" && e.Data["id"] == "legacy" {
+			if _, ok := e.Data["in_reply_to"]; ok {
+				t.Fatalf("legacy reply relates: %v", e.Data["in_reply_to"])
+			}
+			if e.Data["re"] != r.ID {
+				t.Fatalf("re = %v, want %s", e.Data["re"], r.ID)
+			}
+			return
+		}
+	}
+	t.Fatal("legacy reply was not delivered")
+}
+
+// TestReceiptIndexRollsBackWithTheMail fails after the receipt and its wire
+// id entry are written, the last of the mail's writes: the entry must go
+// with the rest of the transaction.
+func TestReceiptIndexRollsBackWithTheMail(t *testing.T) {
+	ctx := context.Background()
+	s := receiptYard(t, filepath.Join(t.TempDir(), "a.db"), true)
+	defer s.Close(ctx)
+
+	orig := writeReceipt
+	writeReceipt = func(tx *bolt.Tx, r MailReceipt) error {
+		if err := orig(tx, r); err != nil {
+			return err
+		}
+		return errors.New("write refused after the index")
+	}
+	defer func() { writeReceipt = orig }()
+
+	if _, err := s.MailPeerReceipt(ctx, "mckean", "b", "peer", "mckean"); err == nil {
+		t.Fatal("peer mail was queued with its write refused")
+	}
+	var ids int
+	if err := s.read(func(tx *bolt.Tx) error {
+		ids = len(keys(tx, bMailReceiptIDs, ""))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ids != 0 || receiptKeys(t, s) != 0 {
+		t.Fatalf("index entries = %d, receipts = %d after the refused write, want none", ids, receiptKeys(t, s))
 	}
 }
