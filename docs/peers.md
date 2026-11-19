@@ -1189,9 +1189,12 @@ no body: the text stays in the event and the outbox, as before.
 
 A reply carries the wire id of the mail it answers as `re`, and the receiving
 yard relates it to that mail only when its own receipt for that id was queued to
-this peer's key, and the reply runs back along the same two names. Only then does
-the mail event say `in_reply_to`. The receipt index (`mail_receipt_ids`) is
-built once, for a store that had receipts before it, and is written with them.
+this peer's key, the reply runs back along the same two names, and the original
+mail event is still kept. Only then does the mail event say `in_reply_to`.
+When that event has been pruned, the reply stays ordinary mail with `re` as sent,
+even if the outbox still holds the original message and keeps its receipt.
+The receipt index (`mail_receipt_ids`) is built once, for a store that had
+receipts before it, and is written with them.
 
 The mail event this yard writes for it says so in its data: `id` is the wire id
 of the mail, `re` the id the peer's reply names as sent, kept for provenance,
@@ -1260,16 +1263,17 @@ that peer (a refusal reads as `yardr mail`'s); a user answers so too, or on
 the sender's row in `yardr chat`. `yardr mail <name>@<peer>` is for writing
 first. There are no thread ids: a mail is one message.
 
-The reply is made from the seq alone: the store takes the sender, the link and
-the wire id from the mail event as it was taken, so the reply goes back to the
+The store's `MailPeerReply(answered, text, actor)` takes the answered inbox seq,
+the reply text and the actor. It takes the sender, the link and the wire id
+from the mail event as it was taken, so the reply goes back to the
 yard it came from and names that mail as `re`, and no caller can choose another
 destination or reference. It is refused for mail that is not to the caller, not
 from a peer, or from a link since removed, and when the caller is no longer
 exposed on the link. With `--json`, `yardr reply` adds `re` (the wire id
 answered) and `receipt` (`seq`, `id`, `direction`, `peer`, `peer_key`, `from`,
-`to`, `at`), and `id` is the reply's own wire id. A receipt whose event has been
-pruned (kept only while the outbox holds its message) gives no `in_reply_to`:
-the reply stays ordinary mail with `re` as sent.
+`to`, `at`), and `id` is the reply's own wire id. The top-level `seq` still
+names the answered inbox event; `receipt.seq` names the outgoing reply's event
+in this yard's log.
 
 **From a yard removed since.** After `yardr peer rm north`, mail north sent
 that is still unread shows as
