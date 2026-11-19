@@ -1,0 +1,57 @@
+name: mirror
+
+# The land gate on the private mirror svc-bi-concepts/yardr-ci, run on the
+# Hetzner runners. The lander pushes each pull request head there as
+# land/pr-<n> and, after a merge, pushes main. This workflow runs on those
+# pushes only and reports one check-run, named `yardr gate`, which the lander
+# reads (required-checks.json, yard-6gzx). The public repository keeps Actions
+# off, so nothing here runs there.
+#
+# Every uses: below is pinned by full commit SHA, with the release it is
+# as a comment; a tag that moves would run code no review saw.
+on:
+  push:
+    branches: [main, "land/pr-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-${{ github.ref }}
+  # A land/pr-<n> run is superseded by a newer push to the same branch, so it
+  # is cancelled. A run on main is not: it is the backstop for what a landing
+  # leaves out, and the next push waits for it instead (as ci.yml's main run).
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/land/pr-') }}
+
+jobs:
+  gate:
+    name: yardr gate
+    runs-on: [self-hosted, hetzner]
+    # The same limit as ci.yml's test job: the depot's test command takes 11
+    # to 14 minutes on a runner's four cores, and its 30 minutes are about
+    # twice the longest of those.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # go-version-file pins the toolchain go.mod names; cache keeps the
+      # module and build caches keyed on go.sum.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:"
+            echo "$out"
+            exit 1
+          fi
+      # There is no base on the mirror: the checkout has no origin/main to
+      # compare with, or on main it has one equal to HEAD, which would select
+      # nothing. YARDR_BASE names a ref that is never there, so the gate's
+      # merge-base is empty and a landing run takes the whole suite.
+      - name: depot tests (.yardr/test, as for a landing)
+        env:
+          YARDR_BASE: no-base-on-the-mirror
+        run: YARDR_LANDING=1 sh .yardr/test
