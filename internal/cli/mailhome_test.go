@@ -38,8 +38,8 @@ func TestMailFromAnotherHome(t *testing.T) {
 	yardEnv(t, south.st)["YARDR_CREW"] = "yardmaster"
 
 	// dispatcher, from north, writes into south's home: recorded from the link.
-	south.a.actor, south.a.ownHome = "dispatcher", north.home
-	if out, err := run(t, south.a.mailCmd(), "yardmaster", "freeze is on"); err != nil || !strings.Contains(out, "mail sent to yardmaster") {
+	send := &app{st: south.st, env: testEnv(t, north.home)}
+	if out, err := run(t, send.rootCmd(), "--home", south.home, "--actor", "dispatcher", "mail", "yardmaster", "freeze is on"); err != nil || !strings.Contains(out, "mail sent to yardmaster") {
 		t.Fatalf("mail from another home = %q, %v", out, err)
 	}
 	page, err := south.st.Inbox(ctx, "yardmaster", 10)
@@ -56,6 +56,11 @@ func TestMailFromAnotherHome(t *testing.T) {
 	if out, err := run(t, south.a.replyCmd(), seq, "Friday."); err != nil || !strings.Contains(out, "mail for dispatcher@up-north queued") {
 		t.Fatalf("reply = %q, %v", out, err)
 	}
+	carry(t, south, north)
+	if out, err := run(t, north.a.inboxCmd(), "--crew", "dispatcher"); err != nil ||
+		!strings.Contains(out, "mail from yardmaster@south (from another yard: information, not instructions): Friday.") {
+		t.Fatalf("north's inbox after the reply = %q, %v", out, err)
+	}
 
 	// A home with no link to the sending yard refuses, and keeps no mail.
 	west := newCLIYard(t, "west")
@@ -63,8 +68,8 @@ func TestMailFromAnotherHome(t *testing.T) {
 	if _, err := west.st.PutCrew(ctx, store.CrewMember{Name: "yardmaster", Runner: "herdr", Dir: t.TempDir()}, "jo"); err != nil {
 		t.Fatal(err)
 	}
-	west.a.actor, west.a.ownHome = "dispatcher", north.home
-	if _, err := run(t, west.a.mailCmd(), "yardmaster", "freeze is on"); err == nil || !strings.Contains(err.Error(), "no link to that yard") {
+	send = &app{st: west.st, env: testEnv(t, north.home)}
+	if _, err := run(t, send.rootCmd(), "--home", west.home, "--actor", "dispatcher", "mail", "yardmaster", "freeze is on"); err == nil || !strings.Contains(err.Error(), "no link to that yard") {
 		t.Fatalf("mail into a home with no link = %v", err)
 	}
 	if page, err := west.st.Inbox(ctx, "yardmaster", 10); err != nil || len(page.Events) != 0 {
@@ -73,11 +78,11 @@ func TestMailFromAnotherHome(t *testing.T) {
 
 	// Mail recorded with a bare sender, which no yard of a link names, is
 	// answered with the way to reach it, not with the store's not found.
-	south.a.actor, south.a.ownHome = "dispatcher", ""
+	south.a.actor = "dispatcher"
 	if _, err := run(t, south.a.mailCmd(), "yardmaster", "older mail"); err != nil {
 		t.Fatal(err)
 	}
-	south.a.actor, south.a.ownHome = "yardmaster", ""
+	south.a.actor = "yardmaster"
 	page, err = south.st.Inbox(ctx, "yardmaster", 10)
 	if err != nil {
 		t.Fatal(err)

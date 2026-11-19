@@ -23,11 +23,11 @@ func (s *Store) MailFromPeer(ctx context.Context, to, text, from, peer string, f
 		return fmt.Errorf("mail to %s: %w", to, err)
 	}
 	return s.writeVia(ctx, func(w *wtx) error {
-		// A bead's session writes no mail of another yard: its pane names no
-		// sender here, so the name from would be the caller's word alone.
-		if sess, err := paneSession(w.Tx, callerOf(ctx)); err != nil {
+		if kind, _, err := callerIn(w.Tx, ctx); err != nil {
 			return err
-		} else if sess != nil && !sess.Manual() {
+		} else if kind == CallerCrew {
+			return fmt.Errorf("mail from %s: a local crew member writes no mail of another yard", from)
+		} else if kind == CallerBead || kind == CallerScript {
 			return fmt.Errorf("mail from %s: a bead's session writes no mail of another yard", from)
 		}
 		if w.Bucket(bPeers).Get([]byte(peer)) == nil {
