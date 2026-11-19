@@ -1,11 +1,12 @@
 # Setting up Slack
 
 The pack wires Slack into the yard as the declared source `slack`: the
-mentions of a bot in a workspace and its one-to-one direct messages,
-heard through the Events API and answered in their threads with `yardr
-reply`. A mention in a channel the bot is invited into lands in the
-yardmaster's inbox; a one-to-one direct message lands whole, mentioned
-or not. What lands is answered where it stood, in its thread. Group
+messages of a bot's channels, groups and one-to-one direct messages in a
+workspace, heard through the Events API and answered in their threads
+with `yardr reply`. A mention in a channel the bot is in lands in the
+yardmaster's inbox; every other message there is stored and read back
+with `yardr thread show`, and nudges nothing. A one-to-one direct message
+lands whole, mentioned or not. What lands is answered where it stood, in its thread. Group
 direct messages are untested: whether Slack delivers a mention in one
 as `app_mention` is checked in a live trial, and until then this walk
 promises only channel mentions and one-to-one direct messages.
@@ -22,14 +23,14 @@ yard if it differs.
    api.slack.com/apps, Create New App, From a manifest: paste
    `packs/slack/app-manifest.yaml` from a checkout of yardr (or from the
    pack as the yard installed it). The manifest names the bot user and
-   the scopes (`app_mentions:read`, `channels:history`,
-   `groups:history`, `im:history`, `mpim:history`, `chat:write` — the
-   four histories are bot scopes, and they are what
-   `conversations.replies` reads a thread back with on the bot token in
-   each kind of conversation; `mpim:history` in particular is a reading
-   scope only: it lets a heard group thread be read back, and no
-   `message.mpim` event is ever subscribed, so it widens nothing that is
-   heard), and carries no event subscriptions and no Request URL. A
+   the scopes (`app_mentions:read`, `channels:history`, `channels:join`,
+   `channels:read`, `groups:history`, `groups:read`, `im:history`,
+   `mpim:history`, `chat:write` — the four histories are bot scopes, and
+   they are what `conversations.replies` reads a thread back with on the
+   bot token in each kind of conversation; `channels:join` lets the
+   `join` call put the bot in a public channel, and `channels:read` and
+   `groups:read` let the `channels` call list the ones it is not in),
+   and carries no event subscriptions and no Request URL. A
    manifest that names events without a Request URL does not validate,
    so the events cannot stand in the document the app is created from
    while its hook address is not yet known; they are added in step 6,
@@ -96,19 +97,23 @@ yard if it differs.
    stands the endpoint up and nothing is sent anywhere. Then, in the
    browser, the operator opens the app's Event Subscriptions, turns it
    on, pastes the hook's URL (`https://<his host>/hooks/slack`) as the
-   Request URL, and subscribes to the two bot events, exactly these
-   two:
+   Request URL, and subscribes to the five bot events, exactly these
+   five:
    ```text
    app_mention
    message.im
+   message.channels
+   message.groups
+   message.mpim
    ```
-   Never subscribe `message.mpim`: Slack delivers it for every group
-   message, mentioned or not, so the yard would receive whole group
-   conversations it was never addressed in, and each group mention
-   would arrive a second time beside its `app_mention`. With the two
-   above, a group direct message is heard only when it mentions the
-   bot — once that live trial confirms Slack delivers it — while a
-   one-to-one direct message is heard whole. Slack sends a
+   The yard hears every message in a channel or group the bot is in,
+   mentioned or not, and stores it; only a mention nudges the yardmaster.
+   A channel message that mentions the bot arrives twice, as its
+   `message.channels` (stored, nudging nothing) and as its `app_mention`
+   (heard once), and the pack's normalize keeps the mention off the
+   first, so the bot is woken once. A group direct message is the same:
+   stored from `message.mpim`, woken by its mention alone. A one-to-one
+   direct message is heard whole. Slack sends a
    `url_verification` challenge to the URL when it is saved; the yard
    answers it from the hook just made, and the app shows verified. This
    is the visit the manifest of step 1 deliberately left undone: only
@@ -150,9 +155,12 @@ yard if it differs.
    ```
    `mentions`, not telegram's `all`: a workspace is many channels of
    other people's talk, and the bot is woken by being addressed, not
-   by everything said where it stands. The operator then invites the
-   bot into each channel it should hear (`/invite @<bot>` in Slack),
-   without which Slack sends the channel nothing. A first mention is
+   by everything said where it stands; what is said where it stands is
+   still stored, and reads back with `yardr thread show`. The bot hears a
+   channel only once it is in it: the `join` call puts it in each public
+   channel the `channels` call lists as not joined, and a private channel
+   needs `/invite @<bot>` in Slack, since the bot cannot join one itself.
+   Without either, Slack sends the channel nothing. A first mention is
    then the test: it lands in the yardmaster's inbox as
    ```text
    5210 10-17 18:02  hook (mentioned) slack message create by ada (U012AB3CD): <@U…> can the shed land on Monday?
@@ -182,10 +190,11 @@ yard if it differs.
    Broadcast does not add a mention to the supplied text.
    The companion check in the same walk: a one-to-one direct message
    mentioning nobody still lands whole by the `room=dm` subscription.
-   A group message mentioning nobody lands nowhere — Slack sends no
-   event for it under step 6's two subscriptions — and a group mention
-   is not tried here: group direct messages stay untested until the
-   live trial.
+   A channel message mentioning nobody is stored under its channel and
+   nudges nothing: `yardr thread show` on its delivery reads the thread
+   back, and no inbox line comes of it. A group direct message is the same
+   under `message.mpim`, and a group mention is not tried here: group
+   direct messages stay untested until the live trial.
 
 Who is heard is what the subscriptions above carry, and who each
 speaker is. The pack hears mapped members as themselves: a delivery

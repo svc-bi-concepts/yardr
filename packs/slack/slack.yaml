@@ -1,6 +1,7 @@
-# Slack as a declared source: the mentions of a bot in a workspace and
-# its one-to-one direct messages, heard through the Events API and
-# answered in their threads. The design is
+# Slack as a declared source: the messages of a bot's channels, groups and
+# one-to-one direct messages in a workspace, heard through the Events API
+# (a mention or a direct message nudges; the rest is stored) and answered in
+# their threads. The design is
 # docs/design/2026-10-17-yardr-pcxd-slack.md; section 3.1 is this file.
 #
 # Checked against api.slack.com on 17 October 2026: the API is HTTPS at
@@ -16,9 +17,12 @@
 # attributes, and conversations.replies sent a JSON body answered
 # invalid_arguments, although its page on docs.slack.dev lists JSON among
 # its content types (read 3 November 2026).
-# The yard subscribes to two bot events only, app_mention and message.im
-# (SETUP.md step 6), so a group direct message is heard on a mention
-# alone, by its app_mention, and message.mpim is never subscribed.
+# The yard subscribes to app_mention, message.im, message.channels,
+# message.groups and message.mpim (SETUP.md step 6). A message in a channel
+# or a group is stored as it is said and nudges nothing unless it mentions
+# the bot, which its app_mention carries; a direct message is heard whole.
+# The pack's normalize keeps a channel message's mentions off its envelope
+# for that reason.
 #
 # There is no notify key in a first version: the wish is to write to the
 # yard, not to be told by it. Hearing is by who speaks, matched against
@@ -26,7 +30,7 @@
 # There is no link or thread.state: a Slack thread has no status, and a
 # channel message is no bead's link.
 name: slack
-about: Mentions and direct messages in a Slack workspace, answered in their threads.
+about: Messages in a Slack workspace's channels and direct messages, mentions heard, answered in their threads.
 base: https://slack.com/api
 credential:
   env: SLACK_BOT_TOKEN            # the bot's token: the name, never the value
@@ -47,6 +51,25 @@ calls:
       method: POST
       path: /chat.postMessage
       body: { channel: "{channel}", text: "{text}" }
+  channels:                       # the public channels the bot is not in yet: join each with join
+    kind: read
+    about: Public channels in the workspace (conversations.list); the bot is in those with is_member true
+    request:
+      method: GET
+      path: /conversations.list
+      query: { types: public_channel, exclude_archived: "true", limit: "1000", fields: "id,name,is_member" }
+    # Slack answers a refusal as 200 with ok false and its reason under error, so both are kept.
+    answer: { select: [ok, error, channels, response_metadata] }   # the first page of up to 1000; response_metadata's next_cursor says there is more, which no call reads
+  join:
+    kind: update
+    about: Joins one public channel (conversations.join), so the bot hears what is said in it; the channels call names the ones to join
+    params:
+      channel: { type: string, pattern: "^C[A-Z0-9]+$" }
+    request:
+      method: POST
+      path: /conversations.join
+      body: { channel: "{channel}" }
+    answer: { select: [ok, error, channel] }
 check: whoami
 
 # ---- what it sends us ----------------------------------------------------
