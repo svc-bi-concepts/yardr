@@ -821,6 +821,9 @@ func (c *Client) MailPeer(ctx context.Context, to, peer, text, actor string, fil
 func (c *Client) MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...store.BlobFile) (store.MailReceipt, error) {
 	return callV[store.MailReceipt](c, ctx, "MailPeerReceipt", to, peer, text, actor, files)
 }
+func (c *Client) MailPeerReply(ctx context.Context, answered uint64, text, actor string) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailPeerReply", answered, text, actor)
+}
 func (c *Client) MailReceiptOf(ctx context.Context, seq uint64, actor string) (store.MailReceipt, error) {
 	return callV[store.MailReceipt](c, ctx, "MailReceiptOf", seq, actor)
 }

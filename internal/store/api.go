@@ -297,6 +297,7 @@ type API interface {
 	PeerSend(ctx context.Context, name, kind string, body json.RawMessage, actor string) (*PeerOut, error)
 	MailPeer(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (*PeerOut, error)
 	MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (MailReceipt, error)
+	MailPeerReply(ctx context.Context, answered uint64, text, actor string) (MailReceipt, error)
 	MailReceiptOf(ctx context.Context, seq uint64, actor string) (MailReceipt, error)
 	PeerOutbox(ctx context.Context, name string, limit int) ([]PeerOut, error)
 	PeerDelivered(ctx context.Context, name string, seq uint64) error
