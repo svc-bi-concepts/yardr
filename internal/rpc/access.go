@@ -298,6 +298,8 @@ var Access = map[string]Class{
 	// Mail, users and their devices.
 	"Mail":             Agent,
 	"MailReply":        Agent,
+	"MailLocalReceipt": Agent,
+	"MailReplyReceipt": Agent,
 	"React":            Agent,
 	"PutBlob":          Agent,
 	"Inbox":            Read,
@@ -418,6 +420,8 @@ var Access = map[string]Class{
 	"RemovePeerIdentity":   Operator,
 	"PeerSend":             Admin,
 	"MailPeer":             Agent,
+	"MailPeerReceipt":      Agent,
+	"MailReceiptOf":        Agent,
 	"PeerOutbox":           Read,
 	"PeerDelivered":        Admin,
 	"PeerSendFailed":       Admin,

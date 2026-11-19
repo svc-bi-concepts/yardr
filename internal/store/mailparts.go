@@ -126,6 +126,48 @@ func MailReplyText(api API, ctx context.Context, to, text, actor string, answere
 	})
 }
 
+// MailTextReceipts is MailText, and returns the receipt of each part sent,
+// in order. A part that is not taken ends the send: the receipts of the
+// parts before it come back with the error.
+func MailTextReceipts(api API, ctx context.Context, to, text, actor string, files ...BlobFile) ([]MailReceipt, error) {
+	var got []MailReceipt
+	err := mailParts(to, text, func(i int, part string) error {
+		var first []BlobFile
+		if i == 0 {
+			first = files
+		}
+		r, err := api.MailLocalReceipt(ctx, to, part, actor, first...)
+		if err != nil {
+			return err
+		}
+		got = append(got, r)
+		return nil
+	})
+	return got, err
+}
+
+// MailReplyTextReceipts is MailReplyText, and returns the receipt of each
+// part sent, in order, as MailTextReceipts does. The answered seq goes
+// with the first part only.
+func MailReplyTextReceipts(api API, ctx context.Context, to, text, actor string, answered uint64) ([]MailReceipt, error) {
+	var got []MailReceipt
+	err := mailParts(to, text, func(i int, part string) error {
+		var r MailReceipt
+		var err error
+		if i == 0 {
+			r, err = api.MailReplyReceipt(ctx, to, part, actor, answered)
+		} else {
+			r, err = api.MailLocalReceipt(ctx, to, part, actor)
+		}
+		if err != nil {
+			return err
+		}
+		got = append(got, r)
+		return nil
+	})
+	return got, err
+}
+
 // mailParts sends text's parts in order, each through send: as one mail
 // when one holds it, else numbered (SplitMail). A text past MaxMailParts
 // parts is refused whole (ErrMailTooLong); a part that is not taken ends
@@ -144,4 +186,49 @@ func mailParts(to, text string, send func(i int, part string) error) error {
 		}
 	}
 	return nil
+}
+
+// Mail sends a message to the inbox of a crew member or of a user. files
+// are the blobs it carries, each as its hash as PutBlob answered it with
+// the name the sender gives it: the mail event names them (EventFiles),
+// and mail with a file needs no text. From a session's or a crew member's
+// pane the mail is recorded as that session's actor or that crew member,
+// whatever actor says; from anywhere else, as given (paneAuthor). Mail from
+// a bead session's pane also names that session's bead as from_bead: the
+// session's actor is no inbox, so a reply to it (yardr reply) goes on the
+// bead as a note.
+func (s *Store) Mail(ctx context.Context, to, text, actor string, files ...BlobFile) error {
+	_, err := s.mail(ctx, to, text, actor, files)
+	return err
+}
+
+// MailLocalReceipt is Mail, and returns the receipt the mail was written
+// under (MailReceipt): the mail's seq, its direction local, and its
+// participants.
+func (s *Store) MailLocalReceipt(ctx context.Context, to, text, actor string, files ...BlobFile) (MailReceipt, error) {
+	return s.mail(ctx, to, text, actor, files)
+}
+
+func (s *Store) mail(ctx context.Context, to, text, actor string, files []BlobFile) (MailReceipt, error) {
+	if strings.TrimSpace(text) == "" && len(files) == 0 || len(text) > MaxMailBytes {
+		return MailReceipt{}, fmt.Errorf("mail must be 1..%d bytes", MaxMailBytes)
+	}
+	refs, err := s.mailFiles(files)
+	if err != nil {
+		return MailReceipt{}, fmt.Errorf("mail to %s: %w", to, err)
+	}
+	var got MailReceipt
+	err = s.writeVia(ctx, func(w *wtx) error {
+		resolved, sess, err := paneAuthorSession(w.Tx, callerOf(ctx), actor)
+		if err != nil {
+			return err
+		}
+		r, err := s.sendMail(w, to, text, resolved, sess, refs, 0)
+		got = r
+		return err
+	})
+	if err != nil {
+		return MailReceipt{}, err
+	}
+	return got, nil
 }

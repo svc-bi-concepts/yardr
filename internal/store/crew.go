@@ -921,32 +921,6 @@ func (w *wtx) pendingHandoff(r *CrewMember, session string) (*Note, error) {
 	return nil, nil
 }
 
-// Mail sends a message to the inbox of a crew member or of a user. files
-// are the blobs it carries, each as its hash as PutBlob answered it with
-// the name the sender gives it: the mail event names them (EventFiles),
-// and mail with a file needs no text. From a session's or a crew member's
-// pane the mail is recorded as that session's actor or that crew member,
-// whatever actor says; from anywhere else, as given (paneAuthor). Mail from
-// a bead session's pane also names that session's bead as from_bead: the
-// session's actor is no inbox, so a reply to it (yardr reply) goes on the
-// bead as a note.
-func (s *Store) Mail(ctx context.Context, to, text, actor string, files ...BlobFile) error {
-	if strings.TrimSpace(text) == "" && len(files) == 0 || len(text) > MaxMailBytes {
-		return fmt.Errorf("mail must be 1..%d bytes", MaxMailBytes)
-	}
-	refs, err := s.mailFiles(files)
-	if err != nil {
-		return fmt.Errorf("mail to %s: %w", to, err)
-	}
-	return s.writeVia(ctx, func(w *wtx) error {
-		resolved, sess, err := paneAuthorSession(w.Tx, callerOf(ctx), actor)
-		if err != nil {
-			return err
-		}
-		return s.sendMail(w, to, text, resolved, sess, refs, 0)
-	})
-}
-
 // allowedReactions are the emoji a party to a letter may put on it.
 var allowedReactions = [...]string{"👍", "👎", "❤️", "🎉", "👀", "✅"}
 
