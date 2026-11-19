@@ -1784,7 +1784,7 @@ note that says why:
 
 | outcome | when |
 |---|---|
-| `refused` | the other yard did not take the bead (the reasons [below](#what-arrives), in this yard's words), or this yard did not send it: the bead is too large (a title over 512 bytes, a body over 64 KB), or its branch has commits of this yard's own since the other yard returned it ([a bead sent again](#a-bead-sent-again)) |
+| `refused` | the other yard did not take the bead (the reasons [below](#what-arrives), in this yard's words), or this yard did not send it: the bead is too large (a title over 512 bytes, a body over 64 KB), or its depot has no remote to push a branch with commits of this yard's own to ([a bead sent again](#a-bead-sent-again)) |
 | `undelivered` | the message was posted as often as the group's `tries` (5, about a quarter of an hour with the daemon's waits; `--set tries=<n>`) and the yard was never reached; the link stopped carrying `bead` out (`peer allow --no-send bead`); the link was removed while the bead was there; or this yard did not send it: the peer is linked no more, or its link carries no `bead` out |
 
 A try that does not reach the yard counts for every bead that waits for it,
@@ -2826,7 +2826,7 @@ branch is there:
 | the depot has no remote of the group's name (removed after the bead was sent) | the same as a failed fetch: tried again, then held; add the remote with `git -C <depot path> remote add <remote> <url>` and `yardr bead unhold <id>` takes the branch |
 | the branch on the remote is not at the commit the return names | not taken, and held at once: no try changes it |
 | the branch name is no bead's, or the commit no commit's | the same |
-| this yard's `yard/<bead>` exists and the returned commit does not come after it | the same: move or delete the branch first. A bead sent a second time no longer ends here: it starts where this yard's branch stands, or is not sent ([a bead sent again](#a-bead-sent-again)). What is left is a branch that had commits of this yard's own before the bead was first sent |
+| this yard's `yard/<bead>` exists and the returned commit does not come after it | the same: move or delete the branch first. A bead sent a second time no longer ends here: its branch is pushed and it starts where the branch stands ([a bead sent again](#a-bead-sent-again)). What is left is a branch that had commits of this yard's own before the bead was first sent |
 
 The held bead stays in its stage, owned by the peer group, so nothing sends
 it out again. `yardr bead unhold <id>` tries anew, with a full count of
