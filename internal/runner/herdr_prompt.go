@@ -58,7 +58,11 @@ func (h *Herdr) startAgent(ctx context.Context, args []string, name, prompt stri
 	} else if err != nil {
 		return handle, err
 	}
-	if up, known := h.HarnessScreen(ctx, handle); known && !up {
+	up, known := h.HarnessScreen(ctx, handle)
+	if !known {
+		up, known = h.AgentReady(ctx, handle)
+	}
+	if known && !up {
 		// Started, and not the harness's own screen yet: keys typed now go
 		// to whatever runs before it. The dispatcher types the prompt once
 		// the screen is up.

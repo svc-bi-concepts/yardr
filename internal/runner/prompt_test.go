@@ -1327,6 +1327,24 @@ func TestFirstPromptOfAPiCrewWaitsForItsInput(t *testing.T) {
 	}
 }
 
+// herdr's readiness gates the first prompt of a kind with no input mark and
+// nothing else: HarnessScreen stays unknown for it even when herdr has the
+// agent ready, so a note told to an idle session still goes through herdr's
+// own submit (dispatch.paneHasPrompt) and is not typed into a pane yardr
+// cannot read.
+func TestHarnessScreenOfAnUnmarkedKindStaysUnknownWhenReady(t *testing.T) {
+	t.Parallel()
+	h, _, ready := piLikeHerdr(t)
+	ready()
+	handle := map[string]any{"agent": "pi", "pane": "w1:p1", harnessKind: "pi"}
+	if up, known := h.HarnessScreen(context.Background(), handle); up || known {
+		t.Errorf("HarnessScreen of a ready pi: up %v, known %v, want unknown", up, known)
+	}
+	if up, known := h.AgentReady(context.Background(), handle); !up || !known {
+		t.Errorf("AgentReady of a ready pi: up %v, known %v, want ready", up, known)
+	}
+}
+
 // Found trialing yardr-71m2: the runner's start typed the first prompt into
 // a harness already at its login menu. The menu's selected option carries
 // the input mark, so the screen reads as up; the dispatcher reads the login
