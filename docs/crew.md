@@ -480,6 +480,12 @@ at all.
   line. It is one fixed word and never the text itself. `nudge_held` is of
   the class `attention`, so the yardmaster's inbox has it of every other crew member
   and of a bead's session.
+- A screen that only looks held (a remote herdr attach overprints it and the
+  input box is not drawn) is not left to hold a nudge for hours: when the
+  input reads as text or unreadable, yardr sends one Ctrl-L to that same
+  pane, reads again after a moment, and types the nudge only if the fresh
+  read shows an empty input. The check is retried every three minutes, and
+  the wait's age is kept across retries.
 - One short mail arrives in the nudge itself: where the session's slice
   holds exactly one unread entry, it is mail, and its line is at most 600
   characters, the nudge types `yardr: <seq> mail from <sender>: <text>` on
