@@ -2133,7 +2133,14 @@ check the footer's model instead.
   so later stages reuse them. A worktree with uncommitted or untracked changes
   is kept (a `workspace_kept` event says why) and `yard/<bead>` branches are
   never deleted. Set `--set cleanup=false` on a group to keep its worktrees.
-  Reopening a bead checks its branch out again.
+  If its worktree was removed, reopening a bead checks its branch out again.
+  If opening by branch fails but the bead's worktree path still exists,
+  yardr reattaches `yard/<bead>` only when the worktree is registered with
+  Git, clean (including no untracked files), and detached at exactly
+  `origin/yard/<bead>`. It moves the local bead branch to that commit and
+  checks it out before starting the session. Other existing states fail
+  with a reason naming the state. Pull-request worktrees stay detached;
+  this recovery does not apply to them.
 - **Labels.** herdr nests each workspace under its depot's node, so labels
   leave the depot out: a bead's workspace is `<group> [<train>] <bead>` (the
   train only for a child of one) and its stage's tab `<stage> [<train>]

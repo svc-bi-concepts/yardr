@@ -218,8 +218,8 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 		createErr := err
 		raw, err = h.run(ctx, "worktree", "open", "--cwd", depot.Path, "--branch", branch, "--label", label)
 		if err != nil && root != "" {
-			// The branch exists but its worktree was cleaned up (a reopened
-			// bead): check the branch out again and open that.
+			// A branch lookup can miss a detached worktree or one cleaned up
+			// after the bead closed; recover it before opening by path.
 			path := filepath.Join(root, depot.Name, job.Bead.ID)
 			if job.Pull == nil {
 				recovered, recoverErr := recoverDetachedWorktree(ctx, depot.Path, path, branch)
