@@ -491,13 +491,10 @@ func writeRepoHook(t *testing.T, dir, name, body string) {
 	writeExecutable(t, filepath.Join(dir, name), body)
 }
 
-// writeExecutable writes a hook that git will exec, holding syscall.ForkLock
-// for reading from the open to the close (the pattern of scripttest's
-// writeLauncher, yardr-436j). These tests run in parallel, and a process one
-// of them forks while the hook is open for writing keeps that descriptor
-// until its exec; Linux then refuses the hook's exec with "text file busy".
-// A fork cannot begin while the hold is taken, so none inherits the hook's
-// descriptor.
+// writeExecutable writes an executable fixture, holding syscall.ForkLock
+// for reading from the open to the close so concurrent forks cannot inherit
+// its write descriptor. See scripttest's writeLauncher for the Linux exec
+// constraint this protects against.
 func writeExecutable(t *testing.T, path, body string) {
 	t.Helper()
 	syscall.ForkLock.RLock()
