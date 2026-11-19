@@ -61,36 +61,93 @@ func TestNudgeWaitsForTextInTheInput(t *testing.T) {
 	}
 }
 
+type read struct {
+	text  string
+	known bool
+}
+
+// redrawCrewRunner is a crew runner whose pane answers each read from
+// script, the last one for every read after it.
 type redrawCrewRunner struct {
 	*crewRunner
+	script  []read
+	noMark  bool
 	redraws int
 	reads   int
 }
 
 func (r *redrawCrewRunner) InputText(context.Context, map[string]any) (string, bool, error) {
+	i := min(r.reads, len(r.script)-1)
 	r.reads++
-	if r.reads == 1 {
-		return "", false, nil
+	return r.script[i].text, r.script[i].known, nil
+}
+
+func (r *redrawCrewRunner) RedrawInput(context.Context, map[string]any) (bool, error) {
+	if r.noMark {
+		return false, nil
 	}
-	return "", true, nil
-}
-
-func (r *redrawCrewRunner) RedrawInput(context.Context, map[string]any) error {
 	r.redraws++
-	return nil
+	return true, nil
 }
 
-func TestNudgeRedrawsAnUncertainPaneAndTypesOnlyAfterEmptyRead(t *testing.T) {
-	t.Parallel()
+func redrawSetup(t *testing.T, r *redrawCrewRunner) (store.API, *dispatch.Dispatcher, context.Context) {
+	t.Helper()
 	s, f, d := crewSetup(t, store.CrewMember{})
-	r := &redrawCrewRunner{crewRunner: f}
+	r.crewRunner = f
 	d.Runners["fake"] = r
 	ctx := context.Background()
 	must(t, d.Reconcile(ctx))
 	must(t, s.Mail(ctx, "yardmaster", "deploy freeze", "chris"))
+	return s, d, ctx
+}
+
+func TestNudgeRedrawsAnUncertainPaneAndTypesOnlyAfterEmptyRead(t *testing.T) {
+	t.Parallel()
+	r := &redrawCrewRunner{script: []read{{"", false}, {"", true}}}
+	_, d, ctx := redrawSetup(t, r)
 	must(t, d.Reconcile(ctx))
-	if r.redraws != 1 || r.reads != 2 || len(f.nudges) != 1 {
-		t.Fatalf("redraws %d, reads %d, nudges %q; want one redraw, two reads and one nudge", r.redraws, r.reads, f.nudges)
+	if r.redraws != 1 || r.reads != 2 || len(r.nudges) != 1 {
+		t.Fatalf("redraws %d, reads %d, nudges %q; want one redraw, two reads and one nudge", r.redraws, r.reads, r.nudges)
+	}
+}
+
+// Real text that survives the redraw is someone's: one Ctrl-L, nothing
+// typed, and no second Ctrl-L on the passes that follow.
+func TestHeldRealTextIsRedrawnOnceAndNeverTyped(t *testing.T) {
+	t.Parallel()
+	r := &redrawCrewRunner{script: []read{{"some creative..", true}}}
+	_, d, ctx := redrawSetup(t, r)
+	for range 4 {
+		must(t, d.Reconcile(ctx))
+	}
+	if r.redraws != 1 || len(r.nudges) != 0 || r.submits != 0 {
+		t.Fatalf("redraws %d, nudges %q, Enter %d; want one redraw and nothing typed", r.redraws, r.nudges, r.submits)
+	}
+}
+
+// A pane that stays garbled after the redraw fails closed: nothing is typed
+// and the Ctrl-L is not repeated.
+func TestPaneThatStaysGarbledFailsClosed(t *testing.T) {
+	t.Parallel()
+	r := &redrawCrewRunner{script: []read{{"", false}}}
+	_, d, ctx := redrawSetup(t, r)
+	for range 4 {
+		must(t, d.Reconcile(ctx))
+	}
+	if r.redraws != 1 || len(r.nudges) != 0 || r.submits != 0 {
+		t.Fatalf("redraws %d, nudges %q, Enter %d; want one redraw and nothing typed", r.redraws, r.nudges, r.submits)
+	}
+}
+
+// A kind with no input mark keeps the old contract even on a runner that
+// can redraw: the nudge is typed, and no Ctrl-L is sent.
+func TestNoMarkKindIsTypedOnARunnerThatRedraws(t *testing.T) {
+	t.Parallel()
+	r := &redrawCrewRunner{script: []read{{"", false}}, noMark: true}
+	_, d, ctx := redrawSetup(t, r)
+	must(t, d.Reconcile(ctx))
+	if r.redraws != 0 || len(r.nudges) != 1 {
+		t.Fatalf("redraws %d, nudges %q; want no redraw and one nudge", r.redraws, r.nudges)
 	}
 }
 

@@ -286,6 +286,28 @@ func kimiPane(joins string, lines ...string) string {
 	return s + " ╰" + strings.Repeat("─", inner) + "╯\n Never Ask  K3 thinking: high  ~\n context: 4% (34.9k/1M)\n"
 }
 
+func TestRedrawInputOnlySendsCtrlLToTheHandlePane(t *testing.T) {
+	t.Parallel()
+	log := filepath.Join(t.TempDir(), "keys")
+	h := &Herdr{Bin: deafHerdrBin(t, `echo "$*" >> `+log)}
+	if marked, err := h.RedrawInput(context.Background(), map[string]any{"pane": "w1:p1", harnessKind: "claude"}); err != nil || !marked {
+		t.Fatalf("RedrawInput = %v, %v; want marked and no error", marked, err)
+	}
+	got, err := os.ReadFile(log)
+	if err != nil || strings.TrimSpace(string(got)) != "pane send-keys w1:p1 C-l" {
+		t.Fatalf("keys sent = %q, %v; want only Ctrl-L to the handle pane", got, err)
+	}
+	if _, err := h.RedrawInput(context.Background(), map[string]any{harnessKind: "claude"}); err == nil {
+		t.Fatal("redraw without a verified pane succeeded")
+	}
+	if marked, err := h.RedrawInput(context.Background(), map[string]any{"pane": "w1:p1", harnessKind: "no-such-kind"}); marked || err != nil {
+		t.Fatalf("kind without an input mark: RedrawInput = %v, %v; want unmarked", marked, err)
+	}
+	if again, _ := os.ReadFile(log); string(again) != string(got) {
+		t.Fatalf("keys sent for a kind with no mark: %q", again)
+	}
+}
+
 // Found live (yardr-w9vj): the brakeman, a Kimi, sat idle with an empty
 // input, and the yard held its nudges for hours: "the agent's input has held
 // text". The unwrapped read had joined the input's row to the bottom of its
@@ -293,22 +315,6 @@ func kimiPane(joins string, lines ...string) string {
 // among the nudges held, so the brakeman never rotated. The rows of a box
 // are read one by one however the read joined them, and nothing after the
 // box's bottom is the input's.
-func TestRedrawInputOnlySendsCtrlLToTheHandlePane(t *testing.T) {
-	t.Parallel()
-	log := filepath.Join(t.TempDir(), "keys")
-	h := &Herdr{Bin: deafHerdrBin(t, `echo "$*" >> `+log)}
-	if err := h.RedrawInput(context.Background(), map[string]any{"pane": "w1:p1"}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(log)
-	if err != nil || strings.TrimSpace(string(got)) != "pane send-keys w1:p1 C-l" {
-		t.Fatalf("keys sent = %q, %v; want only Ctrl-L to the handle pane", got, err)
-	}
-	if err := h.RedrawInput(context.Background(), map[string]any{}); err == nil {
-		t.Fatal("redraw without a verified pane succeeded")
-	}
-}
-
 func TestInputTextOfABoxReadUnwrapped(t *testing.T) {
 	t.Parallel()
 	if text, ok := inputText(kimiCaptured, "kimi"); text != "" || !ok {
@@ -519,12 +525,12 @@ func TestNudgeIsNotTypedIntoAnInputThatHoldsText(t *testing.T) {
 				}
 				return
 			}
-			if typed() != 0 || keys() != 0 {
-				t.Fatalf("keys sent to an input that holds text:\n%s", calls())
+			if typed() != 0 || keys() != 1 || strings.Count(calls(), "pane send-keys p1 C-l") != 1 {
+				t.Fatalf("want only one Ctrl-L sent to an input that holds text:\n%s", calls())
 			}
 			screen(c.empty)
 			pass()
-			if typed() != 1 || keys() != 0 || !strings.Contains(calls(), "mail from chris: deploy freeze") {
+			if typed() != 1 || keys() != 1 || !strings.Contains(calls(), "mail from chris: deploy freeze") {
 				t.Fatalf("after the input emptied the nudge was typed %d times, want once:\n%s", typed(), calls())
 			}
 		})
@@ -860,8 +866,8 @@ func TestNudgeAtKimisCacheMenuIsToldOfOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			pass(3)
-			if n, _ := held(); n != 1 || nudges() != 1+c.typed || keys() != 0 {
-				t.Fatalf("with the menu open: nudge_held %d times, nudged %d times in all, %d keys sent; want 1, %d and none\n%s",
+			if n, _ := held(); n != 1 || nudges() != 1+c.typed || keys() != 1 {
+				t.Fatalf("with the menu open: nudge_held %d times, nudged %d times in all, %d keys sent; want 1, %d and the one Ctrl-L\n%s",
 					n, nudges(), keys(), 1+c.typed, calls())
 			}
 

@@ -344,12 +344,19 @@ func (h *Herdr) InputComposer(ctx context.Context, handle map[string]any) (text 
 
 // RedrawInput asks the same pane InputText reads to redraw its screen. It
 // does not clear the input: the dispatcher makes a new read before typing.
-func (h *Herdr) RedrawInput(ctx context.Context, handle map[string]any) error {
+// marked is false for a kind with no input mark, whose input yardr cannot
+// tell however it is drawn: nothing is sent then, and a read of it that
+// tells nothing is not a malformed one.
+func (h *Herdr) RedrawInput(ctx context.Context, handle map[string]any) (marked bool, err error) {
+	kind, _ := handle[harnessKind].(string)
+	if _, marked := marksOf(kind); !marked {
+		return false, nil
+	}
 	pane, _ := handle["pane"].(string)
 	if pane == "" {
-		return fmt.Errorf("handle has no pane")
+		return true, fmt.Errorf("handle has no pane")
 	}
-	return h.sendKey(ctx, pane, "C-l")
+	return true, h.sendKey(ctx, pane, "C-l")
 }
 
 // inputText finds, in a pane of a harness of kind read with its styling,

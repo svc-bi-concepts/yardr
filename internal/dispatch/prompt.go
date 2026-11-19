@@ -143,8 +143,10 @@ type ComposerReader interface {
 
 // InputRedrawer redraws the input of the verified pane in handle without
 // changing its contents. The dispatcher reads it again before typing.
+// marked is false for a harness kind with no input mark: nothing is sent,
+// and an unreadable input of it is the normal case, not a malformed one.
 type InputRedrawer interface {
-	RedrawInput(ctx context.Context, handle map[string]any) error
+	RedrawInput(ctx context.Context, handle map[string]any) (marked bool, err error)
 }
 
 // DialogReader is implemented by runners that know questions a harness
@@ -261,13 +263,17 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 			return false, hold{}
 		}
 		w := d.drafts[key]
-		if w == nil {
-			w = &draft{}
-			d.drafts[key] = w
-		}
-		if !w.drawn {
+		if w == nil || !w.drawn {
+			marked, rerr := redrawer.RedrawInput(ctx, handle)
+			if !marked {
+				return false, hold{}
+			}
+			if w == nil {
+				w = &draft{}
+				d.drafts[key] = w
+			}
 			w.drawn = true
-			if redrawer.RedrawInput(ctx, handle) == nil && waitContext(ctx, heldRedrawWait) == nil {
+			if rerr == nil && waitContext(ctx, heldRedrawWait) == nil {
 				done := askTimer(ctx, askPane)
 				text, known, composer, err, _ = read()
 				done()
@@ -300,7 +306,7 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 	if !w.drawn {
 		if redrawer, ok := r.(InputRedrawer); ok {
 			w.drawn = true
-			if err := redrawer.RedrawInput(ctx, handle); err == nil {
+			if _, err := redrawer.RedrawInput(ctx, handle); err == nil {
 				// Ctrl-L only redraws the same pane. A short bounded settle
 				// lets the harness repaint before a fresh, authoritative read.
 				if waitContext(ctx, heldRedrawWait) == nil {
