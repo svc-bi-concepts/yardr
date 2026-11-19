@@ -1260,6 +1260,17 @@ that peer (a refusal reads as `yardr mail`'s); a user answers so too, or on
 the sender's row in `yardr chat`. `yardr mail <name>@<peer>` is for writing
 first. There are no thread ids: a mail is one message.
 
+The reply is made from the seq alone: the store takes the sender, the link and
+the wire id from the mail event as it was taken, so the reply goes back to the
+yard it came from and names that mail as `re`, and no caller can choose another
+destination or reference. It is refused for mail that is not to the caller, not
+from a peer, or from a link since removed, and when the caller is no longer
+exposed on the link. With `--json`, `yardr reply` adds `re` (the wire id
+answered) and `receipt` (`seq`, `id`, `direction`, `peer`, `peer_key`, `from`,
+`to`, `at`), and `id` is the reply's own wire id. A receipt whose event has been
+pruned (kept only while the outbox holds its message) gives no `in_reply_to`:
+the reply stays ordinary mail with `re` as sent.
+
 **From a yard removed since.** After `yardr peer rm north`, mail north sent
 that is still unread shows as
 `mail from yardmaster at a yard no longer linked (was north)`, in the inbox,
