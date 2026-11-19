@@ -14,7 +14,12 @@ up from it (`yardr setup`, `yardr depot init`) runs
 (docs/setup.md).
 
 **merge-local** lands a bead's branch on its base (the depot's base, or the
-train's branch for a child of a train). It is routed for `approved`. With
+train's branch for a child of a train). It is routed for `approved`. Before
+anything else it checks that the branch contains the commit the reviewer
+approved (the newest `Reviewed <sha>` or `approved <sha>` note, as
+infra-land.sh reads it): a branch on another line of commits goes back to
+`new` with both shas and the commits past the approved one, and a bead with no
+approval lands as before, the log saying so. With
 `YARDR_PUSH` set it first brings the base up to that remote, fast-forward
 only; a base that diverged from the remote's branch reports `failed` with a
 note saying so, never merged or forced. It then
