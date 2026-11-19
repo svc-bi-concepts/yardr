@@ -178,12 +178,6 @@ func (g Group) peerTries() int {
 	return PeerBeadTries
 }
 
-// peerRemote is the remote of the depot a branch the group's peer returns is
-// fetched from.
-func (g Group) peerRemote() string {
-	return or(setting(g.Config[GroupRemote]), PeerRemote)
-}
-
 // checkPeerGroup refuses a group of the peer runner that could send
 // nothing: it names no peer, one this yard is not linked with, or one
 // whose link carries no beads out.
@@ -395,6 +389,9 @@ func (s *Store) PeerBeadSend(ctx context.Context, session string) (*BeadPeer, er
 		gctx, cancel := context.WithTimeout(ctx, peerFetchTimeout)
 		from, moved = againOf(gctx, *depot, pre.ID, baseOf(gctx, *depot, fam.Base), last)
 		cancel()
+		if err := s.checkPeerRemote(ctx, *depot, sess.Group, pre.ID); err != nil {
+			return nil, err
+		}
 	}
 	err = s.write(func(w *wtx) error {
 		row, err := w.loadBead(pre.UUID)

@@ -1742,6 +1742,9 @@ laptop routes `build` to `at-north`, north routes it to its builders.
 - `remote=<name>` is the remote of the bead's depot that a branch the yard
   returns is fetched from (`origin` unless set), and `tries` is also how
   often that fetch is tried ([Code that comes back](#code-that-comes-back)).
+  That remote must be in every depot clone the group sends from: a bead of
+  a depot without it is held unsent, with the command that adds it, rather
+  than sent to come back with its branch nowhere to be taken from.
 - No members. `--type`, `--label` and `--bead-priority` of the route
   choose which beads of the stage go there (only those labelled `remote`, say).
 - `yardr flow show <depot>` has the group under GROUP and `yard north` under
@@ -2818,6 +2821,7 @@ branch is there:
 | what happened | what the yard does |
 |---|---|
 | the fetch failed (the remote is down, a credential is missing) | tries again after a wait that doubles from 30s up to an hour, as an issue move does. After the group's `tries` (5; `--set tries=<n>`, the setting that also counts the posts of the bead) the bead is **held**, with a note that has git's words |
+| the depot has no remote of the group's name (removed after the bead was sent) | the same as a failed fetch: tried again, then held; add the remote with `git -C <depot path> remote add <remote> <url>` and `yardr bead unhold <id>` takes the branch |
 | the branch on the remote is not at the commit the return names | not taken, and held at once: no try changes it |
 | the branch name is no bead's, or the commit no commit's | the same |
 | this yard's `yard/<bead>` exists and the returned commit does not come after it | the same: move or delete the branch first. A bead sent a second time no longer ends here: it starts where this yard's branch stands, or is not sent ([a bead sent again](#a-bead-sent-again)). What is left is a branch that had commits of this yard's own before the bead was first sent |
