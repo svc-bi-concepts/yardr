@@ -18,7 +18,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -774,17 +773,6 @@ func TestSlackPackThreadKeepsTheTokenOutOfArguments(t *testing.T) {
 // subscriptions of step 9 wake on.
 const slackBot = "U999BOT99"
 
-// slackNudges is what the subscriptions of step 9 match on an envelope:
-// a message that mentions the bot (scope mentions, type message), and a
-// message in a one-to-one direct message (scope all, room dm). The store
-// does the matching; this states which envelopes it wakes the bot for.
-func slackNudges(e hooks.Envelope) bool {
-	if e.Type != "message" {
-		return false
-	}
-	return slices.Contains(e.Mentions, slackBot) || reflect.DeepEqual(e.Fields["room"], []string{"dm"})
-}
-
 // slackEvent is an Events API body whose event is ev.
 func slackEvent(ev string) []byte {
 	return []byte(`{"type":"event_callback","team_id":"T012AB3CD","event_id":"Ev9","event":` + ev + `}`)
@@ -824,9 +812,6 @@ func TestSlackPackChannelMessages(t *testing.T) {
 		if !reflect.DeepEqual(got.Fields["room"], []string{"channel"}) || !reflect.DeepEqual(got.Fields["sender"], []string{tc.wantSender}) {
 			t.Errorf("%s: fields = %v, want room channel and sender %s", tc.name, got.Fields, tc.wantSender)
 		}
-		if slackNudges(*got) {
-			t.Errorf("%s: nudges the bot, and a channel message that mentions nobody must not", tc.name)
-		}
 	}
 }
 
@@ -848,8 +833,8 @@ func TestSlackPackChannelMentionWakesOnce(t *testing.T) {
 	if msg.Thread.ID != twin.Thread.ID || msg.Message != twin.Message {
 		t.Fatalf("the two are not one message: %q %q against %q %q", msg.Thread.ID, msg.Message, twin.Thread.ID, twin.Message)
 	}
-	if slackNudges(*msg) || !slackNudges(*twin) {
-		t.Errorf("message.channels nudges %v and its app_mention %v, want false and true", slackNudges(*msg), slackNudges(*twin))
+	if len(msg.Mentions) != 0 {
+		t.Errorf("message.channels mentions = %q, want none: only its app_mention carries the mention", msg.Mentions)
 	}
 	if !reflect.DeepEqual(twin.Mentions, []string{slackBot}) {
 		t.Errorf("app_mention mentions = %q, want the bot", twin.Mentions)
@@ -887,8 +872,8 @@ func TestSlackPackSubtypes(t *testing.T) {
 		if tc.wantSender != "" && !reflect.DeepEqual(got.Fields["sender"], []string{tc.wantSender}) {
 			t.Errorf("%s: sender = %q, want %s", tc.name, got.Fields["sender"], tc.wantSender)
 		}
-		if tc.wantType == "event" && slackNudges(*got) {
-			t.Errorf("%s: an event nudges the bot", tc.name)
+		if tc.wantType == "event" && len(got.Mentions) != 0 {
+			t.Errorf("%s: an event carries mentions %q", tc.name, got.Mentions)
 		}
 	}
 }
