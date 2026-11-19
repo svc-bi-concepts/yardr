@@ -277,7 +277,7 @@ var coreRules = map[Action]rule{}
 func init() {
 	for _, act := range []Action{
 		ActChangeOriginator, ActGrantCrew, ActEndDevicePairing,
-		ActChangeDepotPath, ActChangeDepotKind, ActRemoveDepot,
+		ActChangeDepotPath, ActChangeDepotKind, ActChangeDepotVisibility, ActRemoveDepot,
 		ActMoveLinks, ActReplaceHook, ActChangeHookSource, ActChangeHookUnknown, ActRemoveHook,
 		ActPair, ActMapPeerIdentity, ActUnmapPeerIdentity, ActAddPeer, ActRemovePeer, ActExposeToPeer,
 		ActTrustPeerName, ActSendAsksToPeer, ActAllowPeerMessages, ActRaisePeerMail, ActChangePeerAddress,

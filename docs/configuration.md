@@ -25,7 +25,7 @@ repository ([below](#seeding-a-depot-yardr-depot-init)).
 | roles | a depot's own role prompts: `.yardr/roles/<name>.md`, read from the base; none in a depot set up from a pack | each group's and crew member's `prompt`: for a depot set up from a pack the absolute path of the pack's role as installed in the home, `~/.yardr/packs/<pack>/roles/<name>.md`. `~/.yardr/roles/`, in a yard that has it from an earlier yardr, is the fallback of a relative `prompt` |
 | groups | | runner, limit, members, subscriptions (manual), agent kind, model, args, cmd, worktree settings |
 | routes | | which group works which stage, by depot, type, label |
-| depots | | path, kind (`git` or `dir`), clone, base branch, test command; `depot add` registers, `depot rm` removes |
+| depots | | path, kind (`git` or `dir`), clone, base branch, test command, visibility; `depot add` registers, `depot rm` removes |
 | crew members | | agent, directory, inbox kinds, rotation, subscriptions, identities |
 | settings | | the yard's defaults ([Settings](#settings)) |
 
@@ -244,6 +244,29 @@ dependency kinds, are lowercase letters, digits, `.`, `_` and `-`. What
 
 A depot can say what tests it: `yardr depot add webapp ~/projects/webapp
 --test 'make test'` ([Tests](#tests)).
+
+## Visibility
+
+A depot says whether its GitHub repository is public. It is private unless
+the operator says otherwise:
+
+```sh
+yardr depot add webapp ~/projects/webapp --visibility public   # when registering
+yardr depot visibility webapp private                          # an existing depot
+```
+
+A `depot add` without `--visibility` keeps the visibility the depot has.
+Only the operator sets it. `depot show` and `depot list` show it, and
+`yardr depot show webapp --json` carries it as `visibility`, which is what
+a script or a hook reads.
+
+While the daemon runs, yardr checks once a day each git depot's visibility
+against its GitHub repository's, with one `gh repo view` in the depot's
+checkout. A depot that differs from GitHub is reported to the yardmaster's
+inbox with the depot's name, its recorded visibility and GitHub's. The check
+never changes the value; a repository GitHub calls internal counts as
+private. A dir depot is not checked, and neither is a depot GitHub does not
+answer for, such as one with no GitHub remote or on a machine without `gh`.
 
 A depot can also be a plain directory, with no git (`--kind dir`): the next
 section says how the two kinds differ, and [dir-depots.md](dir-depots.md)

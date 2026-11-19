@@ -23,6 +23,20 @@ const (
 	DepotDir = "dir"
 )
 
+// Depot visibility is whether the depot's repository is public on its host.
+// The operator sets it (yardr depot add --visibility, yardr depot
+// visibility); the daily check (internal/dispatch) compares it with
+// the host's and says so when they differ, and never changes it. A depot with
+// none, as one stored before the attribute existed, is private.
+const (
+	DepotPublic  = "public"
+	DepotPrivate = "private"
+)
+
+// ActChangeDepotVisibility is the operator's alone, as a depot's kind is: a
+// depot is public or private on its host only by the operator's word.
+const ActChangeDepotVisibility Action = "change a depot's visibility"
+
 // DepotsDir is the directory of a yard's home that `yardr depot add <name>
 // <url>` clones into.
 const DepotsDir = "depots"
@@ -41,10 +55,23 @@ type Depot struct {
 	// run runs it (internal/dispatch/quiet.go). Until schema 19 a
 	// depot had a check beside it, which yardr ran (migrateChecks).
 	Test string `json:"test,omitempty"`
+	// Visibility is DepotPublic or DepotPrivate. Read through Depots and
+	// GetDepot, a record without one reads as private (depotVisibility).
+	Visibility string `json:"visibility"`
 }
 
 // IsDir reports whether the depot is a directory, not a repository.
 func (r *Depot) IsDir() bool { return r.Kind == DepotDir }
+
+// depotVisibility is v as a depot's visibility reads: public when it says
+// so, and private otherwise, including the empty value of a depot stored
+// before the attribute existed. Nothing here is public by default.
+func depotVisibility(v string) string {
+	if v == DepotPublic {
+		return DepotPublic
+	}
+	return DepotPrivate
+}
 
 // PutDepot adds or replaces a depot, and logs depot_updated with what it now
 // holds: what tests a depot must not change unseen. A depot given no kind is
@@ -52,9 +79,10 @@ func (r *Depot) IsDir() bool { return r.Kind == DepotDir }
 // alone; its test command or base is the operator's, and a run ask may
 // propose it. Naming a test command on a depot the yard has not is the
 // operator's alone; adding one without a test command, and re-adding one
-// with all four unchanged, are anyone's. From a session's or a crew member's pane the write is
-// recorded as that session's actor or that crew member, whatever actor says;
-// from anywhere else, as given (paneAuthor).
+// with all four unchanged, are anyone's. Its visibility is the operator's
+// alone, in either direction. From a session's or a crew
+// member's pane the write is recorded as that session's actor or that crew
+// member, whatever actor says; from anywhere else, as given (paneAuthor).
 func (s *Store) PutDepot(ctx context.Context, r Depot, actor string) error {
 	if err := checkName("depot name", r.Name); err != nil {
 		return err
@@ -69,6 +97,13 @@ func (s *Store) PutDepot(ctx context.Context, r Depot, actor string) error {
 		}
 	default:
 		return fmt.Errorf("depot %s: kind %q is neither %s nor %s", r.Name, r.Kind, DepotGit, DepotDir)
+	}
+	switch r.Visibility {
+	case "":
+		r.Visibility = DepotPrivate
+	case DepotPublic, DepotPrivate:
+	default:
+		return fmt.Errorf("depot %s: visibility %q is neither %s nor %s", r.Name, r.Visibility, DepotPublic, DepotPrivate)
 	}
 	// A git depot's base reaches git's argv (the runner fetches it and
 	// branches trains from it), so it is held to a branch's shape here, on
@@ -112,6 +147,15 @@ func (w *wtx) putDepot(ctx context.Context, r Depot, actor string, by *approvedO
 	if err != nil {
 		return err
 	}
+	// A record stored before the attribute has none: it is private, and
+	// writing it back says so, so the comparison below is the same for both.
+	r.Visibility = depotVisibility(r.Visibility)
+	was.Visibility = depotVisibility(was.Visibility)
+	if r.Visibility != was.Visibility {
+		if err := w.may(ctx, actor, ActChangeDepotVisibility, Object{Kind: KindDepot, Name: r.Name}); err != nil {
+			return err
+		}
+	}
 	if had {
 		if r.Path != was.Path {
 			if err := w.may(ctx, actor, ActChangeDepotPath, Object{Kind: KindDepot, Name: r.Name}); err != nil {
@@ -143,7 +187,7 @@ func (w *wtx) putDepot(ctx context.Context, r Depot, actor string, by *approvedO
 		return err
 	}
 	data := map[string]any{
-		"depot": r.Name, "path": r.Path, "kind": r.Kind, "base": r.Base, "test": r.Test}
+		"depot": r.Name, "path": r.Path, "kind": r.Kind, "base": r.Base, "test": r.Test, "visibility": r.Visibility}
 	if by != nil {
 		data["approved"] = by
 	}
@@ -154,6 +198,7 @@ func (s *Store) Depots(ctx context.Context) ([]Depot, error) {
 	out := []Depot{}
 	err := s.read(func(tx *bolt.Tx) error {
 		return each(tx, bDepots, "", func(_ []byte, r *Depot) error {
+			r.Visibility = depotVisibility(r.Visibility)
 			out = append(out, *r)
 			return nil
 		})
@@ -168,6 +213,7 @@ func (s *Store) GetDepot(ctx context.Context, name string) (*Depot, error) {
 		if err == nil && !ok {
 			err = fmt.Errorf("depot %s: %w", name, ErrNotFound)
 		}
+		r.Visibility = depotVisibility(r.Visibility)
 		return err
 	})
 	if err != nil {

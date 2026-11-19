@@ -338,6 +338,7 @@ var Access = map[string]Class{
 	"Timers":               Read,
 	"RemoveTimer":          Admin,
 	"FireTimers":           Admin,
+	"TellDepotVisibility":  Admin,
 	"FoldSidings":          Admin,
 
 	// Previews: a crew member proposes and may stop its own; approval,
