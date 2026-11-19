@@ -948,7 +948,7 @@ func TestSlackPackChannelCalls(t *testing.T) {
 		t.Fatalf("channels sent %+v", got)
 	}
 	q, _ := url.ParseQuery(got[0].query)
-	if q.Get("types") != "public_channel" || q.Get("exclude_archived") != "true" || q.Get("limit") != "1000" || q.Get("fields") != "id,name,is_member" {
+	if q.Get("types") != "public_channel" || q.Get("exclude_archived") != "true" || q.Get("limit") != "1000" {
 		t.Errorf("channels query = %q", got[0].query)
 	}
 

@@ -57,7 +57,7 @@ calls:
     request:
       method: GET
       path: /conversations.list
-      query: { types: public_channel, exclude_archived: "true", limit: "1000", fields: "id,name,is_member" }
+      query: { types: public_channel, exclude_archived: "true", limit: "1000" }
     # Slack answers a refusal as 200 with ok false and its reason under error, so both are kept.
     answer: { select: [ok, error, channels, response_metadata] }   # the first page of up to 1000; response_metadata's next_cursor says there is more, which no call reads
   join:

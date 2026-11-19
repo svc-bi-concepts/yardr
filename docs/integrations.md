@@ -2534,7 +2534,8 @@ them whole):
   leaves and the `message_replied` Slack sends beside a thread reply
   arrive as type `event` and match nothing. The bot joins a public
   channel with the pack's `join` call, one channel per call, and the
-  `channels` call lists the public channels it is not in; a private
+  `channels` call lists the public channels, each with `is_member`
+  true or false, so the ones to join are those that say false; a private
   channel needs an invitation in Slack, since the bot cannot join one
   itself.
 - **A thread** is `<channel>:<parent ts>`. `yardr reply <seq>` posts

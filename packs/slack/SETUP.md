@@ -157,8 +157,10 @@ yard if it differs.
    other people's talk, and the bot is woken by being addressed, not
    by everything said where it stands; what is said where it stands is
    still stored, and reads back with `yardr thread show`. The bot hears a
-   channel only once it is in it: the `join` call puts it in each public
-   channel the `channels` call lists as not joined, and a private channel
+   channel only once it is in it: the `channels` call lists the public
+   channels with `is_member` true or false, and the `join` call, one
+   channel id per call (`yardr call slack join channel=C…`), puts it in
+   each one that is false; a private channel
    needs `/invite @<bot>` in Slack, since the bot cannot join one itself.
    Without either, Slack sends the channel nothing. A first mention is
    then the test: it lands in the yardmaster's inbox as
