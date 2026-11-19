@@ -37,7 +37,7 @@ import (
 //	model      agent model (passed as --model); a bead's metadata.model
 //	           overrides it for that bead
 //	keep       true to leave the tab open after the session ends
-//	worktrees  root for bead worktrees (default Herdr.WorktreeRoot)
+//	worktrees  root for bead worktrees (default: the worktree_root setting, else Herdr.WorktreeRoot)
 //	env_file   KEY=VALUE file (mode 0600 or stricter) whose entries go into
 //	           the agent's pane environment: outbound credentials, which
 //	           never belong in the store (see store.ReadEnvFile) nor on a
@@ -201,11 +201,16 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 	}
 
 	// First stage creates the worktree; later stages reopen it.
-	root := str(job.Group.Config, "worktrees", h.WorktreeRoot)
+	// Where the worktree is: its recorded path, else under the root (see
+	// worktreePath). A root that is not there refuses the session here.
+	path, err := h.worktreePath(ctx, job, depot.Name)
+	if err != nil {
+		return nil, err
+	}
 	createArgs := []string{"worktree", "create", "--cwd", depot.Path, "--branch", branch,
 		"--base", BaseOf(job), "--label", label}
-	if root != "" {
-		createArgs = append(createArgs, "--path", filepath.Join(root, depot.Name, job.Bead.ID))
+	if path != "" {
+		createArgs = append(createArgs, "--path", path)
 	}
 	raw, err := h.run(ctx, createArgs...)
 	reopened := false
@@ -217,10 +222,12 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 		}
 		createErr := err
 		raw, err = h.run(ctx, "worktree", "open", "--cwd", depot.Path, "--branch", branch, "--label", label)
-		if err != nil && root != "" {
+		if err != nil && path != "" {
 			// A branch lookup can miss a detached worktree or one cleaned up
 			// after the bead closed; recover it before opening by path.
-			path := filepath.Join(root, depot.Name, job.Bead.ID)
+			// The worktree of a bead that tracks a pull request is on no
+			// branch (see pullHead), so herdr does not find it by one: where
+			// it still is, it is opened by its path as it stands.
 			if job.Pull == nil {
 				recovered, recoverErr := recoverDetachedWorktree(ctx, depot.Path, path, branch)
 				if recoverErr != nil {

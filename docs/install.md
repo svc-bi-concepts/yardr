@@ -631,7 +631,7 @@ Nothing of your work is deleted. What is left, and where:
 | the yard's home: the store with every bead, the roles, flows, packs and logs | `~/.yardr`, or the `--home` you gave | `yardr uninstall --purge` (below) |
 | each depot | your repository or directory, where it was | yardr never deletes one |
 | the `.yardr` directory of a depot: its roles, flows and test command | in the repository | delete it yourself, in a commit |
-| the worktrees of the yard's beads | `<home>/worktrees/<depot>/<bead>`; the list says which has uncommitted changes | `git -C <repository> worktree remove <path>` |
+| the worktrees of the yard's beads | `<home>/worktrees/<depot>/<bead>`, or under the `worktree_root` setting where it was set when the worktree was made (the path is recorded per bead); the list says which has uncommitted changes | `git -C <repository> worktree remove <path>` |
 | the branches under `yard/` | in each repository | `git -C <repository> branch -D <branch>` |
 | yardr | the file the list names: uninstall does not delete itself | `rm <file>` |
 | herdr | the file the list names; its server is left running | `herdr server stop` ends its server and every pane in it; the program is removed as it was installed |
