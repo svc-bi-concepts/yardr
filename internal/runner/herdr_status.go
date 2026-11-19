@@ -184,6 +184,11 @@ func (h *Herdr) Finish(ctx context.Context, handle map[string]any) error {
 		return dispatch.ErrNothingLeft
 	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if h.unmounted(ctx, path) {
+			// Not gone: its volume is not mounted. Pruning would drop the
+			// record of a worktree that may hold work, so it waits.
+			return fmt.Errorf("worktree %s is not there: its volume (worktree_root) is not mounted; it is removed once the volume is back", path)
+		}
 		// A move-aside left by a cleanup that died between the rename
 		// and the delete goes with the admin entry.
 		_ = os.RemoveAll(path + ".removing")
