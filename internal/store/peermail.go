@@ -328,13 +328,13 @@ func (s *Store) mailPeer(ctx context.Context, to, peer, text, actor string, file
 
 // MailPeerReply answers the mail of another yard that the event answered
 // holds in this yard's log, as mail to its sender over the link it came
-// by, carrying the wire id the peer sent it as Re, so the origin can check
+// by, carrying its wire id as Re when present, so the origin can check
 // the reply against its own receipt (answeredMail). Nothing is taken from
 // the caller but the seq, the text and the actor: the sender, the link and
 // the wire id are what the event durably records as the mail came, so no
 // caller can name another destination, reference or mail. The mail must
-// be to actor, from a link still up, and actor must be exposed on that
-// link. It returns the receipt the reply was queued under, written in the
+// be to actor, from a link still up with an encryption pin; for mail received
+// over the link, actor must be exposed on it. It returns the receipt, written in the
 // same write as the mail.
 func (s *Store) MailPeerReply(ctx context.Context, answered uint64, text, actor string) (MailReceipt, error) {
 	if strings.TrimSpace(text) == "" || len(text) > MaxPeerMailBytes {
@@ -385,9 +385,6 @@ func (s *Store) MailPeerReply(ctx context.Context, answered uint64, text, actor 
 		// event when it was taken (deliverMail): the reply names it, and
 		// that is all the origin needs to find its own mail.
 		wire, _ := e.Data["id"].(string)
-		if wire == "" {
-			return fmt.Errorf("message %d carries no wire id to answer", answered)
-		}
 		to, _ := e.Data["from"].(string)
 		if !peerMailName.MatchString(to) {
 			return fmt.Errorf("message %d has no sender to answer", answered)
@@ -396,7 +393,10 @@ func (s *Store) MailPeerReply(ctx context.Context, answered uint64, text, actor 
 		if err != nil {
 			return err
 		}
-		if !slices.Contains(p.Expose, actor) {
+		if !p.Sealed() {
+			return fmt.Errorf("reply to %s@%s: the link to %s has no encryption key, so its mail cannot be sealed and would not arrive (yardr peer show %s lists the link)", to, peer, peer, peer)
+		}
+		if wire != "" && !slices.Contains(p.Expose, actor) {
 			return fmt.Errorf("%s is not exposed to %s: the link does not carry mail from it", actor, peer)
 		}
 		peerName = peer

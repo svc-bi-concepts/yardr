@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,16 +61,24 @@ func linkedPair(t *testing.T) pair {
 	apiA, a := oneYard(t)
 	apiB, b := oneYard(t)
 	p.apiA, p.apiB, p.a, p.b = apiA, apiB, a, b
+	_, encA, err := store.GenerateEnc()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, encB, err := store.GenerateEnc()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := apiA.AddUser(ctx, "al", "ada"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := apiA.AddPeer(ctx, store.Peer{Name: "b", Key: p.keyB}, "ada"); err != nil {
+	if _, err := apiA.AddPeer(ctx, store.Peer{Name: "b", Key: p.keyB, Enc: encB}, "ada"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := apiA.AllowPeer(ctx, "b", store.PeerAllow{Send: []string{"mail"}, Receive: []string{"mail"}, Expose: []string{"jo", "al"}}, "ada"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := apiB.AddPeer(ctx, store.Peer{Name: "a", Key: p.keyA}, "ada"); err != nil {
+	if _, err := apiB.AddPeer(ctx, store.Peer{Name: "a", Key: p.keyA, Enc: encA}, "ada"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := apiB.AllowPeer(ctx, "a", store.PeerAllow{Send: []string{"mail"}, Receive: []string{"mail"}, Expose: []string{"ada"}}, "ada"); err != nil {
@@ -568,6 +577,44 @@ func TestPeerReplyRefusesWhatItCannotAnswer(t *testing.T) {
 	}
 	if msgs, err := p.b.PeerOutbox(p.ctx, "a", 0); err != nil || len(msgs) != 0 {
 		t.Fatalf("refusals queued %+v, %v", msgs, err)
+	}
+}
+
+func TestPeerReplyRequiresEncryptionPin(t *testing.T) {
+	t.Parallel()
+	for _, direct := range []bool{false, true} {
+		t.Run(map[bool]string{false: "received", true: "direct"}[direct], func(t *testing.T) {
+			_, own := oneYard(t)
+			ctx := context.Background()
+			key := newKey(t)
+			if _, err := own.AddPeer(ctx, store.Peer{Name: "north", Key: key}, "ada"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := own.AllowPeer(ctx, "north", store.PeerAllow{Send: []string{"mail"}, Receive: []string{"mail"}, Expose: []string{"ada"}}, "ada"); err != nil {
+				t.Fatal(err)
+			}
+			if direct {
+				if err := own.MailFromPeer(ctx, "ada", "freeze?", "dispatcher", "north"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				body, _ := json.Marshal(map[string]string{"to": "ada", "from": "dispatcher", "text": "freeze?"})
+				got, err := own.PeerReceive(ctx, "north", key, []store.PeerMessage{{ID: "original", Kind: store.PeerMail, Body: body}})
+				if err != nil || len(got) != 1 || got[0].Refused != "" {
+					t.Fatalf("received mail = %+v, %v", got, err)
+				}
+			}
+			box, err := own.UserInbox(ctx, "ada", 0, "ada")
+			if err != nil || len(box.Mail) != 1 {
+				t.Fatalf("inbox = %+v, %v", box, err)
+			}
+			if _, err := own.MailPeerReply(ctx, box.Mail[0].Seq, "Friday.", "ada"); err == nil || !strings.Contains(err.Error(), "link to north has no encryption key") {
+				t.Fatalf("reply without a pin = %v", err)
+			}
+			if msgs, err := own.PeerOutbox(ctx, "north", 0); err != nil || len(msgs) != 0 {
+				t.Fatalf("outbox after refused reply = %+v, %v", msgs, err)
+			}
+		})
 	}
 }
 

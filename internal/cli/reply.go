@@ -499,47 +499,19 @@ func (a *app) replyMail(c *cobra.Command, st store.API, seq uint64, e store.Even
 		return fmt.Errorf("event %d is mail from %s at a yard no longer linked (was %s): no address would reach its sender", seq, from, was)
 	}
 	if peer, _ := e.Data["from_peer"].(string); peer != "" {
-		from, _ := e.Data["from"].(string)
-		if from == "" {
-			from, _, _ = strings.Cut(e.Actor, "@")
-		}
-		if from == "" {
-			return fmt.Errorf("event %d is mail with no sender to answer", seq)
-		}
-		// A link with no encryption key cannot seal the mail: the daemon never
-		// takes it to the peer, so the reply would wait for ever. Said here, with
-		// why, as the link is the reason.
-		p, err := st.GetPeer(ctx, peer)
+		r, err := st.MailPeerReply(ctx, seq, body, name)
 		if err != nil {
 			return err
 		}
-		if !p.Sealed() {
-			return fmt.Errorf("reply to %s@%s: the link to %s has no encryption key, so its mail cannot be sealed and would not arrive (yardr peer show %s lists the link)", from, peer, peer, peer)
-		}
-		wire, _ := e.Data["id"].(string)
-		queued := map[string]any{"seq": seq, "crew": name, "to": from, "peer": peer, "sent": "queued"}
-		if wire != "" {
-			// The store takes the sender, link and wire id from the event,
-			// so the reply names the mail it answers.
-			r, err := st.MailPeerReply(ctx, seq, body, name)
-			if err != nil {
-				return err
-			}
-			queued["id"], queued["re"], queued["receipt"] = r.ID, wire, r
-		} else {
-			// Mail written directly into another home never crossed the
-			// link and has no wire id there: answer it as new peer mail.
-			m, err := st.MailPeer(ctx, from, peer, body, name)
-			if err != nil {
-				return err
-			}
-			queued["id"] = m.ID
+		queued := map[string]any{"seq": seq, "crew": name, "to": r.To, "peer": r.Peer, "sent": "queued", "id": r.ID, "receipt": r}
+		if wire, _ := e.Data["id"].(string); wire != "" {
+			queued["re"] = wire
 		}
 		if err := a.ackAnsweredMail(ctx, st, name, seq); err != nil {
 			return err
 		}
 		return a.out(c.OutOrStdout(), queued, func(w io.Writer) {
-			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", from, peer, peer)
+			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", r.To, r.Peer, r.Peer)
 		})
 	}
 	if bead, _ := e.Data["from_bead"].(string); bead != "" {
