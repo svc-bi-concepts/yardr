@@ -515,9 +515,17 @@ prints them as `builders@Weekly<80,5h<90 else spare-builders`.
   is re-read every pass, about every 30 seconds, since load moves faster
   than any provider's windows.
 - **A group at its limit is waited for, not passed over.** So is one whose
-  runtime is down or that is held back for a model. Only a quota condition
-  sends a bead to a further group, and what the yard runs at once stays
-  bounded by the groups' limits. The bead gets one `group_wait` event,
+  runtime is down or that is held back for a model, and a bead the yard's
+  `max_sessions` holds. Only a quota condition sends a bead to a further
+  group, and what the yard runs at once stays bounded by the groups' limits.
+  The one exception is a peer group ([peers.md](peers.md)) after the full
+  group: a group at its limit, or a bead held by `max_sessions`, is passed
+  over toward that peer group alone, never toward a local group between the
+  two, since the peer takes the bead without a session here. A peer group
+  takes it once the bead has waited its `after` setting in the stage
+  (`yardr group set <name> after=15m`; unset: at once), and the peer's own
+  `--limit` still holds it. A route with no peer group after a full group
+  waits, as this rule says. The bead gets one `group_wait` event,
   logged once per stage and route until it starts, as `quota_wait` is:
   `route`, `groups` (each group with its `reason` in words: at its limit,
   its runtime down, or held back for the bead's model), `reason` (the same

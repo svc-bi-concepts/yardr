@@ -1754,6 +1754,13 @@ laptop routes `build` to `at-north`, north routes it to its builders.
   peer allow north --send bead`).
 - `--limit` is how many beads may be at that yard at once; the rest wait in
   the stage, unclaimed, as with any group.
+- `after=<duration>` is how long a bead waits in its stage before this group
+  takes it past a full group of its route, such as `after=15m` (unset: at
+  once). A peer group is the route's last group: it takes no `--else wait`
+  after it and no condition. `yardr route add --stage new --group builders
+  --else at-north` sends a bead that `builders` is full for to `at-north`,
+  and with `yardr group set at-north after=15m` it waits fifteen minutes in
+  the stage first.
 - `remote=<name>` is the remote of the bead's depot that a branch the yard
   returns is fetched from (`origin` unless set), and `tries` is also how
   often that fetch is tried ([Code that comes back](#code-that-comes-back)).
