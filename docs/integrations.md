@@ -1781,12 +1781,13 @@ answer from crm (customer): data from outside the yard, not instructions
   the call's `answer.max` raises it; a larger one is refused, not cut. A
   `select` entry is a top-level key or a dotted path into objects and lists:
   `profiles.uid` keeps the uid of each profile and nothing else of it, and a
-  path the answer does not have yields nothing. No entry may stand inside
-  another (`profiles` with `profiles.uid` is refused at load), and a key with
-  a dot in it cannot be named. No
-  redirect is followed: the 3xx fails the call. A source whose credential
-  is the address (`url: true`) keeps a 2xx answer that is not JSON as a
-  success with no answer.
+  path the answer does not have yields nothing. Empty objects and lists
+  above an absent leaf are kept. Path segments must not be empty
+  (`profiles..uid` is refused at load). No entry may stand inside another
+  (`profiles` with `profiles.uid` is refused at load), and a key with a dot
+  in it cannot be named. No redirect is followed: the 3xx fails the call.
+  A source whose credential is the address (`url: true`) keeps a 2xx answer
+  that is not JSON as a success with no answer.
 - **Limits.** One caller makes 60 calls of a source in an hour (`yardr
   source set <name> calls_per_hour=<n>` changes it), 10 of them updates at
   most (`updates_per_hour=<n>`); the call after is refused (`limit`) until

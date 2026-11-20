@@ -516,10 +516,9 @@ func (r *reader) body(c *Call, n *yaml.Node, key string, credential, address boo
 
 // selects reads answer.select: a list of top-level keys, or dotted paths into
 // the answer's objects and lists. A segment must not be empty, and a path
-// must not stand inside another (profiles with profiles.uid), since one
-// would keep the other's fields and the result would depend on the order of
-// the list. A key with a dot in it cannot be named; a select of a top-level
-// key with a dot never worked, and no source file has one.
+// must not stand inside another (profiles with profiles.uid), since the
+// parent already keeps every field named by the descendant. Dots separate
+// path segments, so a literal key containing a dot cannot be named.
 func (r *reader) selects(n *yaml.Node, key string) []string {
 	keys := r.strs(n, key)
 	if n.Kind != yaml.SequenceNode {
