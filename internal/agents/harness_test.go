@@ -660,6 +660,7 @@ func TestLoadRefuses(t *testing.T) {
 		"a hint not known":                    {"claude.yaml", "version: 1\nlabel: x\nhints: {idle: x}\n", "field idle not found"},
 		"marks, no input":                     {"claude.yaml", "version: 1\nlabel: x\nmarks: {message: '>'}\n", "without input"},
 		"marks, placeholder without input":    {"claude.yaml", "version: 1\nlabel: x\nmarks: {placeholder: 'ask'}\n", "without input"},
+		"marks, footer without input":         {"claude.yaml", "version: 1\nlabel: x\nmarks: {footer: '⏵⏵'}\n", "without input"},
 		"marks, hint colour without input":    {"claude.yaml", "version: 1\nlabel: x\nmarks: {placeholder_sgr: '38;2;1;2;3'}\n", "without input"},
 		"marks, hint colour no colour":        {"claude.yaml", "version: 1\nlabel: x\nmarks: {input: '>', placeholder_sgr: 'grey'}\n", `placeholder_sgr "grey"`},
 		"marks, hint colour too short":        {"claude.yaml", "version: 1\nlabel: x\nmarks: {input: '>', placeholder_sgr: '38;2;1;2'}\n", "want 38;2;r;g;b or 38;5;n"},

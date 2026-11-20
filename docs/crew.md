@@ -460,12 +460,16 @@ never restarts: the session hands off when its conversation allows, or not
 at all.
 
 - The input is what follows the pane's last line that begins with `❯`
-  (Claude Code) or `›` (Codex), down to the next empty line or rule. Kimi
-  Code's is in a box: what follows `>` after the box's left edge `│`, down
-  to the box's bottom, without the edges. A pane that does not show its own
-  kind's mark is read by the other two, and text after one holds a nudge
-  back all the same: the answer Kimi's menus mark with `❯` is not typed
-  after. A harness with none of them, and a pane herdr cannot read, are
+  (Claude Code) or `›` (Codex), down to the next empty line or rule. A
+  box-drawing run followed directly by the kind's `marks.footer` also ends
+  the input: a footer fused to the bottom rule is not a draft. Text above
+  that row still holds the nudge, and kinds with no footer mark read as
+  before. Kimi Code's is in a box: what follows `>` after the box's left
+  edge `│`, down to the box's bottom, without the edges. A pane that does
+  not show its own kind's mark is read by the other two, and text after
+  one holds a nudge back all the same: the answer Kimi's menus mark with
+  `❯` is not typed after. A harness with none of them, and a pane herdr
+  cannot read, are
   nudged as before. The marks of each kind are in the table under "A first
   prompt that gets lost" in [groups.md](groups.md).
 - A placeholder is not text. Claude Code and Codex draw theirs faint (`Try "fix
