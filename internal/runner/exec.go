@@ -71,8 +71,9 @@ import (
 // With config.nice the command, and everything it starts, runs at that
 // niceness (see underNice).
 type Exec struct {
-	Home string // state directory; bead worktrees default to <Home>/worktrees
-	Bin  string // this yardr's executable
+	Store store.API
+	Home  string // state directory; bead worktrees default to <Home>/worktrees
+	Bin   string // this yardr's executable
 	// Log, if set, gets the key names (never the values) an env_file loads.
 	Log *slog.Logger
 
@@ -110,6 +111,10 @@ func (e *Exec) Start(ctx context.Context, job dispatch.Job) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
+	sessionEnv, err := e.env(ctx, job, hookEnv)
+	if err != nil {
+		return nil, err
+	}
 	logPath, err := e.logPath(job)
 	if err != nil {
 		return nil, err
@@ -129,7 +134,7 @@ func (e *Exec) Start(ctx context.Context, job dispatch.Job) (map[string]any, err
 	// daemon's own, and are held to what the daemon's are: none of what
 	// withheld leaves out, and no key yardr sets itself (withEnvFile).
 	cmd.Env = slices.Concat(inherited(job),
-		withEnvFile(slices.Concat(Env(job, job.Group.Name), e.env(job, hookEnv)), withheld(job, secrets)))
+		withEnvFile(slices.Concat(Env(job, job.Group.Name), sessionEnv), withheld(job, secrets)))
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	// The command starts with nothing of the daemon's above stdio: os/exec
@@ -262,7 +267,7 @@ func withheld(job dispatch.Job, environ []string) []string {
 }
 
 // env is the exec-only part of the command's environment.
-func (e *Exec) env(job dispatch.Job, hookEnv []string) []string {
+func (e *Exec) env(ctx context.Context, job dispatch.Job, hookEnv []string) ([]string, error) {
 	var env []string
 	if e.Home != "" {
 		env = append(env, config.Env("HOME", e.Home)...)
@@ -297,21 +302,25 @@ func (e *Exec) env(job dispatch.Job, hookEnv []string) []string {
 		// A dir depot's bead has no branch, base or worktree: it is worked in
 		// the depot's directory itself.
 		return slices.Concat(env, config.Env("DEPOT", depot.Name), config.Env("DEPOT_PATH", depot.Path),
-			config.Env("DEPOT_KIND", depot.Kind))
+			config.Env("DEPOT_KIND", depot.Kind)), nil
 	}
 	env = append(env, config.Env("BRANCH", Branch(job.Bead))...)
 	if depot := job.Depot; depot != nil {
 		env = slices.Concat(env, config.Env("DEPOT", depot.Name), config.Env("DEPOT_PATH", depot.Path),
 			config.Env("DEPOT_KIND", store.DepotGit), config.Env("BASE", BaseOf(job)))
-		root := str(job.Group.Config, "worktrees", "")
-		if root == "" && e.Home != "" {
+		root := ""
+		if e.Home != "" {
 			root = config.At(e.Home).Worktrees()
 		}
-		if root != "" {
-			env = append(env, config.Env("WORKTREE", filepath.Join(root, depot.Name, job.Bead.ID))...)
+		path, err := worktreePath(ctx, e.Store, root, job, depot.Name)
+		if err != nil {
+			return nil, err
+		}
+		if path != "" {
+			env = append(env, config.Env("WORKTREE", path)...)
 		}
 	}
-	return env
+	return env, nil
 }
 
 // Alive reports whether the session's process still runs. A zombie is

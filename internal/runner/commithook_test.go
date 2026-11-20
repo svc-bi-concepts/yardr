@@ -928,7 +928,7 @@ func TestExecSessionCommitNamesExec(t *testing.T) {
 	hookEnv := testHookEnv(t, home)
 	var env []string
 	env = append(env, Env(job, job.Group.Name)...)
-	env = append(env, e.env(job, hookEnv)...)
+	env = append(env, execEnvT(t, e, job, hookEnv)...)
 	for _, want := range []string{"YARDR_KIND=exec", "YARDR_MODEL=omni", "GIT_CONFIG_COUNT=1", "YARDR_GIT_SYSTEM_CLEAN=1"} {
 		found := false
 		for _, kv := range env {
@@ -944,7 +944,7 @@ func TestExecSessionCommitNamesExec(t *testing.T) {
 		t.Fatalf("exec commit:\n%s", body)
 	}
 	job.Bead.Metadata = nil
-	env = append(Env(job, job.Group.Name), e.env(job, hookEnv)...)
+	env = append(Env(job, job.Group.Name), execEnvT(t, e, job, hookEnv)...)
 	sessionGitT(t, repo, env, "commit", "-q", "--allow-empty", "-m", "yd-7: again")
 	if body := sessionLog(t, repo, env); strings.Count(body, "Yardr-Agent: assembly (exec)") != 1 {
 		t.Fatalf("exec commit with no model:\n%s", body)

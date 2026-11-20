@@ -203,7 +203,7 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 	// First stage creates the worktree; later stages reopen it.
 	// Where the worktree is: its recorded path, else under the root (see
 	// worktreePath). A root that is not there refuses the session here.
-	path, err := h.worktreePath(ctx, job, depot.Name)
+	path, err := worktreePath(ctx, h.Store, h.WorktreeRoot, job, depot.Name)
 	if err != nil {
 		return nil, err
 	}
