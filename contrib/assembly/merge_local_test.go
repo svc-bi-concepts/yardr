@@ -1407,6 +1407,20 @@ func TestMergeLocalDeadlineCountsAGateSlotWait(t *testing.T) {
 			t.Fatalf("bead in %s, want merged: the wait was not credited:\n%s", b.Stage, y.notes())
 		}
 	})
+	for _, status := range []string{"2 ahead in line", "2 running"} {
+		t.Run("zero credit then admitted/"+status, func(t *testing.T) {
+			y := newYard(t)
+			y.tests(`echo "gate: waiting for a slot (` + status + `), 0 s"; sleep 5; echo "gate: running in slot 1 of 3, after 5 s"; sleep 1`)
+			y.opts = "YARDR_TEST_TIMEOUT=2"
+
+			y.assembly()
+
+			if b := y.bead(); b.Stage != "merged" {
+				t.Fatalf("bead in %s, want merged: the initial wait was not credited:\n%s", b.Stage, y.notes())
+			}
+		})
+	}
+
 	t.Run("still waiting at the deadline", func(t *testing.T) {
 		y := newYard(t)
 		y.tests(`echo "gate: waiting for a slot (2 ahead in line), 20 s"; sleep 5`)

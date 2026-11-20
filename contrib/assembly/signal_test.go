@@ -310,7 +310,7 @@ func TestMergeLocalTimeoutThrottleUsesDecimalLimit(t *testing.T) {
 	if start < 0 {
 		t.Fatal("merge-local has no throttle factor check")
 	}
-	end := strings.Index(script[start:], "      extra=$((waited - credited + extension - parred))")
+	end := strings.Index(script[start:], "      credited=$((credited + now - observed))")
 	if end < 0 {
 		t.Fatal("merge-local has no extension calculation")
 	}

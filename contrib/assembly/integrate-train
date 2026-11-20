@@ -517,10 +517,16 @@ runtest() {
     credited=0
     parred=0
     wait_for=$LIMIT
+    observed=$(date +%s)
     open_s=
     open_at=
     while :; do
-      sleep "$wait_for" &
+      nap_for=$wait_for
+      case "$nap_for" in
+        ''|*[!0-9]*) ;;
+        *) [ "$nap_for" -le 1 ] || nap_for=1 ;;
+      esac
+      sleep "$nap_for" &
       nap=$!
       echo "$nap" >"$napfile"
       wait "$nap"
@@ -538,7 +544,7 @@ runtest() {
       case "${2:--}" in
         -|*[!0-9]*) open_s= ;;
         *)
-          if [ "$2" != "$open_s" ]; then open_s=$2; open_at=$now; fi
+          if [ "$2" != "$open_s" ]; then open_s=$2; open_at=$observed; fi
           since=$((now - open_at))
           [ "$since" -le "$gap" ] || since=$gap
           waited=$((waited + open_s + since))
@@ -572,7 +578,8 @@ runtest() {
       esac
       extension=0
       [ "$fact" -gt 1 ] && extension=$(((fact - 1) * limitnum))
-      extra=$((waited - credited + extension - parred))
+      credited=$((credited + now - observed))
+      extra=$((limitnum + waited - credited + extension))
       if [ "$extra" -le 0 ]; then
         break
       fi
@@ -580,7 +587,7 @@ runtest() {
       if [ "$parred" -eq 0 ] && [ "$fact" -gt 1 ]; then
         echo "deadline $LIMIT s x $fact for -p=$par on $cores cores" >>"$log"
       fi
-      credited=$waited
+      observed=$now
       parred=$extension
       wait_for=$extra
     done
