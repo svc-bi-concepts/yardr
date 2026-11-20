@@ -48,7 +48,7 @@ yard if it differs.
    yardr bead ask <bead> "Add Slack to the yard?" --run "pack apply slack" --context "The yard hears the workspace's mentions and direct messages through it."
    ```
    The card shows the declaration whole, as the apply card renders every
-   field of it, the two scripts with their checksums among them.
+   field of it, the scripts with their checksums among them.
 3. **The bot token, on a secret card.**
    ```sh
    yardr bead ask <bead> "The Slack bot token" --secret slack --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
@@ -235,10 +235,11 @@ to the yardmaster and it answers from the yard:
 
 ```sh
 yardr source grant slack user --crew yardmaster
-yardr call slack user name=<part of a real or display name>
+yardr call slack user 'name=Ada Lovelace'
 ```
 
-It answers at most five members, each with `id`, `real_name`,
-`display_name` and `is_bot`. The directory is paged inside the program and
-never printed whole, and no profile email, phone or picture leaves it. Nothing
-it reads is stored: an id and a name are read for the mention and dropped.
+It matches a substring of the real or display name, ignoring ASCII case,
+and skips deactivated accounts. It answers at most five members in directory
+order, each with `id`, `real_name`, `display_name` and `is_bot`. The directory
+is paged inside the program and never printed whole, and no profile email,
+phone or picture leaves it. The lookup itself stores no directory data.

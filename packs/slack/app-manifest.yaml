@@ -16,7 +16,7 @@
 # conversations.list names the channels it is not in, channels:join so
 # conversations.join puts it in a public one, and users:read so the user
 # call finds a member's id for a mention (users.list; no users:read.email,
-# since no profile email is read). The bot hears a channel,
+# since lookup matches names only). The bot hears a channel,
 # group or group direct message it is in through message.channels,
 # message.groups and message.mpim, subscribed in SETUP.md step 6, so those
 # three histories read back what it stored.
