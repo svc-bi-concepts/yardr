@@ -35,6 +35,12 @@ jobs:
     # to 14 minutes on a runner's four cores, and its 30 minutes are about
     # twice the longest of those.
     timeout-minutes: 30
+    # The race leg (go test -race, in .yardr/test's landing run) needs cgo:
+    # the race detector is a C library, and a Go with cgo off refuses -race
+    # outright ("go: -race requires cgo"). The runner's Go defaults to off,
+    # so the gate sets it here, for every step of the job.
+    env:
+      CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # go-version-file pins the toolchain go.mod names; cache keeps the
@@ -43,6 +49,30 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # cgo needs a C compiler. The runner's own cc is used when it has one.
+      # Otherwise a pinned zig, a C compiler in one tarball, is fetched into
+      # RUNNER_TEMP the way the shellcheck step below fetches its release: no
+      # apt, no sudo, and the sha256 ziglang.org publishes for that tarball is
+      # checked before it runs. CC is then set for the rest of the job,
+      # targeting linux/amd64 glibc, the same target the gate builds for.
+      - name: C compiler (cgo for the race leg)
+        run: |
+          set -eu
+          if cc_path=$(command -v cc); then
+            echo "cc: $cc_path (the runner's)"
+            "$cc_path" --version | head -1
+            exit 0
+          fi
+          echo "no cc on the runner: fetching pinned zig 0.16.0 for cgo"
+          dir="$RUNNER_TEMP/zig"
+          mkdir -p "$dir"
+          curl -sSfL -o "$dir/zig.tar.xz" \
+            "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  $dir/zig.tar.xz" | sha256sum -c -
+          tar -xJf "$dir/zig.tar.xz" -C "$dir"
+          echo "$dir/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+          echo "CC=zig cc -target x86_64-linux-gnu" >> "$GITHUB_ENV"
+          "$dir/zig-x86_64-linux-0.16.0/zig" version
       - name: gofmt
         run: |
           out=$(gofmt -l .)
