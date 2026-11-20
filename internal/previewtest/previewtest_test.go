@@ -200,8 +200,9 @@ func TestFreePortSkipsAPortAWildcardListenerHolds(t *testing.T) {
 			wide.Close()
 			// Sixty-four ports around the held one: refused only if every one of them is
 			// held, so a single port another process takes in the gap does not fail it.
-			// The window starts below the held port, so it stays in the port range.
-			from := held - 32
+			// The window is clamped to end by port 65535: the kernel's range reaches it,
+			// and a draw past it is a bind error, not a held port.
+			from := min(held-32, 65535-64)
 			if got, err := pickPort(tc.host, from, 64); err != nil || got < from || got >= from+64 {
 				t.Errorf("pickPort(%s, %d, 64) = %d, %v once the listener is gone, want a port from %d up to %d", tc.host, from, got, err, from, from+64)
 			}
