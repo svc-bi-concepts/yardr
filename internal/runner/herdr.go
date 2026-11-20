@@ -218,18 +218,30 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 		createErr := err
 		raw, err = h.run(ctx, "worktree", "open", "--cwd", depot.Path, "--branch", branch, "--label", label)
 		if err != nil && root != "" {
-			// The branch exists but its worktree was cleaned up (a reopened
-			// bead): check the branch out again and open that.
+			// A branch lookup can miss a detached worktree or one cleaned up
+			// after the bead closed; recover it before opening by path.
 			path := filepath.Join(root, depot.Name, job.Bead.ID)
-			// The worktree of a bead that tracks a pull request is on no
-			// branch (see pullHead), so herdr does not find it by one: where
-			// it still is, it is opened by its path as it stands.
-			if _, serr := os.Stat(path); job.Pull == nil || serr != nil {
-				if gerr := git(ctx, depot.Path, "worktree", "add", path, branch); gerr != nil {
-					return nil, fmt.Errorf("worktree for %s: create: %v; open: %v; re-add: %w", branch, createErr, err, gerr)
+			if job.Pull == nil {
+				recovered, recoverErr := recoverDetachedWorktree(ctx, depot.Path, path, branch)
+				if recoverErr != nil {
+					return nil, fmt.Errorf("worktree for %s: create: %v; open: %v; recover: %w", branch, createErr, err, recoverErr)
+				}
+				if recovered {
+					raw, err = h.run(ctx, "worktree", "open", "--cwd", depot.Path, "--path", path, "--label", label)
 				}
 			}
-			raw, err = h.run(ctx, "worktree", "open", "--cwd", depot.Path, "--path", path, "--label", label)
+			if err != nil {
+				if _, serr := os.Stat(path); job.Pull == nil || serr != nil {
+					if job.Pull == nil && serr == nil {
+						return nil, fmt.Errorf("worktree for %s: create: %v; open: %v; recover: path exists but is not a reusable detached worktree", branch, createErr, err)
+					}
+					if gerr := git(ctx, depot.Path, "worktree", "add", path, branch); gerr != nil {
+						return nil, fmt.Errorf("worktree for %s: create: %v; open: %v; re-add: %w", branch, createErr, err, gerr)
+					}
+				}
+				// Pull request worktrees stay detached and reopen by path.
+				raw, err = h.run(ctx, "worktree", "open", "--cwd", depot.Path, "--path", path, "--label", label)
+			}
 		}
 		if err != nil {
 			return nil, fmt.Errorf("worktree for %s: create: %v; open: %w", branch, createErr, err)
