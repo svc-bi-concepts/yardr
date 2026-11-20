@@ -169,9 +169,12 @@ func TestFreePortIsPickedBelowTheKernelsOwnRange(t *testing.T) {
 // the port for a preview fails with "port already in use". A listener of one
 // family answers on that family's loopback address alone, and a host of the
 // other family binds beside it too, so the draw dials both. The range is the
-// held port and nothing else, which makes the held port the only draw there is;
-// once the listener is gone the same range gives the port, so it is the held
-// port that is refused and not every port.
+// held port and nothing else, which makes the held port the only draw there is,
+// so the refusal is the listener's. Once the listener is gone a draw over the
+// ports from the held one up gives a port: it is not held to the held port
+// itself, which the kernel's own range hands out, so another process may bind it
+// in the gap after the close (the land gate's macOS run saw exactly that), and a
+// range of one would then find nothing.
 func TestFreePortSkipsAPortAWildcardListenerHolds(t *testing.T) {
 	for _, tc := range []struct{ name, network, addr, host string }{
 		{"dual-stack", "tcp", ":0", "127.0.0.1"},
@@ -195,8 +198,12 @@ func TestFreePortSkipsAPortAWildcardListenerHolds(t *testing.T) {
 				t.Skipf("%s is unavailable: %v", tc.host, err)
 			}
 			wide.Close()
-			if got, err := pickPort(tc.host, held, 1); err != nil || got != held {
-				t.Errorf("pickPort(%s, %d, 1) = %d, %v once the listener is gone, want the port", tc.host, held, got, err)
+			// Sixty-four ports around the held one: refused only if every one of them is
+			// held, so a single port another process takes in the gap does not fail it.
+			// The window starts below the held port, so it stays in the port range.
+			from := held - 32
+			if got, err := pickPort(tc.host, from, 64); err != nil || got < from || got >= from+64 {
+				t.Errorf("pickPort(%s, %d, 64) = %d, %v once the listener is gone, want a port from %d up to %d", tc.host, from, got, err, from, from+64)
 			}
 		})
 	}
