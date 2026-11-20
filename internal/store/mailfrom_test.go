@@ -59,3 +59,21 @@ func TestMailFromPeerRejectsLocalAgents(t *testing.T) {
 		})
 	}
 }
+
+func TestMailFromPeerRefusesUnmailableSender(t *testing.T) {
+	t.Parallel()
+	for _, from := range []string{"x@y", "two words", "", "-dash"} {
+		t.Run(from, func(t *testing.T) {
+			api, own := replyYard(t)
+			ctx := context.Background()
+			key := linkNorth(t, api)
+			if err := own.MailFromPeer(ctx, "ada", "hello", from, key); err == nil {
+				t.Fatalf("mail from %q was recorded", from)
+			}
+			box, err := own.UserInbox(ctx, "ada", 0, "ada")
+			if err != nil || len(box.Mail) != 0 {
+				t.Fatalf("inbox after refused mail = %+v, %v", box, err)
+			}
+		})
+	}
+}

@@ -18,6 +18,9 @@ func (s *Store) MailFromPeer(ctx context.Context, to, text, from, peerKey string
 	if strings.TrimSpace(text) == "" && len(files) == 0 || len(text) > MaxMailBytes {
 		return fmt.Errorf("mail must be 1..%d bytes", MaxMailBytes)
 	}
+	if !peerMailName.MatchString(from) {
+		return fmt.Errorf("mail from %q: not a name a yard's mail can carry", from)
+	}
 	refs, err := s.mailFiles(files)
 	if err != nil {
 		return fmt.Errorf("mail to %s: %w", to, err)
