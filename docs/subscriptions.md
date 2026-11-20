@@ -455,9 +455,11 @@ in.
 `move_refused`: a move (`yardr bead done`, `advance`, `close`, `hold`,
 `release`) the yard refused to a session's agent, which may sit idle as if
 it had worked. Its `reason` is `stale`, `not_allowed`, `not_member`,
-`not_found` or `other`, `command` is what the agent ran and `error` what it
-was told ([line.md](line.md#2-new-a-builder-implements-it)). Once
-per bead, session and reason; a person's refused command logs none.
+`not_found`, `unread` or `other`, `command` is what the agent ran and `error` what it
+was told ([line.md](line.md#2-new-a-builder-implements-it)). A
+refusal that repeats the session's newest since the bead last moved logs
+none, nor does a person's refused command; an `unread` one of another
+outcome or note is logged, since its ack re-runs the newest done.
 
 `session_prompt_gave_up`: a session whose agent never took its first prompt
 ([groups.md](groups.md#herdr-setup)). Its `hint` is the command that

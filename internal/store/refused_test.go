@@ -24,7 +24,7 @@ func refusals(t *testing.T, s store.API, id string) []store.Event {
 }
 
 // A move the yard refuses to the agent of a session leaves move_refused on
-// the bead, once per session and reason: an agent whose done did not take
+// the bead, once while its session repeats it: an agent whose done did not take
 // sits idle as if it had, and nothing else on the bead says it tried. A
 // move that worked, and a refused one by someone in no session, leave none.
 func TestRefusedMoveOfASessionsAgentIsLogged(t *testing.T) {

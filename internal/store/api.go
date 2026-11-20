@@ -19,6 +19,7 @@ type API interface {
 	Advance(ctx context.Context, id, stage string, exp Expect, actor string) (*Bead, error)
 	AdvanceNote(ctx context.Context, id, stage, note string, exp Expect, actor string) (*Bead, error)
 	Done(ctx context.Context, id, outcome, note string, exp Expect, actor string) (*Bead, error)
+	RetryRefusedDone(ctx context.Context, id, session, actor string) (*RetriedMove, error)
 	CloseBead(ctx context.Context, id, reason string, exp Expect, actor string) (*Bead, error)
 	Reopen(ctx context.Context, id string, exp Expect, actor string) (*Bead, error)
 	SetHold(ctx context.Context, id string, hold bool, exp Expect, actor string) (*Bead, error)

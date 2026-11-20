@@ -19,6 +19,7 @@ const (
 	RefusedNotAllowed = "not_allowed" // the bead's flow has no such move or outcome
 	RefusedNotMember  = "not_member"  // the stage's group has members, and the agent is none
 	RefusedNotFound   = "not_found"   // no such bead: logged on the session's own
+	RefusedUnread     = "unread"      // a note the session was told of is not acked yet (checkUnread)
 	RefusedOther      = "other"
 )
 
@@ -62,10 +63,19 @@ func refusedWhy(err error) string {
 // is a person's claim: their refused commands log nothing, they read the
 // error themselves.
 //
-// At most one per bead, session and reason, so an agent that retries the
-// same refused command says it once. The event is on the bead the move
+// A refusal the session's newest since the bead last advanced already says
+// logs nothing, so an agent that retries the same refused command says it
+// once; an unread refusal of another outcome or note is a new one, as the
+// retry its ack makes runs the newest done. The event is on the bead the move
 // named, or on the session's own when there is no such bead.
 func (s *Store) refused(ctx context.Context, id, command string, exp Expect, actor string, cause error) error {
+	return s.refusedWith(ctx, id, command, exp, actor, cause, nil)
+}
+
+// refusedWith is refused with extra data for the event. Only the unread
+// refusal keeps it: the retry that its ack makes (see RetryRefusedDone)
+// reads what the done was, and no other refusal needs a done's note kept.
+func (s *Store) refusedWith(ctx context.Context, id, command string, exp Expect, actor string, cause error, extra map[string]any) error {
 	if cause == nil || callerOf(ctx) <= 0 && exp.Session == "" {
 		return cause
 	}
@@ -87,20 +97,41 @@ func (s *Store) refused(ctx context.Context, id, command string, exp Expect, act
 		if err != nil {
 			bead = sess.Bead
 		}
-		for _, k := range keys(w.Tx, bEventsBy, bead+"\x00") {
+		ks := keys(w.Tx, bEventsBy, bead+"\x00")
+	newest:
+		for i := len(ks) - 1; i >= 0; i-- {
 			var e Event
-			if _, err := get(w.Tx, bEvents, k[len(bead)+1:], &e); err != nil {
+			if _, err := get(w.Tx, bEvents, ks[i][len(bead)+1:], &e); err != nil {
 				return err
 			}
-			if e.Kind == MoveRefused && e.Data["session"] == sess.ID && e.Data["reason"] == reason {
-				return nil
+			if e.Kind == "advanced" {
+				break
 			}
+			if e.Kind != MoveRefused || e.Data["session"] != sess.ID {
+				continue
+			}
+			if e.Data["reason"] != reason {
+				break
+			}
+			if reason == RefusedUnread {
+				for k, v := range extra {
+					if e.Data[k] != v {
+						break newest
+					}
+				}
+			}
+			return nil
 		}
 		agent, _ := sess.Handle["agent"].(string)
 		data := map[string]any{"session": sess.ID, "agent": or(agent, actor), "group": sess.Group, "stage": sess.Stage,
 			"command": command, "reason": reason, "error": cause.Error(),
 			"hint": "the agent ran this command and the yard refused it, so the bead did not move for it; " +
 				"an agent that took it for done sits idle. error says why"}
+		if reason == RefusedUnread {
+			for k, v := range extra {
+				data[k] = v
+			}
+		}
 		if bead != sess.Bead {
 			data["session_bead"] = handlesIn(w.Tx).of(sess.Bead)
 		}
