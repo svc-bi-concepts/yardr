@@ -158,7 +158,7 @@ at=$(git -C "$REPO" rev-parse --short "$sha")
 # merge-local's check without its type: a child of any type lands on the
 # train's branch. That branch is unreviewed and untested as a whole, so it
 # is not published; the train's own run has no YARDR_TRAIN and deploys.
-if [ -n "$TRAIN" ] && [ "$BASE" = "yard/$TRAIN" ]; then
+if [ -n "$TRAIN" ] && [ "$BASE" = "${YARDR_TRAIN_BRANCH:-yard/$TRAIN}" ]; then
   live "not deployed: landed on train $TRAIN's branch $BASE (at $at), not on the depot's base. The train deploys when it lands."
 fi
 

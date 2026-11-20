@@ -275,6 +275,23 @@ internal counts as private. A dir depot is not checked, and neither is a
 depot GitHub does not answer for, such as one with no GitHub remote or on a
 machine without `gh`.
 
+A public depot's history and branches are public, so they name no yard id.
+Its beads change in three ways, and a private depot is unchanged:
+
+- The yard's commit-msg hook writes neither `Yardr-Bead:` nor `Yardr-Agent:`
+  trailers. A harness's own trailers are still dropped, as everywhere.
+- A bead made in the depot records its branch: `fix/<slug>` for a bug and
+  `feat/<slug>` for anything else, the slug being its title's words in lower
+  case. A title already taken gets `-2`, `-3` and so on. The name is recorded
+  once, at creation, so a later title edit leaves it. A bead made before the
+  depot became public keeps `yard/<id>`: renaming existing branches is not
+  done.
+- Whatever finds a bead from its branch reads the recorded name, never
+  parses it: the runner's `YARDR_BRANCH`, a peer's send and return of the
+  branch, and the train a webhook's head branch belongs to. The peer push
+  sends the recorded name too. `YARDR_TRAIN_BRANCH` is a train's recorded
+  branch, which the landing scripts compare a wagon's base with.
+
 ## Depot kinds: git and dir
 
 A depot is one of two kinds, shown by `yardr depot show` and `depot list`:

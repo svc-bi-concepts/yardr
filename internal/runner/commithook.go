@@ -14,6 +14,7 @@ import (
 
 	"yardr.dev/yardr/internal/config"
 	"yardr.dev/yardr/internal/dispatch"
+	"yardr.dev/yardr/internal/store"
 )
 
 // repoHooksFind is the shell both hooks share for finding the repo's own
@@ -244,6 +245,15 @@ fi
 bead=${YARDR_BEAD:-}
 [ -n "$bead" ] || exit 0
 
+# A public depot's history names no yard id: its commits carry neither of the
+# yard's two trailers, though the harness trailers below still go. The value
+# comes from the session's environment (see depotVisibilityEnv), so anything
+# but public keeps the trailers as they were.
+yard_trailers=1
+if [ "${YARDR_DEPOT_VISIBILITY:-}" = public ]; then
+	yard_trailers=
+fi
+
 # Trailer values are single lines; a newline in one would forge trailers.
 bead=$(printf '%s' "$bead" | tr -d '\n\r')
 group=$(printf '%s' "${YARDR_GROUP:-}" | tr -d '\n\r')
@@ -278,6 +288,8 @@ trailer_git() {
 n=$(grep -ciE '^(co-authored-by|signed-off-by|yardr-bead|yardr-agent)[[:space:]:]' "$msg" 2>/dev/null || true)
 [ -n "$n" ] || n=1
 if [ "$n" -eq 0 ]; then
+	# Nothing to strip, and nothing to add where the yard's trailers stay out.
+	[ -n "$yard_trailers" ] || exit 0
 	trailer_git interpret-trailers --if-exists replace --trailer "Yardr-Bead: $bead" --trailer "Yardr-Agent: $agent" --in-place "$msg"
 else
 	# One parse counts every kind; a parse per kind would quadruple the
@@ -303,6 +315,15 @@ else
 	drop_excess 'Signed-off-by' "$n_so"
 	drop_excess 'Yardr-Bead' "$n_bb"
 	drop_excess 'Yardr-Agent' "$n_ba"
+	# Where the yard's trailers stay out, their values are empty: replacing
+	# each with nothing and trimming the empty one leaves no Yardr trailer of
+	# either kind, the drops above or none.
+	yard_bead="Yardr-Bead: $bead"
+	yard_agent="Yardr-Agent: $agent"
+	if [ -z "$yard_trailers" ]; then
+		yard_bead="Yardr-Bead:"
+		yard_agent="Yardr-Agent:"
+	fi
 	add_trailers() {
 		set --
 		[ "$n_co" -gt 0 ] && set -- "$@" --trailer "Co-Authored-By:"
@@ -311,10 +332,10 @@ else
 		[ "$n_ba" -gt 0 ] && set -- "$@" --trailer "Yardr-Agent:"
 		if [ $# -gt 0 ]; then
 			trailer_git interpret-trailers --trim-empty --if-exists replace "$@" \
-				--trailer "Yardr-Bead: $bead" --trailer "Yardr-Agent: $agent" --in-place "$msg"
+				--trailer "$yard_bead" --trailer "$yard_agent" --in-place "$msg"
 		else
-			trailer_git interpret-trailers --if-exists replace \
-				--trailer "Yardr-Bead: $bead" --trailer "Yardr-Agent: $agent" --in-place "$msg"
+			trailer_git interpret-trailers --trim-empty --if-exists replace \
+				--trailer "$yard_bead" --trailer "$yard_agent" --in-place "$msg"
 		fi
 	}
 	add_trailers
@@ -667,4 +688,17 @@ func commitHookEnv(home string) ([]string, error) {
 		env = append(env, config.Env("GIT_SYSTEM_CLEAN", "0")...)
 	}
 	return env, nil
+}
+
+// depotVisibilityEnv tells the commit-msg hook whether the session's depot is
+// public, so a public depot's commits carry neither of the yard's trailers
+// (see commitHookTail). It is always set, public or private, as the hook's
+// other inputs are, so an inherited value cannot read as the session's. A
+// depot-less session, or a dir depot, is private.
+func depotVisibilityEnv(job dispatch.Job) []string {
+	visibility := store.DepotPrivate
+	if job.Depot != nil && job.Depot.Visibility == store.DepotPublic {
+		visibility = store.DepotPublic
+	}
+	return config.Env("DEPOT_VISIBILITY", visibility)
 }

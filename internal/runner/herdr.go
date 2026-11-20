@@ -694,7 +694,7 @@ func (h *Herdr) pullHead(ctx context.Context, path string, n int) (string, error
 // logged on the train. An existing train branch is never recreated or moved:
 // it holds the children that already landed.
 func (h *Herdr) trainBranch(ctx context.Context, job dispatch.Job) error {
-	depot, train := job.Depot, store.Branch(job.Train)
+	depot, train := job.Depot, job.Base // a child's Base is its train's recorded branch
 	if _, err := gitOut(ctx, depot.Path, "rev-parse", "--verify", "-q", "refs/heads/"+train); err == nil {
 		return nil
 	}
@@ -749,7 +749,7 @@ func (h *Herdr) agentEnvWithHook(job dispatch.Job, name string, hookEnv []string
 	}
 	// The yard's commit-msg hook, through the environment, so the depot's
 	// shared .git/config is never written (see commitHookEnv).
-	env = append(env, hookEnv...)
+	env = slices.Concat(env, hookEnv, depotVisibilityEnv(job))
 	if h.YardBin != "" {
 		env = append(env, config.Env("BIN", h.YardBin)...)
 	}

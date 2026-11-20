@@ -277,9 +277,17 @@ func (e *Exec) env(job dispatch.Job, hookEnv []string) []string {
 	// .git/config is never written.
 	env = slices.Concat(env, config.Env("KIND", "exec"), config.Env("MODEL", sessionModel(job)))
 	env = append(env, hookEnv...)
+	env = slices.Concat(env, depotVisibilityEnv(job))
 	// Always set, empty for a bead with no train, so that one the daemon was
 	// itself started with cannot read as this bead's.
-	env = slices.Concat(env, config.Env("TYPE", job.Bead.Type), config.Env("TRAIN", job.Train))
+	// The train's branch, as the train records it (job.Base of a child), for
+	// the scripts that tell a wagon lands on its train's branch. Empty
+	// without a train, as TRAIN is.
+	trainBranch := ""
+	if job.Train != "" {
+		trainBranch = job.Base
+	}
+	env = slices.Concat(env, config.Env("TYPE", job.Bead.Type), config.Env("TRAIN", job.Train), config.Env("TRAIN_BRANCH", trainBranch))
 	// Unset, not empty, for a depot with none: a script asks whether there
 	// is one with ${YARDR_TEST+x} or -n alike.
 	if depot := job.Depot; depot != nil && depot.Test != "" {

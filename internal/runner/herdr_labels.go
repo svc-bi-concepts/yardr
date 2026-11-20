@@ -13,7 +13,7 @@ import (
 var nameUnsafe = regexp.MustCompile(`[^a-z0-9_-]+`)
 
 // Branch is the git branch a bead is worked on (see store.Branch).
-func Branch(b store.Bead) string { return store.Branch(b.ID) }
+func Branch(b store.Bead) string { return store.BranchOfBead(b) }
 
 // BaseOf is what the job's bead branches from and lands on: its train's
 // branch for a child of a train, the commit a linked yard named for a bead

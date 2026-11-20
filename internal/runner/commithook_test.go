@@ -2406,3 +2406,53 @@ func TestCommitHookEnvVouchesSystem(t *testing.T) {
 		t.Errorf("hook env has %d of %q, want 1: %v", n, want, env)
 	}
 }
+
+// A public depot's commits name no yard id: neither of the yard's trailers
+// goes on, one an older message carried comes off, and the harness trailers
+// still do. A message with no trailer is left as written. A private depot
+// keeps both of the yard's trailers, as it always has.
+func TestSessionCommitPublicDepotNamesNoYardID(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, visibility string
+		yardIDs          bool
+	}{
+		{"public", store.DepotPublic, false},
+		{"private", store.DepotPrivate, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := sessionRepo(t)
+			job := sessionJob("web-3", "builders", "claude", "opus")
+			job.Depot = &store.Depot{Name: "web", Visibility: tc.visibility}
+			env := sessionTestEnv(t, t.TempDir(), job, "web-3-new")
+
+			sessionGitT(t, repo, env, "commit", "-q", "--allow-empty", "-m",
+				"web-3: name no id\n\nA body naming no trailers.\n\n"+
+					"Co-Authored-By: Claude <c@example.com>\n"+
+					"Yardr-Bead: old-bead\nYardr-Agent: old-agent\n")
+			body := sessionLog(t, repo, env)
+			if strings.Contains(strings.ToLower(body), "co-authored-by") {
+				t.Errorf("harness trailer survived:\n%s", body)
+			}
+			if tc.yardIDs {
+				for _, want := range []string{"Yardr-Bead: web-3", "Yardr-Agent: builders (claude opus)"} {
+					if n := strings.Count(body, want); n != 1 {
+						t.Errorf("%q %d times, want once:\n%s", want, n, body)
+					}
+				}
+				if strings.Contains(body, "old-bead") || strings.Contains(body, "old-agent") {
+					t.Errorf("an older yard trailer survived:\n%s", body)
+				}
+			} else if strings.Contains(body, "Yardr-") {
+				t.Errorf("a public commit names a yard id:\n%s", body)
+			}
+
+			plain := "web-3: plain\n\nA body.\n"
+			sessionGitT(t, repo, env, "commit", "-q", "--allow-empty", "-m", plain)
+			if got := sessionLog(t, repo, env); tc.yardIDs == (strings.TrimSpace(got) == strings.TrimSpace(plain)) {
+				t.Errorf("message without trailers, yard ids %v, got:\n%s", tc.yardIDs, got)
+			}
+		})
+	}
+}
