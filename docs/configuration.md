@@ -266,7 +266,8 @@ a script or a hook reads.
 
 While the daemon runs, yardr checks each git depot's visibility once per
 UTC day against its GitHub repository's, with one `gh repo view` in the
-depot's checkout. The daily attempt is kept in memory, so restarting the
+depot's checkout, and the whole check stops after a minute: a depot it did
+not reach is asked on the next pass. The daily attempt is kept in memory, so restarting the
 daemon checks again that day. A depot that differs from GitHub is reported
 to the yardmaster's inbox with the depot's name, its recorded visibility
 and GitHub's. The check never changes the value; a repository GitHub calls
