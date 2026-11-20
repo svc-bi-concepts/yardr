@@ -938,12 +938,30 @@ func TestDownLeavesTheProcessesOfOtherYards(t *testing.T) {
 func TestLoginShellFindsNothingOfTheMachine(t *testing.T) {
 	d := bare(t)
 	want := d + "/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-	if got := strings.TrimSpace(in(t, d, "/bin/sh", "-l", "-c", "echo $PATH")); got != want {
+	if got := loginValue(t, d, "$PATH"); got != want {
 		t.Fatalf("the login shell's PATH is %s, want %s", got, want)
 	}
-	if got := strings.TrimSpace(in(t, d, "/bin/sh", "-l", "-c", "command -v herdr || echo none")); got != "none" {
+	if got := loginValue(t, d, "$(command -v herdr || echo none)"); got != "none" {
 		t.Fatalf("the login shell of a bare yard finds herdr: %s", got)
 	}
+}
+
+// loginValue returns what the yard's login shell prints for expr. The shell's
+// profile may print before it: on a machine whose LANG the wrapper sets to a
+// locale the machine lacks, bash's locale warning comes first, and that is no
+// part of the value. So the value is read from the line that holds the marker,
+// and a run with no such line fails with its whole output, the warning too.
+func loginValue(t *testing.T, d, expr string) string {
+	t.Helper()
+	const marker = "yardr-login "
+	out := in(t, d, "/bin/sh", "-l", "-c", `echo "`+marker+expr+`"`)
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, marker); i >= 0 {
+			return strings.TrimSpace(line[i+len(marker):])
+		}
+	}
+	t.Fatalf("the login shell printed no line with %q: %s", marker, out)
+	return ""
 }
 
 // TestWrapperEnvironment pins what D/e passes through from the environment
