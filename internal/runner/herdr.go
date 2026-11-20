@@ -694,7 +694,7 @@ func (h *Herdr) pullHead(ctx context.Context, path string, n int) (string, error
 // logged on the train. An existing train branch is never recreated or moved:
 // it holds the children that already landed.
 func (h *Herdr) trainBranch(ctx context.Context, job dispatch.Job) error {
-	depot, train := job.Depot, job.Base // a child's Base is its train's recorded branch
+	depot, train := job.Depot, trainBranchOf(job)
 	if _, err := gitOut(ctx, depot.Path, "rev-parse", "--verify", "-q", "refs/heads/"+train); err == nil {
 		return nil
 	}

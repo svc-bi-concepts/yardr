@@ -334,8 +334,13 @@ else
 			trailer_git interpret-trailers --trim-empty --if-exists replace "$@" \
 				--trailer "$yard_bead" --trailer "$yard_agent" --in-place "$msg"
 		else
-			trailer_git interpret-trailers --trim-empty --if-exists replace \
-				--trailer "$yard_bead" --trailer "$yard_agent" --in-place "$msg"
+			if [ -n "$yard_trailers" ]; then
+				trailer_git interpret-trailers --if-exists replace \
+					--trailer "$yard_bead" --trailer "$yard_agent" --in-place "$msg"
+			else
+				trailer_git interpret-trailers --trim-empty --if-exists replace \
+					--trailer "$yard_bead" --trailer "$yard_agent" --in-place "$msg"
+			fi
 		fi
 	}
 	add_trailers
