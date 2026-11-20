@@ -1,0 +1,189 @@
+name: internal
+
+# An internal build of yardr from a commit on main: the linux/amd64 binary the
+# BI Concepts VMs run and the darwin/arm64 one the mini runs, built with the
+# flags a release build uses (the release line and a git-describe version
+# stamp), and published on this repository's releases as a prerelease named
+# internal-<short sha>, with SHA256SUMS beside them. Nothing here is signed.
+# The mini signs its darwin binary at install and pins the signed sha, so the
+# darwin sha here is the download's check and never the pin.
+#
+# It runs on the private mirror svc-bi-concepts/yardr-ci, not on the public
+# repository, which keeps Actions off (ADR 0011). A commit is built only if it
+# is an ancestor of the public repository's main, fetched from there: the
+# mirror has no branch protection, so that check is the control. hetzner/*
+# branches are not built: they are not reviewed and merged.
+#
+# Every uses: below is pinned by full commit SHA, with the release it is
+# as a comment; a tag that moves would run code no review saw.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: internal-${{ github.ref }}
+  # A build is not cancelled by the push after it: each commit on main is a
+  # build the VMs may need, so the next push waits for it, as mirror.yml's
+  # main run does.
+  cancel-in-progress: false
+
+jobs:
+  # Read-only: decides whether this commit is built at all. A commit that is
+  # not on the public main fails here, before any build runs. A commit that
+  # already has its release is not built again.
+  plan:
+    if: github.repository == 'svc-bi-concepts/yardr-ci'
+    runs-on: [self-hosted, hetzner]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      released: ${{ steps.plan.outputs.released }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ancestor of the public main
+        run: |
+          git fetch --no-tags --quiet https://github.com/svc-bi-concepts/yardr.git \
+            '+refs/heads/main:refs/remotes/public/main'
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/public/main; then
+            echo "$GITHUB_SHA is not an ancestor of svc-bi-concepts/yardr main; not built" >&2
+            exit 1
+          fi
+      - name: tag and whether it is released
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="internal-$(cut -c1-8 <<<"$GITHUB_SHA")"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "released=true" >>"$GITHUB_OUTPUT"
+            echo "$tag is already released; not built again"
+          else
+            echo "released=false" >>"$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.released != 'true'
+    runs-on: [self-hosted, hetzner]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # fetch-depth 0 brings the history the version is described from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # The tags are the public repository's: the version is the one a
+      # release names, and the mirror's own tags are not the source of it.
+      - name: public release tags
+        run: |
+          git fetch --force --no-tags --quiet https://github.com/svc-bi-concepts/yardr.git \
+            'refs/tags/v*:refs/tags/v*'
+      # The Go of go.mod, pinned by the sha256 go.dev publishes for it, and
+      # not one the runner has. The runner has no sudo and no apt, so it is
+      # unpacked into the runner's temp directory. GOTOOLCHAIN=local (below)
+      # keeps the go command from fetching another one of its own.
+      - name: go 1.27.4 (pinned, sha256 checked)
+        run: |
+          set -eu
+          rm -rf "${RUNNER_TEMP:?}/go"
+          mkdir -p "$RUNNER_TEMP/go"
+          curl -sSfL -o "$RUNNER_TEMP/go/go.tar.gz" https://go.dev/dl/go1.27.4.linux-amd64.tar.gz
+          echo "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840  $RUNNER_TEMP/go/go.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/go/go.tar.gz" -C "$RUNNER_TEMP/go"
+          echo "$RUNNER_TEMP/go/go/bin" >>"$GITHUB_PATH"
+      # git describe names the nearest tag and the commits past it, as a
+      # release does (v0.17.0-79-g93065c23). No --always: with no tag to
+      # describe from, the build stops here rather than stamp a bare sha.
+      - name: version
+        run: |
+          version=$(git describe --tags --match 'v[0-9]*')
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+      # The flags are the ones a release build uses (contrib/release/build's
+      # go build line): CGO_ENABLED=0 so each binary is static and needs no C
+      # toolchain for its target, -trimpath to keep the runner's paths out,
+      # and -s -w with the release line stamped in. Both targets are
+      # cross-compiled from linux, so no macOS runner is needed.
+      - name: build the binaries
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          go version | grep -q '^go version go1.27.4 linux/amd64$'
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X yardr.dev/yardr/internal/version.tag=$VERSION" \
+            -o dist/yardr_linux_amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
+            -ldflags "-s -w -X yardr.dev/yardr/internal/version.tag=$VERSION" \
+            -o dist/yardr_darwin_arm64 .
+      # The linux binary runs here, so it says what it was stamped with: the
+      # version and the commit it was built from. Each binary is refused if
+      # Go found changes in the tree it was built from.
+      - name: check the stamp
+        run: |
+          got=$(dist/yardr_linux_amd64 version)
+          case "$got" in
+            "$VERSION" | "$VERSION ("*) ;;
+            *) echo "yardr version prints \"$got\"; want $VERSION" >&2; exit 1 ;;
+          esac
+          rev=$(git rev-parse --short=12 HEAD)
+          case "$got" in
+            *"$rev"*) ;;
+            *) echo "yardr version prints \"$got\"; it does not name $rev" >&2; exit 1 ;;
+          esac
+          echo "yardr version: $got"
+          for b in dist/yardr_linux_amd64 dist/yardr_darwin_arm64; do
+            if go version -m "$b" | grep -q 'vcs.modified=true'; then
+              echo "$b was built from a tree with uncommitted changes" >&2
+              exit 1
+            fi
+          done
+      - name: sha256sums
+        run: cd dist && sha256sum yardr_linux_amd64 yardr_darwin_arm64 >SHA256SUMS && sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: internal
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The one job that may write to a release, and it runs no code from the
+  # repository: it only hands the built files to GitHub.
+  release:
+    needs: [plan, build]
+    if: needs.plan.outputs.released != 'true'
+    runs-on: [self-hosted, hetzner]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: internal
+          path: dist
+      - name: publish the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+          # A re-run of a commit whose first run failed after the release was
+          # made fills the same prerelease again; a released commit never gets
+          # here, the plan job skips it.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" yardr_linux_amd64 yardr_darwin_arm64 SHA256SUMS --clobber
+          else
+            gh release create "$TAG" yardr_linux_amd64 yardr_darwin_arm64 SHA256SUMS \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "internal ${TAG#internal-}" \
+              --notes "Internal build of $GITHUB_SHA on main, from svc-bi-concepts/yardr. Not signed; not an official release. The darwin binary is signed by the mini when it installs it, and the mini pins that signed sha: the sha256 here is the download's check, not the pin."
+          fi
