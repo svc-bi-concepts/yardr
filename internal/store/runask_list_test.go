@@ -1312,6 +1312,7 @@ func TestSettingRunAskClassesAreExplicit(t *testing.T) {
 		NoteSetting:              Askable,
 		DefaultKindSetting:       Askable,
 		DefaultPackSetting:       Alone,
+		WorktreeRootSetting:      Alone,
 		PermissionsPresetSetting: Alone,
 		HookAddrSetting:          Alone,
 		HookPublicURLSetting:     Askable,

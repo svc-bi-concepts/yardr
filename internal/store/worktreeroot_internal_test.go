@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	bolt "go.etcd.io/bbolt"
-
-	"yardr.dev/yardr/internal/config"
 )
 
 func TestWorktreeRootPreservesOfflineMount(t *testing.T) {
@@ -47,7 +45,7 @@ func TestWorktreeRootPreservesOfflineMount(t *testing.T) {
 		if all[WorktreeRootVolume] != mount {
 			t.Fatalf("reapplying %s replaced offline mount %s with %s", path, mount, all[WorktreeRootVolume])
 		}
-		if config.WorktreeMounted(root, all[WorktreeRootVolume]) {
+		if WorktreeMounted(root, all[WorktreeRootVolume]) {
 			t.Fatal("unmounted directory accepted as the recorded mount")
 		}
 	}
@@ -59,7 +57,7 @@ func TestWorktreeRootPreservesOfflineMount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all[WorktreeRootVolume] == mount || !config.WorktreeMounted(replacement, all[WorktreeRootVolume]) {
+	if all[WorktreeRootVolume] == mount || !WorktreeMounted(replacement, all[WorktreeRootVolume]) {
 		t.Fatalf("new root's mounted volume was not recorded: %v", all)
 	}
 	if err := s.SetSetting(ctx, WorktreeRootSetting, "", "me"); err != nil {

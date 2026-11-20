@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"yardr.dev/yardr/internal/config"
 	"yardr.dev/yardr/internal/dispatch"
 	"yardr.dev/yardr/internal/store"
 	"yardr.dev/yardr/internal/storetest"
@@ -359,12 +358,12 @@ func TestWorktreeRootUnmountedDirectoryRefuses(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "r")); !os.IsNotExist(err) {
 		t.Fatalf("wrote under unmounted root: %v", err)
 	}
-	volume, err := config.WorktreeVolume(root)
+	volume, err := store.WorktreeVolume(root)
 	mustT(t, err)
-	if !config.WorktreeMounted(root, volume) {
+	if !store.WorktreeMounted(root, volume) {
 		t.Fatal("real mounted volume refused")
 	}
-	if config.WorktreeMounted(root, root) {
+	if store.WorktreeMounted(root, root) {
 		t.Fatal("ordinary directory accepted as a mount")
 	}
 }

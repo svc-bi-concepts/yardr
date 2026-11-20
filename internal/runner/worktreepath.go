@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"yardr.dev/yardr/internal/config"
 	"yardr.dev/yardr/internal/dispatch"
 	"yardr.dev/yardr/internal/store"
 )
@@ -50,7 +49,7 @@ func worktreeRoot(ctx context.Context, st store.API, defaultRoot string, job dis
 			return "", fmt.Errorf("worktree_root: %w", err)
 		}
 		if root := all[store.WorktreeRootSetting]; root != "" {
-			if !config.WorktreeMounted(root, all[store.WorktreeRootVolume]) {
+			if !store.WorktreeMounted(root, all[store.WorktreeRootVolume]) {
 				return "", dispatch.Blocked(fmt.Errorf("the worktree of %s is not made: %s (worktree_root) is unavailable or its recorded volume is not mounted; "+
 					"mount it, or unset the setting with yardr settings set %s \"\"", job.Bead.ID, root, store.WorktreeRootSetting))
 			}
@@ -98,8 +97,8 @@ func worktreeOffline(handle map[string]any) error {
 	if volume == "" {
 		return nil
 	}
-	actual, err := config.WorktreeVolume(path)
-	if !config.WorktreeMounted(volume, volume) || err != nil || actual != volume {
+	actual, err := store.WorktreeVolume(path)
+	if !store.WorktreeMounted(volume, volume) || err != nil || actual != volume {
 		return fmt.Errorf("worktree %s: volume %s is not mounted: %w", path, volume, dispatch.ErrWorktreeOffline)
 	}
 	return nil
@@ -107,7 +106,7 @@ func worktreeOffline(handle map[string]any) error {
 
 func worktreeVolume(handle map[string]any) {
 	path, _ := handle["worktree"].(string)
-	if volume, err := config.WorktreeVolume(path); err == nil {
+	if volume, err := store.WorktreeVolume(path); err == nil {
 		handle["worktree_volume"] = volume
 	}
 }
