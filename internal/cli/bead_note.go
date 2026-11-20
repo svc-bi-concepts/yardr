@@ -55,10 +55,14 @@ fragment, the title and the frame it was made in are kept apart from the
 page. yardr page show prints the frame, and what it offers a fragment, before
 you write one. --title is required with --page and refused without it.
 
---ack <seq> writes nothing: it records that this session read note <seq>,
-and takes no text, no --file and no --page. A note told to a session that has
-ended may be acked by the bead's live session, and bead show then says that
-session read it; a note told to a session still live is that session's to ack.`,
+--ack <seq> writes no note: it records that this session read note <seq>,
+and takes no text, no --file and no --page. When that ack leaves none of
+the session's notes unread, and its own done on the bead was refused for
+them, the done runs again with the same outcome and note, and the ack says
+so. A done refused again for another reason is reported as the error. A
+note told to a session that has ended may be acked by the bead's live
+session, and bead show then says that session read it; a note told to a
+session still live is that session's to ack.`,
 		Args: func(c *cobra.Command, args []string) error {
 			if c.Flags().Changed("ack") {
 				if c.Flags().Changed("file") || c.Flags().Changed("page") || c.Flags().Changed("title") {
@@ -110,8 +114,21 @@ session read it; a note told to a session still live is that session's to ack.`,
 				if err != nil {
 					return err
 				}
-				return a.out(c.OutOrStdout(), map[string]any{"bead": id, "note": n.Seq, "acked": "ok"}, func(w io.Writer) {
+				// The ack may be the last one the session's refused done waited
+				// for: that done runs now, so the agent need not run it again.
+				re, err := st.RetryRefusedDone(c.Context(), id, a.identity().session, a.who())
+				if err != nil {
+					return fmt.Errorf("note %d on %s acked; the done it held back ran again and was refused: %w", n.Seq, id, err)
+				}
+				out := map[string]any{"bead": id, "note": n.Seq, "acked": "ok"}
+				if re != nil && re.Bead != nil {
+					out["retried"], out["stage"] = re.Command, re.Bead.Stage
+				}
+				return a.out(c.OutOrStdout(), out, func(w io.Writer) {
 					fmt.Fprintf(w, "note %d on %s acked\n", n.Seq, id)
+					if re != nil && re.Bead != nil {
+						fmt.Fprintf(w, "re-ran: %s: %s is now in %s\n", re.Command, id, re.Bead.Stage)
+					}
 				})
 			}
 			text := args[1]

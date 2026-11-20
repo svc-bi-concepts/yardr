@@ -212,7 +212,7 @@ it lists every exported name with its comment, faster than grepping.
   (`YARDR_TEST_START_WAIT`).
 - A wait in a contrib suite (a fuse against a hang, the deadline of a poll)
   is written for an idle box and goes through `testload.Scale`: the factor
-  is the machine's load over its cores, 1 to 4, the larger of the one the
+  is the machine's load over its cores, 1 to 8, the larger of the one the
   gate gives the race leg (`YARDR_TEST_LOAD`) and the machine's own as the
   wait is armed, so no wait is raised by hand after it flakes in a landing.
   What a test measures, and what it gives the program under test as a

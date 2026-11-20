@@ -14,7 +14,12 @@ up from it (`yardr setup`, `yardr depot init`) runs
 (docs/setup.md).
 
 **merge-local** lands a bead's branch on its base (the depot's base, or the
-train's branch for a child of a train). It is routed for `approved`. With
+train's branch for a child of a train). It is routed for `approved`. Before
+anything else it checks that the branch contains the commit the reviewer
+approved (the newest `Reviewed <sha>` or `approved <sha>` note, as
+infra-land.sh reads it): a branch on another line of commits goes back to
+`new` with both shas and the commits past the approved one, and a bead with no
+approval lands as before, the log saying so. With
 `YARDR_PUSH` set it first brings the base up to that remote, fast-forward
 only; a base that diverged from the remote's branch reports `failed` with a
 note saying so, never merged or forced. It then
@@ -65,15 +70,16 @@ bead; one that exits 2 for a failing test, as make does, is wrapped
 (`--test 'make test || exit 1'`). Where the command is the path of a file
 the base has (`--test .yardr/test`), the base's copy of that file is what
 runs, with sh: a bead cannot change the script that judges it, and a change
-to the script counts from the next bead on. A depot with no test command
+to the script counts from the next bead on. Its `$0` is the file's path in
+the worktree, so a script that finds its root with `dirname "$0"` works; what
+it sources or calls through that path is the branch's. A depot with no test command
 lands untested, and the note says so.
 The note of a red run starts with the branch, the commit, the base and what
 ran, and carries the last 200 lines of the output: what matters of a long
 run is the test command's to print at its end.
-The run is bounded (`YARDR_TEST_TIMEOUT`, in seconds; 1800 when unset),
-besides what it waited for the race lock: at the deadline the command and
-everything it started is killed, and the run is red. A run ended by a signal
-from outside (exit 128+N, e.g. 143 for SIGTERM)
+The run follows the test deadline described under **Environment** below:
+at the deadline the command and everything it started is killed, and the
+run is red. A run ended by a signal from outside (exit 128+N, e.g. 143 for SIGTERM)
 is neither red nor "could not run": it is run once more on the same commit,
 with a note of the first run's output, and held with both outputs if a
 signal ends it again.
@@ -138,10 +144,9 @@ a commit of its own, `assembly: lower filesizes rows to actual`, since the head
 is a child's landed commit and not the assembly's to amend; held on the same
 grounds and past the same `YARDR_REWRITE_TIMEOUT`), and runs the depot's test
 command on the result, with `YARDR_LANDING=1` and from the base's copy where
-the command is a file the base has, as merge-local does, and for at most
-`YARDR_TEST_TIMEOUT` seconds besides what it waited for the race lock (a run
-killed at the deadline is red); a depot
-with no test command goes to review untested. The command's `YARDR_BEAD` is
+the command is a file the base has, as merge-local does, with the test
+deadline described under **Environment** below (a run killed at the deadline
+is red); a depot with no test command goes to review untested. The command's `YARDR_BEAD` is
 the train, which is no change of its own, so the run also sets
 `YARDR_TEST_BEADS` to the train's children, sorted and joined by commas (set
 and empty when `yardr bead show --json` cannot name them): depot
@@ -333,12 +338,21 @@ mailed when that push fails (default the yard's `yardmaster` setting, else
 `yardmaster`), `YARDR_LAND`, `rebase` (the default) or `squash`, how a bead
 lands, read by merge-local and pr-merge (a copy of merge-local's message
 writer is in pr-merge, held equal by a test) and by merge-pr for a branch of the
-repository's own, `YARDR_TEST_TIMEOUT`, the seconds the test command may run
-besides what it waited for the race lock (1800 when unset), read by
+repository's own, `YARDR_TEST_TIMEOUT`, the test deadline read by
 merge-local, integrate-train and pr-ci, `YARDR_REWRITE_TIMEOUT`, the seconds
 the file size table rewrite may run (120 when unset, with no race lock to
 credit), read by merge-local and integrate-train, and `YARDR_PR=1`, the switch
 for the pull-request path, read by integrate-train, pr-train and pr-merge.
+
+The test deadline is `YARDR_TEST_TIMEOUT` seconds (1800 when unset), excluding
+reported waits for the race lock and machine-wide gate slots. A completed
+slot wait credits the seconds in `gate: running in slot K of M, after N s`.
+While queued, `gate: waiting for a slot (N ahead in line), S s` (or `N running`)
+credits its reported seconds plus elapsed time from an observation point:
+the preceding deadline inspection when the reported wait value changes,
+or watcher startup for the first inspection. That extra credit is capped
+at twice `YARD_GATE_WAIT_LINE_S` (60 seconds per interval by default), so a
+stale waiting line cannot postpone the deadline indefinitely.
 
 **Setup** (from docs/line.md):
 

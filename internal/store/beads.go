@@ -925,65 +925,6 @@ func (s *Store) AllHoldingDeps(ctx context.Context) ([]Dep, error) {
 	return out, nil
 }
 
-// ReadyBead is a ready bead no group owns yet, as much of it as says where
-// it is routed and whether it can start now: the dispatcher asks for all of
-// them on every pass and starts few, so it reads a bead (GetBead) when it
-// starts it. The handle is under "bead", not "id", so a daemon and a server
-// of different builds read no bead in each other's answer instead of
-// starting one without its body.
-type ReadyBead struct {
-	Bead   string   `json:"bead"`
-	Stage  string   `json:"stage"`
-	Type   string   `json:"type"`
-	Depot  *string  `json:"depot,omitempty"`
-	Labels []string `json:"labels,omitempty"`
-	// Model is the model the bead pins (metadata model=<name>), or "".
-	Model string `json:"model,omitempty"`
-	// Priority is the bead's, which a route may ask for (Route.BeadPriority).
-	Priority int `json:"priority"`
-	// Originator is whose subscription the bead builds on, which a route
-	// may ask for. Empty reads as the operator's, as on the bead.
-	Originator string `json:"originator,omitempty"`
-}
-
-// Dispatchable lists ready beads that no group owns yet, by priority, then
-// stage-entry time: within a priority the bead that entered its stage
-// first goes first, so a young bead waits behind no older bead that
-// reached the stage later. The sort stays stable over openBeads'
-// creation order, and runs on the rows, so ReadyBead carries no time.
-func (s *Store) Dispatchable(ctx context.Context) ([]ReadyBead, error) {
-	out := []ReadyBead{}
-	err := s.withUntilRepos(ctx, func(look *untilLooks) error {
-		out = []ReadyBead{}
-		return s.read(func(tx *bolt.Tx) error {
-			rows, err := s.openBeads(tx)
-			if err != nil {
-				return err
-			}
-			var cands []*beadRow
-			for _, r := range rows {
-				if r.Group != nil || !ready(tx, &r.Bead, look) {
-					continue
-				}
-				cands = append(cands, r)
-			}
-			sort.SliceStable(cands, func(i, j int) bool {
-				if cands[i].Priority != cands[j].Priority {
-					return cands[i].Priority < cands[j].Priority
-				}
-				return cands[i].StayStart.Before(cands[j].StayStart)
-			})
-			for _, r := range cands {
-				model, _ := r.Metadata["model"].(string)
-				out = append(out, ReadyBead{Bead: r.ID, Stage: r.Stage, Type: r.Type, Depot: copyOf(r.Depot),
-					Labels: slices.Clone(r.Labels), Model: model, Priority: r.Priority, Originator: r.Originator})
-			}
-			return nil
-		})
-	})
-	return out, err
-}
-
 // DefaultPriority is the priority of a bead made without one; 0 is highest.
 const DefaultPriority = 2
 
@@ -1692,56 +1633,6 @@ func advancePick(stage string, safe *safeCheck) func(f *Flow, b *beadRow, data m
 	}
 }
 
-// Done reports how the work in the bead's stage ended and moves it where
-// its flow sends that outcome ("" is done), with an optional note, in one
-// write like AdvanceNote. The outcome is recorded on the advanced event.
-// A bead no flow governs has no outcomes: it is moved with Advance.
-// The session's own done is refused while a note on the bead names that
-// session and is not acked (see checkUnread), and while its worktree has
-// uncommitted changes (see checkWorktree). DoneSafe is refused while the
-// bead's diff touches a path the depot lists (SecurityPathsFile). From a
-// session's or a crew member's pane the move and its note are recorded as
-// that session's actor or that crew member, whatever actor says; from
-// anywhere else, as given (paneAuthor).
-func (s *Store) Done(ctx context.Context, id, outcome, note string, exp Expect, actor string) (*Bead, error) {
-	outcome = or(strings.TrimSpace(outcome), DefaultOutcome)
-	command := DoneCommand(id, outcome)
-	// Read before the write: git must not run inside one.
-	safe := s.checkDoneSafe(ctx, id, outcome)
-	dirty := s.checkWorktree(ctx, id, exp)
-	b, err := s.advance(ctx, id, note, exp, actor, true, donePick(outcome, safe), dirty)
-	return b, s.refused(ctx, id, command, exp, actor, err)
-}
-
-// donePick reports outcome through the flow governing the bead, as Done
-// does: the stage it sends a bead in its stage to, with the outcome on the
-// event. An outcome whose limit the bead's rounds have used sends it to the
-// limit's Then instead, and the event says so (rounds, max, instead_of); move
-// starts the count again and logs rounds_reached. A report of DoneSafe that
-// safe holds (checkDoneSafe) is refused once the flow has the outcome. An
-// answer on a stage ask moves the bead through the same pick, with no safe: a
-// person answers it.
-func donePick(outcome string, safe *safeCheck) func(f *Flow, b *beadRow, data map[string]any) (string, error) {
-	return func(f *Flow, b *beadRow, data map[string]any) (string, error) {
-		if f == nil {
-			return "", fmt.Errorf("bead %s: no flow governs it, so it has no outcomes; move it with yardr bead advance %s --to <stage>", b.ID, b.ID)
-		}
-		o, err := f.Outcome(b.Stage, outcome)
-		if err != nil {
-			return "", fmt.Errorf("bead %s: %w", b.ID, err)
-		}
-		if err := safe.refusal(f, b.ID, b.Stage); err != nil {
-			return "", err
-		}
-		data["outcome"] = outcome
-		n := b.takes(o)
-		if n.Goes != o.To {
-			data["rounds"], data["max"], data["instead_of"] = n.Used, o.Max, o.To
-		}
-		return n.Goes, nil
-	}
-}
-
 // advance is the move AdvanceNote and Done share: pick names the stage
 // under the bead's flow (nil without one), may add to the event's data,
 // and refuses by returning an error. gateUnread is Done's alone: the
@@ -1868,8 +1759,8 @@ func (w *wtx) checkUnread(ctx context.Context, exp Expect, b *beadRow) error {
 	if len(unread) > 1 {
 		notes += "s"
 	}
-	return fmt.Errorf("bead %s: session %s has %d unread %s; ack each with `yardr bead note %s --ack <seq>` and try again:\n%s",
-		b.ID, sess.ID, len(unread), notes, b.ID, strings.Join(lines, "\n"))
+	return refuse(RefusedUnread, fmt.Errorf("bead %s: session %s has %d unread %s; ack each with `yardr bead note %s --ack <seq>` and try again:\n%s",
+		b.ID, sess.ID, len(unread), notes, b.ID, strings.Join(lines, "\n")))
 }
 
 // worktreeGitTimeout bounds the git a done waits for: a worktree that

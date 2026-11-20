@@ -217,7 +217,8 @@ func TestSendMailRefusesUnreadableUserRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = s.write(func(w *wtx) error {
-		return s.sendMail(w, "yardmaster", "hello", "ada", nil, nil, 0)
+		_, err := s.sendMail(w, "yardmaster", "hello", "ada", nil, nil, 0)
+		return err
 	})
 	if err == nil {
 		t.Fatal("mail from an unreadable user record was taken")

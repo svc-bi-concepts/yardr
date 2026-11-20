@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1246,6 +1247,115 @@ func TestFirstPromptWaitsForTheHarnessScreen(t *testing.T) {
 	if got := events(); got["session_harness_starting"] != 1 || got["session_prompt_lost"] != 0 ||
 		got["session_prompt_gave_up"] != 0 || got["session_prompted"] != 1 {
 		t.Fatalf("events = %v, want one session_harness_starting and one session_prompted", got)
+	}
+}
+
+// piLikeHerdr is a fake herdr for an agent of a kind whose input yardr cannot
+// read (pi's file names no input mark): its pane shows nothing the dispatcher
+// can look for, and screen detection says nothing of it. herdr's own
+// readiness is all there is: interactive_ready, which `agent get` gives. The
+// test turns it on by calling ready. Until then the agent takes no keys: a
+// prompt sent is lost, and every call is logged.
+func piLikeHerdr(t *testing.T) (h *Herdr, calls func() string, ready func()) {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	h = &Herdr{Socket: fakeHerdrAPI(t, log), Bin: deafHerdrBin(t, `cd `+dir+`
+printf '%s\n' "$*" >> calls
+up() { [ -e ready ]; }
+case "$1 $2" in
+  "agent prompt")
+    if up; then echo "$4" >> pane; echo "• On it." >> pane; answer working; fi
+    answer idle ;;
+  "pane read") cat pane 2>/dev/null ;;
+  "agent get")
+    r=false; if up; then r=true; fi
+    echo '{"result":{"agent":{"agent":"pi","agent_status":"idle","interactive_ready":'$r'}}}' ;;
+  *) echo '{"result":{"type":"ok"}}' ;;
+esac`)}
+	return h, func() string { return readCalls(t, log) }, func() {
+		if err := os.WriteFile(filepath.Join(dir, "ready"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Found live (yardr-cdj5): a pi crew's first prompt went out in the seconds
+// after its start, while pi had no input to take it. pi's kind names no
+// input mark, so no screen was read to wait on (HarnessScreen unknown), and
+// the dispatcher sent the prompt three times in thirty seconds, each lost
+// (session_prompt_lost 3 of 3, then session_prompt_gave_up). herdr had the
+// agent idle and interactive_ready the whole time. The prompt waits for that
+// readiness, is typed once, and is not counted lost.
+func TestFirstPromptOfAPiCrewWaitsForItsInput(t *testing.T) {
+	t.Parallel()
+	h, calls, ready := piLikeHerdr(t)
+	ctx := context.Background()
+	s := storetest.New(t)
+	d := &dispatch.Dispatcher{Store: s, Runners: map[string]dispatch.Runner{"herdr": h}, PromptSettle: -1, PromptWait: -1}
+	if _, err := s.PutCrew(ctx, store.CrewMember{Name: "maverick", Runner: "herdr", Dir: t.TempDir(),
+		Config: map[string]any{"kind": "pi"}}, "me"); err != nil {
+		t.Fatal(err)
+	}
+	// More passes than the deliveries a prompt has, all before pi is ready.
+	for range 2 * dispatch.PromptTries {
+		if err := d.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := s.GetCrew(ctx, "maverick")
+	if err != nil || !r.Live() {
+		t.Fatalf("crew member not running: %+v %v", r, err)
+	}
+	if n := strings.Count(calls(), "agent prompt"); n != 0 {
+		t.Fatalf("the prompt was typed %d times before pi's input was up:\n%s", n, calls())
+	}
+	if r.Handle[store.PendingPrompt] == nil || r.Handle[dispatch.PromptLook] != "no screen, not typed" {
+		t.Fatalf("handle = %v, want the prompt pending and not typed", r.Handle)
+	}
+	ready()
+	for i := 0; i < 60 && r.Handle[store.PendingPrompt] != nil; i++ {
+		if err := d.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if r, err = s.GetCrew(ctx, "maverick"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.Handle[store.PendingPrompt] != nil {
+		t.Fatalf("still pending with pi's input up: %v\n%s", r.Handle, calls())
+	}
+	if n := strings.Count(calls(), "agent prompt"); n != 1 {
+		t.Fatalf("the prompt was typed %d times, want once, with pi's input up:\n%s", n, calls())
+	}
+	evs, err := s.Events(ctx, r.Journal, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, e := range evs {
+		got[e.Kind]++
+	}
+	if got["session_prompt_lost"] != 0 || got["session_prompt_gave_up"] != 0 || got["session_prompted"] != 1 {
+		t.Fatalf("events = %v, want one session_prompted and no lost delivery", got)
+	}
+}
+
+// herdr's readiness gates the first prompt of a kind with no input mark and
+// nothing else: HarnessScreen stays unknown for it even when herdr has the
+// agent ready, so a note told to an idle session still goes through herdr's
+// own submit (dispatch.paneHasPrompt) and is not typed into a pane yardr
+// cannot read.
+func TestHarnessScreenOfAnUnmarkedKindStaysUnknownWhenReady(t *testing.T) {
+	t.Parallel()
+	h, _, ready := piLikeHerdr(t)
+	ready()
+	handle := map[string]any{"agent": "pi", "pane": "w1:p1", harnessKind: "pi"}
+	if up, known := h.HarnessScreen(context.Background(), handle); up || known {
+		t.Errorf("HarnessScreen of a ready pi: up %v, known %v, want unknown", up, known)
+	}
+	if up, known := h.AgentReady(context.Background(), handle); !up || !known {
+		t.Errorf("AgentReady of a ready pi: up %v, known %v, want ready", up, known)
 	}
 }
 

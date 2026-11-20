@@ -626,12 +626,20 @@ prints them as `builders@Weekly<80,5h<90 else spare-builders`.
 - **A group at its limit is waited for, not passed over, unless the bead's
   exact model is held.** A model hold passes the group over for the route's
   next group even when the held session occupies its last slot. A pause
-  (limit 0), a runtime outage or a start in flight still waits. The next
-  group must satisfy its own quota and limit, and held sessions still count
-  against `max_sessions`. With no available group the bead waits, with a
-  `quota_wait` if the remaining groups fail their quota conditions. A wait
-  for a group's limit, runtime or model gets one `group_wait` event, logged
-  once per stage and route until it starts, as `quota_wait` is:
+  (limit 0), a runtime outage or a start in flight still waits. So is one
+  whose runtime is down or that is held back for a model, and a bead the
+  yard's `max_sessions` holds. Only a quota condition sends a bead to a
+  further group, and what the yard runs at once stays bounded by the groups'
+  limits. The one exception is a peer group ([peers.md](peers.md)) after the
+  full group: a group at its limit, or a bead held by `max_sessions`, is
+  passed over toward that peer group alone, never toward a local group
+  between the two, since the peer takes the bead without a session here. A
+  peer group takes it once the bead has waited its `after` setting in the
+  stage (`yardr group set <name> after=15m`; unset: at once), and the peer's
+  own `--limit` still holds it. A route with no peer group after a full group
+  waits, as this rule says. A wait for a group's limit, runtime or model gets
+  one `group_wait` event, logged once per stage and route until it starts, as
+  `quota_wait` is:
   `route`, `groups` (each group with its `reason` in words: at its limit,
   its runtime down, or held back for the bead's model), `reason` (the same
   on one line) and `hint`. A group at limit 0 says paused instead of
@@ -2186,7 +2194,9 @@ check the footer's model instead.
   Enter on that pass, and one for an agent at a dialog is not typed and
   not counted, as one that ends with the agent at a dialog counts none
   either when the pane has no echo of it (herdr reports `blocked`: the agent
-  took nothing). A pane that cannot be read keeps the send guarded. A
+  took nothing). A pane that cannot be read keeps the send guarded. For a
+  kind whose input mark yardr does not know, the first prompt waits on
+  herdr's own `interactive_ready` for the agent instead of a screen. A
   delivery that has done neither after ten
   seconds was lost (`session_prompt_lost`) and is made again, three times in
   all; after the third, `session_prompt_gave_up` tells the yardmaster, its `hint`

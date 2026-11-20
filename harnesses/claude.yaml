@@ -353,8 +353,13 @@ dialogs:
 # the line that ends the turn, above the input, and the status line under it.
 #   ✻ Brewed for 48s · done 12:44 AM · 1 shell still running
 #   ⏵⏵ auto mode on · 1 shell · ← 1 agent · ↓ to manage
+#
+# A Monitor the agent started counts the same way (seen in a builder's pane,
+# 18 Nov 2026, Claude Code 2.1.288, while it waited on its gate):
+#   ✻ Baked for 3s · done 4:41 PM · 2 monitors still running
+#   ⏵⏵ bypass permissions on · 2 monitors · ← 2 agents · ↓ to manage
 # Claude Code wakes the agent when the shell exits, so the agent is not idle
 # to the group's idle limit while either shows.
 background:
-  - pattern: ' · \d+ shells? still running$'
-  - pattern: '(^| · )\d+ shells?( · |$)'
+  - pattern: ' · \d+ (shells?|monitors?) still running$'
+  - pattern: '(^| · )\d+ (shells?|monitors?)( · |$)'

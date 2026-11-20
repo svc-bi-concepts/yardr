@@ -16,10 +16,22 @@ import (
 // as yardr reply refuses them, in the words of the window that answers.
 // Longer answers are split by the caller (MailReplyText), as with Mail.
 func (s *Store) MailReply(ctx context.Context, to, text, actor string, answered uint64) error {
+	_, err := s.mailReply(ctx, to, text, actor, answered)
+	return err
+}
+
+// MailReplyReceipt is MailReply, and returns the receipt the answer was
+// written under (MailReceipt).
+func (s *Store) MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (MailReceipt, error) {
+	return s.mailReply(ctx, to, text, actor, answered)
+}
+
+func (s *Store) mailReply(ctx context.Context, to, text, actor string, answered uint64) (MailReceipt, error) {
 	if strings.TrimSpace(text) == "" || len(text) > MaxMailBytes {
-		return fmt.Errorf("mail must be 1..%d bytes", MaxMailBytes)
+		return MailReceipt{}, fmt.Errorf("mail must be 1..%d bytes", MaxMailBytes)
 	}
-	return s.writeVia(ctx, func(w *wtx) error {
+	var got MailReceipt
+	err := s.writeVia(ctx, func(w *wtx) error {
 		resolved, sess, err := paneAuthorSession(w.Tx, callerOf(ctx), actor)
 		if err != nil {
 			return err
@@ -59,8 +71,14 @@ func (s *Store) MailReply(ctx context.Context, to, text, actor string, answered 
 		if to != e.Actor {
 			return fmt.Errorf("message %d is from %s, not %s: a reply goes to the mail's sender", answered, e.Actor, to)
 		}
-		return s.sendMail(w, to, text, actor, sess, nil, answered)
+		r, err := s.sendMail(w, to, text, actor, sess, nil, answered)
+		got = r
+		return err
 	})
+	if err != nil {
+		return MailReceipt{}, err
+	}
+	return got, nil
 }
 
 // sendMail writes one mail to the inbox of a crew member or of a user, as
@@ -68,8 +86,9 @@ func (s *Store) MailReply(ctx context.Context, to, text, actor string, answered 
 // message. actor is resolved (paneAuthorSession) and sess its session, if
 // the call comes from a bead session's pane, whose bead the mail then
 // names. It is what Mail and MailReply share; the recipient checks read
-// as Mail's.
-func (s *Store) sendMail(w *wtx, to, text, actor string, sess *Session, refs []BlobRef, answered uint64) error {
+// as Mail's. It returns the receipt of the mail, written in the same
+// transaction as its event.
+func (s *Store) sendMail(w *wtx, to, text, actor string, sess *Session, refs []BlobRef, answered uint64) (MailReceipt, error) {
 	data := map[string]any{"to": to, "text": text}
 	if len(refs) > 0 {
 		data["files"] = refs
@@ -87,31 +106,41 @@ func (s *Store) sendMail(w *wtx, to, text, actor string, sess *Session, refs []B
 	case w.Bucket(bCrew).Get([]byte(to)) != nil:
 		var r CrewMember
 		if ok, err := get(w.Tx, bCrew, to, &r); err != nil {
-			return err
+			return MailReceipt{}, err
 		} else if ok && w.Bucket(bUsers).Get([]byte(actor)) != nil {
 			// Mail from a user it does not serve is refused at write,
 			// naming whom it serves; anything else (the yard, another
 			// crew member, a bead's agent) still lands, for the line
 			// slice, or waits in the log where no line session runs.
 			if !r.Serves(actor, false) {
-				return fmt.Errorf("mail to %s from %s: %s serves %s", to, actor, to, strings.Join(r.Served(), ", "))
+				return MailReceipt{}, fmt.Errorf("mail to %s from %s: %s serves %s", to, actor, to, strings.Join(r.Served(), ", "))
 			}
 			// A marked member it serves writes only once their own env
 			// with it stands; until then the refusal says when they may.
 			u, err := getUser(w.Tx, actor)
 			if err != nil {
-				return err
+				return MailReceipt{}, err
 			}
 			if !r.Serves(actor, u.OwnLoginOnly) {
-				return fmt.Errorf("mail to %s from %s: %s is on their own login only and has no env with %s yet; once their env stands they may write", to, actor, actor, to)
+				return MailReceipt{}, fmt.Errorf("mail to %s from %s: %s is on their own login only and has no env with %s yet; once their env stands they may write", to, actor, actor, to)
 			}
 		}
 	case w.Bucket(bUsers).Get([]byte(to)) != nil:
 		data["to_user"] = true
 	default:
-		return fmt.Errorf("crew member %s: %w (nor is there a user of that name)", to, ErrNotFound)
+		return MailReceipt{}, fmt.Errorf("crew member %s: %w (nor is there a user of that name)", to, ErrNotFound)
 	}
-	return w.event("", "mail", actor, data)
+	if err := w.event("", "mail", actor, data); err != nil {
+		return MailReceipt{}, err
+	}
+	// The event is the last one written, so its seq is the sequence the
+	// write just took: no scan for it. The receipt goes in this write, so
+	// the mail and its receipt commit together or not at all.
+	r := MailReceipt{Seq: w.Bucket(bEvents).Sequence(), Direction: ReceiptLocal, From: actor, To: to, At: now()}
+	if err := writeReceipt(w.Tx, r); err != nil {
+		return MailReceipt{}, err
+	}
+	return r, nil
 }
 
 // markedUser reports whether name is a member marked own-login-only: a

@@ -1216,6 +1216,12 @@ git:                                  # what git uses to reach the source's repo
   not change credential, crew, parent or file permissions. Explicit
   reservations use the socket call `ReplyingWithFormat`; an older server
   without it refuses, and the client never falls back to a legacy reply.
+- **`thread.broadcast: true` opts into channel broadcast.** With that
+  declaration, `yardr reply --broadcast` hands `thread.reply` the extra
+  input `broadcast: true`; ordinary replies omit it. The command must
+  refuse conversations that cannot be broadcast before posting. Without
+  the declaration, the CLI refuses the option. For reply restrictions
+  and retries, see [Speaking in sources](crew.md#speaking-in-sources).
 - **`thread.open` takes an `assignee` only where the file says so.**
   `thread.assignee` is `id` or `key`: the part of a person's identity in
   the source (`yardr user identity`) that its threads are assigned by.
@@ -2633,10 +2639,12 @@ them whole):
   The app is created from the pack's manifest,
   which carries no event subscriptions and no Request URL, and once the
   hook stands the operator turns Event Subscriptions on in the browser
-  with the hook's URL and the two bot events `app_mention` and
-  `message.im` — never `message.mpim`, so no group conversation the
-  bot was never addressed in reaches the yard. Slack's
-  `url_verification` challenge to that URL is answered from the hook.
+  with the hook's URL and the five bot events `app_mention`,
+  `message.im`, `message.channels`, `message.groups` and
+  `message.mpim`: every message in a conversation the bot is in reaches
+  the yard, and each is stored, but only a mention nudges (see
+  subscriptions below). Slack's `url_verification` challenge to that URL
+  is answered from the hook.
 - **The credential** is the bot's token twice: the source's env file
   holds `SLACK_BOT_TOKEN` for the check and post calls, and the
   answering crew member's env file holds the same value for replying,
@@ -2665,6 +2673,21 @@ them whole):
   untested: whether Slack delivers a mention in one as `app_mention`
   is checked in a live trial, and until then only channel mentions and
   one-to-one direct messages are promised.
+- **Channels are stored, not heard.** A message in a channel or group
+  the bot is in is recorded as a delivery of type `message` with its
+  `room` set to `channel`, and no subscription above matches it unless
+  it mentions the bot. Its thread reads back with `yardr thread show
+  <seq>`, and `yardr hook show <seq>` holds the delivery. A channel
+  message that mentions the bot arrives twice, as `message.channels`
+  and as `app_mention`; the normalize keeps the mention off the first,
+  so the bot is woken once, by the `app_mention`. Edits, deletes, joins,
+  leaves and the `message_replied` Slack sends beside a thread reply
+  arrive as type `event` and match nothing. The bot joins a public
+  channel with the pack's `join` call, one channel per call, and the
+  `channels` call lists the public channels, each with `is_member`
+  true or false, so the ones to join are those that say false; a private
+  channel needs an invitation in Slack, since the bot cannot join one
+  itself.
 - **A thread** is `<channel>:<parent ts>`. `yardr reply <seq>` posts
   `chat.postMessage` in the thread the delivery stood in, and `yardr
   thread show <seq>` lists it oldest first through `conversations.replies`,

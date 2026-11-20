@@ -548,35 +548,42 @@ func (s *Store) FootDue(ctx context.Context) ([]FootItem, error) {
 // kept. It answers how many went each way, and is the server's to ask,
 // and no method of the API.
 //
-// The server sweeps every second, so the sweep looks in a read first and
-// writes only when a row goes: every committed write wakes the store's
-// subscribers, and a write that changed nothing woke the daemon into a
-// pass a second, forever.
+// The sweep runs on every push tick, and most ticks drop nothing. A write
+// commits, and every commit pings the wakers (write), which starts a pass of
+// each yard's daemon: a sweep that wrote on every tick woke every daemon once
+// a second, and each pass re-read the yard. So a tick first looks in a read
+// transaction, and writes only when something is to go; the write judges the
+// rows again, since a send or an ack may have landed between the two.
 func (s *Store) FootSweep(ctx context.Context) (expired, stale int, err error) {
 	at := now()
-	var gone []string
-	if err = s.read(func(tx *bolt.Tx) error {
-		gone, expired, stale, err = footPastTelling(tx, at)
+	err = s.read(func(tx *bolt.Tx) error {
+		_, e, st, err := footGone(tx, at)
+		expired, stale = e, st
 		return err
-	}); err != nil || len(gone) == 0 {
+	})
+	if err != nil || expired+stale == 0 {
 		return expired, stale, err
 	}
-	// Judged again in the write: a row may have changed since the read.
+	expired, stale = 0, 0
 	err = s.write(func(w *wtx) error {
-		gone, expired, stale, err = footPastTelling(w.Tx, at)
+		gone, e, st, err := footGone(w.Tx, at)
+		if err != nil {
+			return err
+		}
+		expired, stale = e, st
 		for _, k := range gone {
-			if err == nil {
-				err = w.Bucket(bFoot).Delete([]byte(k))
+			if err := w.Bucket(bFoot).Delete([]byte(k)); err != nil {
+				return err
 			}
 		}
-		return err
+		return nil
 	})
 	return expired, stale, err
 }
 
-// footPastTelling is the keys of the rows FootSweep drops at at, with how
-// many aged out and how many are no longer news.
-func footPastTelling(tx *bolt.Tx, at time.Time) (gone []string, expired, stale int, err error) {
+// footGone is the keys of the rows a sweep at the time at drops, and how many
+// went each way (FootSweep).
+func footGone(tx *bolt.Tx, at time.Time) (gone []string, expired, stale int, err error) {
 	rd := &readers{tx: tx}
 	err = each(tx, bFoot, "", func(k []byte, f *FootItem) error {
 		if at.Sub(f.At) > FootMaxAge {

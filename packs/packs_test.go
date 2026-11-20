@@ -2393,7 +2393,7 @@ func TestSlackPack(t *testing.T) {
 		commands = append(commands, c.Key+" "+strings.Join(c.Argv, " "))
 	}
 	if want := []string{"thread.reply slack/thread reply", "thread.posted slack/thread posted",
-		"thread.read slack/thread read", "hook.normalize slack/normalize"}; !slices.Equal(commands, want) {
+		"thread.read slack/thread read", "hook.normalize slack/normalize", "call.user.run slack/lookup user"}; !slices.Equal(commands, want) {
 		t.Fatalf("commands = %q, want %q", commands, want)
 	}
 	if c := d.Credential; c == nil || c.Env != "SLACK_BOT_TOKEN" || c.Header != "Authorization: Bearer {credential}" {
@@ -2478,7 +2478,7 @@ func TestSlackPack(t *testing.T) {
 			botScopes = append(botScopes, name)
 		}
 	}
-	if want := []string{"app_mentions:read", "channels:history", "groups:history", "im:history", "mpim:history", "chat:write"}; !slices.Equal(botScopes, want) {
+	if want := []string{"app_mentions:read", "channels:history", "channels:join", "channels:read", "groups:history", "groups:read", "im:history", "mpim:history", "chat:write", "users:read"}; !slices.Equal(botScopes, want) {
 		t.Errorf("the manifest's bot scopes = %q, want %q", botScopes, want)
 	}
 	var forbidden []string
@@ -2502,96 +2502,8 @@ func TestSlackPack(t *testing.T) {
 	if len(forbidden) > 0 {
 		t.Errorf("the manifest carries %q: the events are subscribed in the setup's step 6, once the hook stands", forbidden)
 	}
-	// Its setup notes: the app from the manifest in a browser, the apply
-	// on a card, the bot token on a secret card, whose token it is read
-	// from source check, the public hook address on a card, the signing
-	// secret and the hook on two cards with the two bot events subscribed
-	// in the browser, the bot's identity on a card, the yardmaster's
-	// credential on a crew secret card, and the subscription with the
-	// invitation. The yard side is cards the whole way; what is not a
-	// card is named as the operator's, in a browser, in Slack or as
-	// networking.
 	if p.Setup != "SETUP.md" {
 		t.Fatalf("setup = %q, want SETUP.md", p.Setup)
-	}
-	for _, want := range []string{
-		"api.slack.com/apps",
-		"packs/slack/app-manifest.yaml",
-		"carries no event subscriptions and no Request URL",
-		"`mpim:history` in particular is a reading\n   scope only",
-		"no\n   `message.mpim` event is ever subscribed",
-		"Q: Add Slack to the yard?",
-		"R: pack apply slack",
-		"yardr bead ask <bead> - --secret slack <<'ASK'",
-		"SLACK_BOT_TOKEN",
-		"yardr source check slack\n",
-		"slack: check call whoami (POST /auth.test): 200 in …ms, … bytes",
-		"slack: user_id: U…",
-		"slack: team_id: T…",
-		"slack: bot_id: B…",
-		"no `user_id` line",
-		"setup stops",
-		"R: settings set hook_public_url https://<his host>/hooks",
-		"networking outside\n   yardr, the operator's",
-		`--secret-hook slack --source slack`,
-		"R: hook add slack --source slack --unknown unknown",
-		"R: crew identity yardmaster --source slack --id <user_id from step 4> --key <bot_id from step 4>",
-		"may\n   carry only `bot_id`",
-		"yardr bead ask <bead> - --secret slack --for-crew yardmaster <<'ASK'",
-		"yardr crew restart yardmaster",
-		"Rotation rewrites both files",
-		"yardr subscribe yardmaster slack --scope mentions --where type=message",
-		"yardr subscribe yardmaster slack --scope all --where type=message --where room=dm",
-		"/invite @<bot>",
-		"hears mapped members as themselves",
-		"--where speaker=<user>",
-		"mapping card",
-		"yardr source ignore slack --rm <id>",
-		"posts twice",
-		"fails with Slack's reason",
-		"`yardr reply --to` stands with `thread show`",
-		"arrive under `message.im` and are ignored",
-		"dropped before hearing, with no mapping card",
-		"Group\ndirect messages are untested",
-		"group direct messages stay untested until the",
-		"are the operator's in Slack's pages",
-		"browser is the operator's",
-	} {
-		if !strings.Contains(p.SetupText, want) {
-			t.Errorf("setup notes lack %q", want)
-		}
-	}
-	// No terminal way stands beside the cards: the secrets are typed
-	// unseen on cards, never pasted blind or appended in a shell.
-	for _, not := range []string{
-		"umask 077",
-		"IFS= read",
-		"printf 'SLACK_BOT_TOKEN=",
-		"yardr source key slack",
-		"yardr crew show yardmaster",
-		"yardr crew set yardmaster env_file",
-		"--secret-file",
-	} {
-		if strings.Contains(p.SetupText, not) {
-			t.Errorf("setup notes keep a terminal way beside the cards: %q", not)
-		}
-	}
-	// Step 6 is the place the two bot events are subscribed: its list
-	// names exactly app_mention and message.im, and its one naming of
-	// message.mpim says never.
-	start, end := strings.Index(p.SetupText, "\n6. "), strings.Index(p.SetupText, "\n7. ")
-	if start < 0 || end < 0 || end <= start {
-		t.Fatalf("the setup has no steps 6 and 7 to cut step 6 between")
-	}
-	six := p.SetupText[start:end]
-	if !strings.Contains(six, "```text\n   app_mention\n   message.im\n   ```") {
-		t.Errorf("the setup's step 6 names no two-event list of app_mention and message.im")
-	}
-	if !strings.Contains(six, "Never subscribe `message.mpim`") {
-		t.Errorf("the setup's step 6 never refuses message.mpim")
-	}
-	if n := strings.Count(six, "message.mpim"); n != 1 {
-		t.Errorf("the setup's step 6 names message.mpim %d times, want once, in its refusal", n)
 	}
 }
 

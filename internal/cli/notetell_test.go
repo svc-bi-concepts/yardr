@@ -231,14 +231,16 @@ func TestBeadDoneRefusedWhileNoteUnread(t *testing.T) {
 		}
 	}
 
-	if _, err := run(t, a.beadCmd(), "note", "yd-1", "--ack", fmt.Sprint(seq)); err != nil {
-		t.Fatal(err)
-	}
-	out, err = run(t, a.beadCmd(), "done", "yd-1")
+	// The ack is the last one the refused done waited for: the done runs
+	// again from it, with no further command from the session.
+	out, err = run(t, a.beadCmd(), "note", "yd-1", "--ack", fmt.Sprint(seq))
 	if err != nil {
-		t.Fatalf("done after ack: %v", err)
+		t.Fatalf("ack of the refused done's note: %v", err)
 	}
-	if out != "yd-1 → review\n" {
-		t.Fatalf("done after ack printed %q", out)
+	if !strings.Contains(out, "re-ran: yardr bead done yd-1") || !strings.Contains(out, "yd-1 is now in review") {
+		t.Fatalf("ack printed %q, want the done re-run and the bead in review", out)
+	}
+	if cur, _ := st.GetBead(ctx, "yd-1"); cur.Stage != "review" {
+		t.Fatalf("the ack left yd-1 in %s, want review", cur.Stage)
 	}
 }

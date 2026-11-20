@@ -523,6 +523,7 @@ func TestReplyRefusals(t *testing.T) {
 		{"no such event", []string{"9999", "x"}, "event 9999: not found"},
 		{"not a seq", []string{"abc", "x"}, "want the number an inbox line starts with"},
 		{"empty text", []string{seqs["acme"], "  "}, "the reply is empty"},
+		{"unsupported broadcast", []string{seqs["acme"], "x", "--broadcast"}, "source acme does not support broadcast replies"},
 		{"unknown crew member", []string{seqs["acme"], "x", "--crew", "ghost"}, "crew member ghost: not found"},
 	} {
 		_, err := run(t, a.replyCmd(), c.args...)

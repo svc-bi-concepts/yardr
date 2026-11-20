@@ -1,6 +1,6 @@
 # Slack as a pack of kind source: the integration, imported into the
-# yard and into no depot. What Slack is here: the mentions of a bot in a
-# workspace and its one-to-one direct messages, heard through the Events
+# yard and into no depot. What Slack is here: the messages of a bot's
+# channels, groups and one-to-one direct messages in a workspace, heard through the Events
 # API and answered in their threads with yardr reply.
 #
 #   yardr pack apply slack

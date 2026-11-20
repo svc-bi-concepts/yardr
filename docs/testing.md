@@ -8,12 +8,21 @@ on what lands, with it (R4). R1 and R2 are script behavior: R2 is enforced
 on every run, R1 on every race leg; the rest are rules the gate, the roles
 and the assembly keep between them.
 
-An allow-list in `.yardr/test` names what is over budget today. Each entry
-says why; entries with a fix name the bead that brings them under. A fix
-deletes its entries; a row whose site is gone is deleted with the fix, not
-left for later. One row has a fix bead: `internal/cli`'s (yardr-2xke).
-One row has none: `contrib/isolated-yard`'s, since the yard-shape matrix
-is long by design and runs only in the quiet run (R6).
+When the shared gate-slot wrapper named in `.yardr/test` is present, the
+script acquires a shared gate slot before running any gate steps, including
+for the no-mistakes Test command configured in `.no-mistakes.yaml`. It sets
+`YARD_GATE_FRESH=1` so a previous pass cannot replace the run. A caller
+already holding a slot (`YARD_GATE_SLOT_HELD` set) keeps that slot instead
+of acquiring another. Plan mode (`YARDR_TEST_PLAN` set), `sizes` (including
+`sizes --rewrite`) and `--race-queue` bypass the wrapper. Without the
+wrapper, the script runs directly. This slot covers the whole gate run;
+the race lock described below still governs the individual test steps.
+
+An allow-list in `.yardr/test` names what is over budget today, each entry
+with why and which bead brings it under. A fix deletes its entries; a row
+whose site is gone is deleted with the fix, not left for later. One row has
+no fix: `contrib/isolated-yard`'s, since the yard-shape matrix is long by
+design and runs only in the quiet run (R6).
 
 R1. A package's tests finish in 60 s under `-race`, or the gate fails.
 Only a race leg is judged, and only the landing and the quiet run (R6) have
@@ -69,12 +78,17 @@ question, a ticket) with a deadline that is only a fuse against a hang,
 never the measurement. In the contrib suites that fuse is written for an
 idle box and goes through `testload.Scale`, which multiplies it by the
 larger of two factors, each the machine's load over its cores from 1 to
-4: the one the race leg is given (`YARDR_TEST_LOAD`; `.yardr/test` reads
+8: the one the race leg is given (`YARDR_TEST_LOAD`; `.yardr/test` reads
 it as the leg starts and names it in a line), and the machine's own live
 load, which `testload` reads as the fuse is armed, in a plain run too
 (`/proc/loadavg`, else `sysctl vm.loadavg`; a load it cannot read counts
-1). So a fuse is sized to the load the suite runs in, not the load its leg
-started in, and is not raised by hand after it flakes in a landing. The
+1). The cap on either factor is 8 (`maxFactor` in `internal/testload`, and the
+gate's `sizewaits`, which says the same rule). It was 4 until yardr-b2er: the
+mini runs at a load of 50 to 77 on 10 cores, a factor of 5 to 8, and at 4 a 60 s
+fuse was 240 s there and expired (the killed-gate test). A met wait still returns
+early, so the higher cap only lengthens a red wait under real load. So a
+fuse is sized to the load the suite runs in, not the load its leg started in,
+and is not raised by hand after it flakes in a landing. The
 deadline a test gives the program under test is that program's input, not
 a fuse, and is not scaled. A wait on a program that makes a hundred process
 starts, and so takes as long as the machine makes it (contrib/isolated-yard's
@@ -646,8 +660,8 @@ once for the train, so a wagon landing on its train's branch leaves the
 rows alone. The rewrite has a deadline of its own, `YARDR_REWRITE_TIMEOUT`
 seconds, 120 unless set. A value that is not a whole number of seconds
 holds the bead, or the train, before the rewrite runs. The tests that
-follow have a deadline too, `YARDR_TEST_TIMEOUT`, which leaves out the
-seconds the run queued on the race lock. The rewrite waits on no race
+follow use the [assembly test deadline](../contrib/assembly/README.md),
+described under Environment. The rewrite waits on no race
 lock, so the script credits nothing to its deadline. Past the deadline the
 script kills the run's whole process tree and holds the bead, or the train
 under `integrate-train`, with a note that carries the last 4000 bytes of

@@ -81,7 +81,8 @@
 # Option, set in the group's cmd:
 #
 #   YARDR_TEST_TIMEOUT  seconds the test command may run, besides what it
-#                       waited for the race lock (default 1800)
+#                       waited for the race lock and for a machine-wide
+#                       gate slot (default 1800)
 #
 # The test command is the one every landing runs, run as merge-local runs it,
 # in the checkout of the merge and with YARDR_LANDING=1. This run is the pull
@@ -610,7 +611,7 @@ gradle_fails() {
 # in $lines, the failing tests in $fails (the full log's FAIL and XCTest
 # lines, and the Gradle names, deduped, at most $FAILS, only when the log
 # runs past the tail), and $late set when it ran past $LIMIT seconds besides
-# what it waited for the race lock. It adds the seconds the run took to $secs,
+# reported race-lock and gate-slot waits. It adds the run's seconds to $secs,
 # which a second run after a signal adds to. A red run's full log stays in
 # $log until the outcome attaches it to the bead; a green run's is removed
 # at once, as ever. The bound is sh's own, as in merge-local, which says why
@@ -654,29 +655,60 @@ runtest() {
     # so a watcher left holding one belongs to a run that is already over.
     closefds
     # The deadline counts only time not spent waiting for the race lock: a
-    # run late in the queue would otherwise be killed with every test
+    # landing late in the queue would otherwise be killed with every test
     # green. Sleep $LIMIT, then sleep again for the waited seconds not yet
     # credited, repeating until no new wait is found; only then mark late
     # and kill. The gate prints a start marker while it waits and a final
     # `test: waited N s` line when it acquires the lock; account for the
-    # elapsed active wait too, since it may outlast LIMIT. The loop is
-    # merge-local's, copied: the scripts are installed one file each, and
-    # merge-local also ships in the packs, so there is no shared file for
-    # them to source. A fix to one is made in all (a test holds them equal).
+    # elapsed active wait too, since it may outlast LIMIT.
+    # The machine-wide gate slots (integrations/gate-slot.sh, which wraps the
+    # depots' test commands) are a wait of the same kind: with a long line
+    # the whole deadline once went on the queue and no test ran
+    # (doc-platform-ybbh). The gate prints `gate: waiting for a slot (...),
+    # N s` every minute while it waits, the seconds since it began, and
+    # `gate: running in slot K of M, after N s` once it is admitted, the
+    # final wait. An admitted wait counts its N; one still open counts its
+    # latest N plus the seconds since the preceding inspection (or watcher
+    # startup for the first inspection), so a wait outlasting the deadline
+    # is never cut off between two lines.
+    # Those seconds count up to two of the gate's line intervals only: a gate
+    # still waiting prints a newer line by then, and a stray waiting line
+    # (a gate killed while it waited, a test's own output) followed by a hang
+    # would otherwise lift the deadline for good.
+    gap=${YARD_GATE_WAIT_LINE_S:-60}
+    case "$gap" in ''|*[!0-9]*) gap=60 ;; esac
+    gap=$((2 * gap))
     credited=0
     parred=0
     wait_for=$LIMIT
+    observed=$(date +%s)
+    open_s=
+    open_at=
     while :; do
       sleep "$wait_for" &
       nap=$!
       echo "$nap" >"$napfile"
       wait "$nap"
-      waited=$(awk -v now="$(date +%s)" '
+      now=$(date +%s)
+      # shellcheck disable=SC2046 # two numbers, split on purpose
+      set -- $(awk -v now="$now" '
         /^test: race lock wait started at [0-9]+$/ { active=$NF; next }
         /^test: waited [0-9]+ s for the race lock$/ { total+=$3; active="" }
-        END { if (active != "") total += now-active; print total+0 }
+        /^gate: waiting for a slot \([0-9]+ (running|ahead in line)\), [0-9]+ s$/ { gate=$(NF-1); next }
+        /^gate: running in slot [0-9]+ of [0-9]+, after [0-9]+ s$/ { total+=$(NF-1); gate="" }
+        END { if (active != "") total += now-active; print total+0, (gate == "" ? "-" : gate) }
       ' "$log" 2>/dev/null)
+      waited=${1:-0}
       case "$waited" in ''|*[!0-9]*) waited=0 ;; esac
+      case "${2:--}" in
+        -|*[!0-9]*) open_s= ;;
+        *)
+          if [ "$2" != "$open_s" ]; then open_s=$2; open_at=$observed; fi
+          since=$((now - open_at))
+          [ "$since" -le "$gap" ] || since=$gap
+          waited=$((waited + open_s + since))
+          ;;
+      esac
       # A race leg the gate throttled with -p runs slower by design, so the
       # deadline follows it: cores over -p, floored at 1, times LIMIT. The
       # gate says the throttle in one line; without it the factor is 1 and
@@ -705,7 +737,8 @@ runtest() {
       esac
       extension=0
       [ "$fact" -gt 1 ] && extension=$(((fact - 1) * limitnum))
-      extra=$((waited - credited + extension - parred))
+      credited=$((credited + now - observed))
+      extra=$((limitnum + waited - credited + extension))
       if [ "$extra" -le 0 ]; then
         break
       fi
@@ -713,7 +746,7 @@ runtest() {
       if [ "$parred" -eq 0 ] && [ "$fact" -gt 1 ]; then
         echo "deadline $LIMIT s x $fact for -p=$par on $cores cores" >>"$log"
       fi
-      credited=$waited
+      observed=$now
       parred=$extension
       wait_for=$extra
     done

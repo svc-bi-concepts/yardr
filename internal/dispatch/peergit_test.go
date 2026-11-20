@@ -312,6 +312,90 @@ func TestPeerCodeRemoteDown(t *testing.T) {
 	}
 }
 
+// A depot that lacks the group's remote is not sent from: the bead is held
+// with the reason and the command that adds the remote, nothing goes to the
+// peer, and once the remote is back the hold lifted sends it.
+func TestPeerBeadNotSentWithoutRemote(t *testing.T) {
+	t.Parallel()
+	clock := newClock()
+	a, b := newPeerYard(t, "a", clock), newPeerYard(t, "b", clock)
+	link(t, a, b, true, true)
+	remote := sharedRemote(t)
+	b.clones(t, remote)
+	b.takes(t, "a", "web")
+	aRepo := a.sendsFrom(t, remote, "b", nil)
+	gitIn(t, aRepo, "remote", "remove", "origin")
+	mine := a.bead(t, "Add the export")
+	a.pass(t)
+
+	if sent := a.beadEvents(t, mine.ID, "peer_bead_sent"); len(sent) != 0 {
+		t.Fatalf("a sent the bead from a depot with no origin: %+v", sent)
+	}
+	if got := a.get(t, mine.ID); got.Stage != "build" || !got.Hold {
+		t.Fatalf("a's bead = %+v, want held in build", got)
+	}
+	blocked := a.events(t, "session_blocked")
+	if len(blocked) != 1 || !strings.Contains(fmt.Sprint(blocked[0].Data["reason"]), "has no remote origin") ||
+		!strings.Contains(fmt.Sprint(blocked[0].Data["reason"]), "git -C "+aRepo+" remote add origin <url>") {
+		t.Fatalf("a's session_blocked = %+v, want the reason to name origin and the command", blocked)
+	}
+	if bs, _ := b.api.ListBeads(context.Background(), store.BeadFilter{Label: "from-a"}); len(bs) != 0 {
+		t.Fatalf("b has %d open beads of a: the bead was sent", len(bs))
+	}
+
+	gitIn(t, aRepo, "remote", "add", "origin", remote)
+	_, err := a.api.SetHold(context.Background(), mine.ID, false, store.Expect{}, "jo")
+	must(t, err)
+	a.pass(t)
+	if sent := a.beadEvents(t, mine.ID, "peer_bead_sent"); len(sent) != 1 {
+		t.Fatalf("a's peer_bead_sent once the remote was back = %+v", sent)
+	}
+}
+
+// The remote of the depot is removed after the bead is sent: the return's
+// branch cannot be fetched, which is a try that fails and not a branch
+// that is not this yard's. The bead is held after its tries, and once the
+// remote is added again and the hold lifted, the branch is taken.
+func TestPeerCodeRemoteRemovedAfterSend(t *testing.T) {
+	t.Parallel()
+	clock := newClock()
+	a, b := newPeerYard(t, "a", clock), newPeerYard(t, "b", clock)
+	link(t, a, b, true, true)
+	remote := sharedRemote(t)
+	bRepo := b.clones(t, remote)
+	b.takes(t, "a", "web")
+	aRepo := a.sendsFrom(t, remote, "b", map[string]any{store.GroupTries: float64(2)})
+	mine := a.bead(t, "Add the export")
+	a.pass(t)
+	theirs := b.from(t, "a")
+	commit := b.builds(t, bRepo, theirs)
+	b.done(t, theirs.ID)
+	gitIn(t, aRepo, "remote", "remove", "origin")
+	b.pass(t)
+	a.pass(t)
+
+	got := a.get(t, mine.ID)
+	if got.Stage != "build" || got.Hold || got.Away().FetchTries != 1 || got.Away().FetchedAt != nil {
+		t.Fatalf("a's bead after the first fetch failed = %+v, %+v", got, got.Away())
+	}
+	clock.now = clock.now.Add(time.Minute)
+	a.pass(t)
+	got = a.get(t, mine.ID)
+	if !got.Hold || got.HeldBy != "yard" || got.Away().FetchGaveUp == nil || got.Away().FetchTries != 2 ||
+		!strings.Contains(fmt.Sprint(a.notes(t, mine.ID)), "has no remote origin") {
+		t.Fatalf("a's bead after its tries = %+v, %+v, notes %+v", got, got.Away(), a.notes(t, mine.ID))
+	}
+
+	gitIn(t, aRepo, "remote", "add", "origin", remote)
+	_, err := a.api.SetHold(context.Background(), mine.ID, false, store.Expect{}, "jo")
+	must(t, err)
+	a.pass(t)
+	got = a.settled(t, mine.ID, "review")
+	if got.Hold || branchAt(t, aRepo, store.Branch(mine.ID)) != commit {
+		t.Fatalf("a's bead once the remote was back and it was unheld = %+v, %+v", got, got.Away())
+	}
+}
+
 // What a fetched is not the commit the return names, or the branch it
 // names is no bead's: not taken, with no try that could change it. The
 // bead is held at once, no branch is made, and a person who moves the bead

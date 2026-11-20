@@ -80,17 +80,10 @@ hook_addr <host:port>) and says where the other reaches it with --url; the
 default is the listener's own address. The other need not be reachable at
 all: the link then pulls. One of the two has to be.
 
-For an existing link with no encryption pin, each operator independently
-gets the other yard's fresh v2 invite over a trusted channel. The reachable
-yard runs --enroll <existing-peer-name> --invite <fresh-v2-invite>; the
-caller adds those flags to the address and code command. Both operators
-compare a fresh check. Only the missing pin is filled; link settings and
-queued work stay in place. A different identity or an existing different
-pin is refused. Removing and adding a peer loses its queues, grants and
-custody records.
-
-Enrollment requires a terminal and refuses --yes, --json, --name and --expose.
-See docs/peers.md, "Enrolling a legacy link", for the procedure and recovery.
+For an existing link, --enroll can fill a missing encryption pin or refresh
+the peer's advertised name. See docs/peers.md, "Enrolling a legacy link",
+for the procedure, confirmation requirements and recovery. Removing and
+adding a peer loses its queues, grants and custody records.
 
 For a new link without a terminal, --yes confirms the check without
 asking, and prints it. That is for scripts and tests, on a network you trust:
@@ -174,7 +167,7 @@ prints two documents, the code at once and the result at the end.`,
 	}
 	cmd.Flags().StringVar(&opt.name, "name", "", "the name to save the other yard under (default: the name it gives itself)")
 	cmd.Flags().StringVar(&opt.invite, "invite", "", "fresh v2 invite independently obtained from the peer operator; required with --enroll")
-	cmd.Flags().StringVar(&opt.enroll, "enroll", "", "fill the missing encryption pin of this existing peer after the authenticated pairing")
+	cmd.Flags().StringVar(&opt.enroll, "enroll", "", "enroll this existing peer's encryption pin or advertised name; see docs/peers.md")
 	cmd.Flags().StringVar(&opt.url, "url", "", "where the other yard reaches this one's listener, such as http://10.0.0.5:8790 (default: the listener's address)")
 	cmd.Flags().BoolVar(&opt.yes, "yes", false, "confirm the check without asking, and print it (scripts and tests)")
 	cmd.Flags().StringSliceVar(&opt.expose, "expose", nil, "crew member or user of this yard the other may see and write to (repeatable)")
@@ -246,11 +239,24 @@ func (a *app) progress(w, warn io.Writer, format string, args ...any) {
 	fmt.Fprintf(w, format+"\n", args...)
 }
 
+// enrollRename says, before the check is compared, that the peer being
+// enrolled calls itself by another name than this yard has saved. The check
+// covers the name too, so both operators see it; this line is what makes
+// the change visible to the one who confirms it.
+func (a *app) enrollRename(w, warn io.Writer, peer, saved, calls string) {
+	if saved == "" || saved == calls {
+		return
+	}
+	a.progress(w, warn, "%s calls itself %s now; this yard has it saved as %s. Confirm the check only if the other operator knows it was renamed.", peer, calls, saved)
+}
+
 // confirmCheck shows the check and asks the operator whether the other
-// yard's is the same. With --yes it is printed and not asked.
-func (a *app) confirmCheck(w, warn io.Writer, opt pairOpts, peer, calls, check string) (bool, error) {
+// yard's is the same. previous is the name the peer was saved under when
+// this is an enrollment ("" otherwise), shown beside calls. With --yes it
+// is printed and not asked.
+func (a *app) confirmCheck(w, warn io.Writer, opt pairOpts, peer, calls, previous, check string) (bool, error) {
 	if opt.form != nil {
-		return askSame(w, calls, check)
+		return askSame(w, calls, previous, check)
 	}
 	a.progress(w, warn, "\n  check  %s\n", check)
 	if opt.yes {
@@ -429,7 +435,10 @@ func (a *app) pairHosted(w, warn io.Writer, ctx context.Context, st store.API, p
 			if opt.form == nil {
 				a.progress(w, warn, "%s called (it calls itself %s). Its key: %s", now.Peer, now.Calls, now.Key)
 			}
-			yes, err := a.confirmCheck(w, warn, opt, now.Peer, now.Calls, now.Check)
+			if now.Enroll != "" {
+				a.enrollRename(w, warn, now.Enroll, now.PreviousCalls, now.Calls)
+			}
+			yes, err := a.confirmCheck(w, warn, opt, now.Peer, now.Calls, now.PreviousCalls, now.Check)
 			if err != nil {
 				return nil, err
 			}
@@ -516,7 +525,9 @@ func peerEnrollment(ctx context.Context, st store.API, opt pairOpts) (*store.Pee
 	if err != nil {
 		return nil, fmt.Errorf("peer %s: %w", opt.enroll, err)
 	}
-	if expected.Key != invite.Key || expected.Calls != invite.Name || expected.URL != invite.URL ||
+	// The name the peer calls itself may have changed since it was linked:
+	// it is shown in the check, and the key, encryption key and URL must hold.
+	if expected.Key != invite.Key || expected.URL != invite.URL ||
 		(expected.Enc != "" && expected.Enc != invite.Enc) {
 		return nil, fmt.Errorf("peer %s identity or authority does not match the fresh invite", opt.enroll)
 	}
@@ -625,7 +636,14 @@ func (a *app) pairJoin(w, warn io.Writer, ctx context.Context, cfg *config.Confi
 			a.progress(w, warn, "it gives its address as %s; this yard keeps the one it answered at", host.URL)
 		}
 	}
-	yes, err := a.confirmCheck(w, warn, opt, peer.Name, host.Name, called.Check())
+	if existing != nil {
+		a.enrollRename(w, warn, existing.Name, existing.Calls, host.Name)
+	}
+	previous := ""
+	if existing != nil {
+		previous = existing.Calls
+	}
+	yes, err := a.confirmCheck(w, warn, opt, peer.Name, host.Name, previous, called.Check())
 	if err == nil && yes && opt.form != nil {
 		// As on the yard that is called: every question before this yard's yes.
 		var name string

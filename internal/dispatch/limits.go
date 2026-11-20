@@ -467,6 +467,15 @@ func (d *Dispatcher) idleNudge(ctx context.Context, r Runner, s *store.Session, 
 		return
 	}
 	text := fmt.Sprintf("yardr: your bead is still in %s: write your note and hand on, or say what blocks you.", s.Stage)
+	if command, why, ok := d.refusedMove(ctx, s); ok {
+		// The agent took its refused done for done: it is told which
+		// command the yard refused, and that it runs again once cleared.
+		if why == store.RefusedUnread {
+			text += " Your last move was refused (unread note); ack the notes it names with `yardr bead note " + s.Bead + " --ack <seq>` and the yard runs it again itself."
+		} else {
+			text += fmt.Sprintf(" Your last move was refused (%s); to hand on, run %s again once it is allowed.", why, command)
+		}
+	}
 	told, delivery, err := d.nudgeSession(ctx, r, s, text)
 	if err != nil {
 		// For good, as a note's telling that fails: give up for this
@@ -485,6 +494,31 @@ func (d *Dispatcher) idleNudge(ctx context.Context, r Runner, s *store.Session, 
 		data["pane"] = pane
 	}
 	_ = d.Store.LogDispatch(ctx, s.Bead, "session_idle_nudge", actor, data)
+}
+
+// refusedMove reads the command of session s's last move on its bead and
+// the reason the yard refused it, when that move was refused and the bead
+// has moved on from it: nothing advanced the bead since. ok is false
+// otherwise, and for a session with no bead.
+func (d *Dispatcher) refusedMove(ctx context.Context, s *store.Session) (command, reason string, ok bool) {
+	if s.Bead == "" {
+		return "", "", false
+	}
+	evs, err := d.Store.Events(ctx, s.Bead, 200)
+	if err != nil {
+		return "", "", false
+	}
+	for i := len(evs) - 1; i >= 0; i-- {
+		switch e := evs[i]; {
+		case e.Kind == "advanced":
+			return "", "", false
+		case e.Kind == store.MoveRefused && e.Data["session"] == s.ID:
+			command, _ = e.Data["command"].(string)
+			reason, _ = e.Data["reason"].(string)
+			return command, reason, command != ""
+		}
+	}
+	return "", "", false
 }
 
 // outcomeIdle sends the idle session s one line with the outcomes its stage

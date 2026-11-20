@@ -1964,7 +1964,9 @@ func TestFusesAreSizedToTheMachine(t *testing.T) {
 		{"", "25", 150 * time.Second, 750},
 		{"2.5", "25", 150 * time.Second, 750},
 		{"1.5", "35", 210 * time.Second, 1050},
-		{"4.0", "100", 4 * time.Minute, 1200},
+		// The machine at load 100 on 10 cores is a factor of 10, capped at 8
+		// (testload's maxFactor), so the larger of the two is 8, not the gate's 4.
+		{"4.0", "100", 8 * time.Minute, 2400},
 	} {
 		t.Run(fmt.Sprintf("factor %q on load %s", c.factor, c.avg), func(t *testing.T) {
 			t.Setenv("YARDR_TEST_LOADAVG", c.avg)

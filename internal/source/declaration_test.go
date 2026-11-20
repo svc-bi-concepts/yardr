@@ -1569,7 +1569,7 @@ func TestParseThreadLinkRefusals(t *testing.T) {
 		"state with empty states":        {src("thread:\n  state: [linear/thread, state]\n  states: []\n"), "thread.states: missing"},
 		"a state the yard has not":       {src("thread:\n  state: [linear/thread, state]\n  states: [started, blocked]\n"), "thread.states: blocked is no state of a thread (started, review, done)"},
 		"a place of two words":           {src("thread:\n  open: [linear/thread, open]\n  place: the team\n"), `thread.place: "the team": one word`},
-		"a key it does not have":         {src("thread:\n  wait: [linear/thread, wait]\n"), "thread.wait: unknown key (known here: reply, posted, read, file, open, opened, state, place, states, labels, assignee, files, formats)"},
+		"a key it does not have":         {src("thread:\n  wait: [linear/thread, wait]\n"), "thread.wait: unknown key (known here: reply, posted, read, file, open, opened, state, place, states, labels, assignee, files, formats, broadcast)"},
 		"formats without reply":          {src("thread:\n  formats: [markdown]\n"), "thread.formats: thread.reply, thread.posted and thread.read are required"},
 		"formats of wrong type":          {src("thread:\n  formats: markdown\n"), "thread.formats: want a list"},
 		"invalid format name":            {src("thread:\n  formats: ['two words']\n"), "thread.formats: want distinct format names"},

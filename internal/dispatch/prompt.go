@@ -66,6 +66,14 @@ type ScreenWatcher interface {
 	HarnessScreen(ctx context.Context, handle map[string]any) (up, known bool)
 }
 
+// AgentReadier is implemented by runners that know whether the agent of a
+// session is ready for input by other means than its screen (herdr's
+// interactive_ready), for a kind whose screen they cannot read. Only the
+// first prompt asks it, where ScreenWatcher says nothing.
+type AgentReadier interface {
+	AgentReady(ctx context.Context, handle map[string]any) (up, known bool)
+}
+
 // TrustAcceptor is implemented by runners that answer the folder-trust
 // dialog a harness draws on its first start in a directory, the
 // use-this-API-key dialog one draws on its first start with a key in its
@@ -125,6 +133,14 @@ type InputReader interface {
 	InputText(ctx context.Context, handle map[string]any) (text string, known bool, err error)
 }
 
+// ComposerReader is implemented by runners that also say why an input reads
+// as it does (the herdr runner). composer is the runner's fixed reason code
+// for the text, "" when it names none; it is a diagnostic only, and what is
+// typed is decided by text alone, as InputReader's is.
+type ComposerReader interface {
+	InputComposer(ctx context.Context, handle map[string]any) (text string, known bool, composer string, err error)
+}
+
 // DialogReader is implemented by runners that know questions a harness
 // draws in place of its input (the herdr runner, from the kind's file):
 // dialog is the word for the one the agent of handle is at and line its
@@ -158,6 +174,7 @@ type hold struct {
 	waited       time.Duration
 	dialog, line string
 	login        string
+	composer     string // why the input reads as text (ComposerReader), "" when not told
 }
 
 func (h hold) tells() bool { return h.waited > 0 || h.dialog != "" || h.login != "" }
@@ -210,12 +227,19 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 	if at, why := d.loginAt(ctx, r, key, handle); at {
 		return true, why
 	}
-	ir, ok := r.(InputReader)
-	if !ok {
+	var text, composer string
+	var known bool
+	var err error
+	done := askTimer(ctx, askPane)
+	switch rd := r.(type) {
+	case ComposerReader:
+		text, known, composer, err = rd.InputComposer(ctx, handle)
+	case InputReader:
+		text, known, err = rd.InputText(ctx, handle)
+	default:
+		done()
 		return false, hold{}
 	}
-	done := askTimer(ctx, askPane)
-	text, known, err := ir.InputText(ctx, handle)
 	done()
 	if err != nil || !known || strings.TrimSpace(text) == "" {
 		delete(d.drafts, key)
@@ -236,7 +260,7 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 	}
 	if !w.said && now.Sub(w.since) >= d.DraftWait {
 		w.said = true
-		return true, hold{waited: now.Sub(w.since)}
+		return true, hold{waited: now.Sub(w.since), composer: composer}
 	}
 	return true, hold{}
 }
@@ -325,7 +349,9 @@ type InputMarker interface {
 // dialog of the harness the reason is the word "dialog", `dialog` the
 // dialog's own word and `text` its first line. For the harness's login
 // screen the reason is not_logged_in and `line` its line, with the command
-// that logs in.
+// that logs in. For text in the input, `composer` is the runner's fixed
+// reason for the text when it names one (ComposerReader), so the event says
+// what the input was taken for without its words.
 func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map[string]any, what string, why hold) {
 	waited := why.waited
 	data := map[string]any{
@@ -362,6 +388,11 @@ func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map
 	if pane, _ := handle["pane"].(string); pane != "" {
 		data["pane"] = pane
 	}
+	if why.composer != "" {
+		// The fixed code of the runner's composer reason, so the next
+		// incident says what the input was taken for (yardr-pce2).
+		data["composer"] = why.composer
+	}
 	for k, v := range who {
 		data[k] = v
 	}
@@ -372,7 +403,7 @@ func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map
 	case why.dialog != "":
 		d.Log.Warn("a dialog of the agent's harness holds back "+what, "bead", bead, "who", who, "dialog", why.dialog, "line", why.line)
 	default:
-		d.Log.Warn("text in the agent's input holds back "+what, "bead", bead, "who", who, "waited", waited.Round(time.Second))
+		d.Log.Warn("text in the agent's input holds back "+what, "bead", bead, "who", who, "waited", waited.Round(time.Second), "composer", why.composer)
 	}
 	_ = d.Store.LogDispatch(ctx, bead, "nudge_held", actor, data)
 }
@@ -623,6 +654,9 @@ func (d *Dispatcher) pendingPrompt(ctx context.Context, r Runner, key string, ha
 	if sw, ok := r.(ScreenWatcher); ok {
 		done := askTimer(ctx, askPane)
 		up, known := sw.HarnessScreen(ctx, handle)
+		if ar, ok := r.(AgentReadier); ok && !known {
+			up, known = ar.AgentReady(ctx, handle)
+		}
 		done()
 		if known && !up {
 			// Idle counts from the screen, which a harness may still be

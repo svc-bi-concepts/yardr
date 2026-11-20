@@ -692,3 +692,58 @@ func TestFootSweepAndRetry(t *testing.T) {
 		t.Fatalf("due after the retry waits out, its send recorded late = %+v", rows)
 	}
 }
+
+// A sweep that drops nothing must not write: a write pings every waker, and
+// the daemon's pass wakes on that, so the sweep on each push tick woke every
+// yard's daemon once a second while it had nothing to do. A sweep that drops
+// a row still writes, and so wakes.
+func TestFootSweepDropsNothingWritesNothing(t *testing.T) {
+	pinClockFixed(t, footNow)
+	y := newFootYard(t)
+	pinClock(t, &y.now)
+	wake, err := y.Wake(y.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nothing queued: an idle sweep finds nothing to drop.
+	if expired, stale, err := y.FootSweep(y.ctx); err != nil || expired != 0 || stale != 0 {
+		t.Fatalf("idle sweep = %d expired, %d stale, %v", expired, stale, err)
+	}
+	select {
+	case <-wake:
+		t.Fatal("an idle sweep woke the waker: it committed a write")
+	default:
+	}
+
+	// A row still waiting to go is kept, and the sweep writes nothing for it.
+	if err := y.Mail(y.ctx, "ada", "the tests are green", "yardmaster"); err != nil {
+		t.Fatal(err)
+	}
+	select { // the mail's own write
+	case <-wake:
+	default:
+		t.Fatal("the mail's write did not wake the waker")
+	}
+	if expired, stale, err := y.FootSweep(y.ctx); err != nil || expired != 0 || stale != 0 {
+		t.Fatalf("sweep of a waiting row = %d expired, %d stale, %v", expired, stale, err)
+	}
+	select {
+	case <-wake:
+		t.Fatal("a sweep that kept every row woke the waker")
+	default:
+	}
+
+	// Past the age the rows go, and that write wakes.
+	y.now = y.now.Add(7 * time.Hour)
+	if expired, stale, err := y.FootSweep(y.ctx); err != nil || expired == 0 {
+		t.Fatalf("sweep past the age = %d expired, %d stale, %v", expired, stale, err)
+	}
+	select {
+	case <-wake:
+	default:
+		t.Fatal("a sweep that dropped rows did not wake the waker")
+	}
+	if rows := y.due(t); len(rows) != 0 {
+		t.Fatalf("rows left after the sweep = %+v", rows)
+	}
+}

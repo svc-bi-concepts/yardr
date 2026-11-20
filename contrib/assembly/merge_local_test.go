@@ -857,6 +857,69 @@ func (y *yard) refusedOf(id string) []string {
 	return out
 }
 
+// The reviewer's approved commit, from the bead's notes, must be on the branch
+// before it is rebased and landed (yard-sa1r, as infra-land.sh does for PRs).
+// A branch that contains it lands; a branch on another line of commits is
+// refused back to its builders, with both shas named; a bead with no approval
+// lands as before and the log says so.
+func TestMergeLocalApprovedCommit(t *testing.T) {
+	t.Parallel() // as its subtests are: see TestMain
+	t.Run("branch descends from the approved commit lands", func(t *testing.T) {
+		y := newYard(t)
+		approved := y.commit(y.wt, "b.txt", "reviewed\n")
+		y.commit(y.wt, "c.txt", "later\n")
+		y.yardrIn("Reviewed "+approved+" by the review.\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: the branch contains the approved commit\n%s", b.Stage, y.log)
+		}
+		if !strings.Contains(y.log, "contains the reviewer-approved") {
+			t.Fatalf("the log does not say the approved commit is on the branch:\n%s", y.log)
+		}
+	})
+
+	t.Run("branch on another line of commits is refused with both shas", func(t *testing.T) {
+		y := newYard(t)
+		main := y.git(y.repo, "rev-parse", "main")
+		// The reviewed commit sits on a line the branch does not have: a commit
+		// on main's tree, made without a checkout.
+		approved := y.git(y.repo, "commit-tree", y.git(y.repo, "rev-parse", "main^{tree}"), "-p", "main", "-m", "reviewed")
+		branch := y.commit(y.wt, "b.txt", "bead\n")
+		y.yardrIn("approved "+approved+"\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "new" {
+			t.Fatalf("bead in %s, want new: the branch lacks the approved commit\n%s", b.Stage, y.log)
+		}
+		notes := y.notes()
+		for _, sha := range []string{approved, branch} {
+			if !strings.Contains(notes, sha) {
+				t.Fatalf("the refusal does not name %s:\n%s", sha, notes)
+			}
+		}
+		if got := y.git(y.repo, "rev-parse", "main"); got != main {
+			t.Fatal("main moved on a refused branch")
+		}
+	})
+
+	t.Run("no approval recorded lands with a log line", func(t *testing.T) {
+		y := newYard(t)
+		y.commit(y.wt, "b.txt", "bead\n")
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: no approval is recorded\n%s", b.Stage, y.log)
+		}
+		if !strings.Contains(y.log, "no reviewer-approved commit recorded on r-1; landing yard/r-1 as before") {
+			t.Fatalf("the log does not say no approval is recorded:\n%s", y.log)
+		}
+	})
+}
+
 func TestMergeLocalClean(t *testing.T) {
 	y := newYardCLI(t)
 	y.hooks = true
@@ -970,6 +1033,53 @@ func TestMergeLocalRunsTheBasesCopyOfTheTestScript(t *testing.T) {
 	}
 	if strings.Contains(notes, "the copy on the branch") {
 		t.Fatalf("the branch's copy of the script ran:\n%s", notes)
+	}
+}
+
+// The base's entry script keeps its contents while $0 names its worktree
+// location, so a test may derive the checkout root without running the
+// candidate's replacement script.
+func TestMergeLocalBaseTestScriptUsesWorktreePathForLayout(t *testing.T) {
+	y := newYard(t)
+	if err := os.Mkdir(filepath.Join(y.repo, "ci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := y.commit(y.repo, "ci/run-tests.sh", "#!/bin/sh\ncd \"$(dirname \"$0\")/..\" || exit 2\ntest -e candidate-file\n")
+	y.tests("ci/run-tests.sh")
+	y.git(y.wt, "merge", "-q", "--ff-only", "main")
+	y.commit(y.wt, "candidate-file", "present\n")
+	y.commit(y.wt, "ci/run-tests.sh", "#!/bin/sh\nexit 1\n")
+
+	y.assembly()
+
+	if b := y.bead(); b.Stage != "merged" || b.Status != "closed" {
+		t.Fatalf("bead %s/%s, want merged and closed:\n%s", b.Stage, b.Status, y.notes())
+	}
+	if got := y.git(y.repo, "rev-parse", "main"); got == main {
+		t.Fatal("the branch did not land after the base script found its worktree file")
+	}
+	if strings.Contains(y.notes(), "candidate script") {
+		t.Fatalf("the base script was not recorded as the test:\n%s", y.notes())
+	}
+}
+
+// A syntax error in the trusted base script is a hold (exit 2), matching the
+// test command's cannot-run contract rather than reporting a red test.
+func TestMergeLocalHoldsWhenTheBasesTestScriptHasASyntaxError(t *testing.T) {
+	y := newYard(t)
+	y.commit(y.repo, "run-tests.sh", "if then\n")
+	y.tests("run-tests.sh")
+	y.git(y.wt, "merge", "-q", "--ff-only", "main")
+	y.commit(y.wt, "run-tests.sh", "#!/bin/sh\nexit 0\n")
+
+	y.assembly()
+
+	b := y.bead()
+	if !b.Hold || b.Stage != "approved" {
+		t.Fatalf("bead %s hold=%v, want held in approved:\n%s", b.Stage, b.Hold, y.notes())
+	}
+	if !strings.Contains(y.notes(), "could not run") {
+		t.Fatalf("hold does not say the base test could not run:\n%s", y.notes())
 	}
 }
 
@@ -1340,6 +1450,52 @@ func TestMergeLocalHoldsARewriteThatRunsPastItsDeadline(t *testing.T) {
 	if n := runs(t, ran); n != 1 {
 		t.Fatalf("the rewrite ran %d times in all, want 1: a deadline that is no number runs none", n)
 	}
+}
+
+// The machine-wide gate slots are a wait like the race lock's: a test command
+// run through integrations/gate-slot.sh prints its line while it waits for a
+// slot and its final wait once admitted, and the deadline counts those seconds
+// as it does the race lock's, so a run admitted late in a long line still gets
+// its full LIMIT (doc-platform-ybbh). Here LIMIT is 2 and the wait 20 s, so the
+// run of 5 s must pass; without the credit it is killed at 2 s. A wait still
+// open at the deadline counts too, for as long as its line is the newest.
+func TestMergeLocalDeadlineCountsAGateSlotWait(t *testing.T) {
+	t.Run("admitted after its wait", func(t *testing.T) {
+		y := newYard(t)
+		y.tests(`echo "gate: running in slot 1 of 3, after 20 s"; sleep 5`)
+		y.opts = "YARDR_TEST_TIMEOUT=2"
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: the wait was not credited:\n%s", b.Stage, y.notes())
+		}
+	})
+	for _, status := range []string{"2 ahead in line", "2 running"} {
+		t.Run("zero credit then admitted/"+status, func(t *testing.T) {
+			y := newYard(t)
+			y.tests(`echo "gate: waiting for a slot (` + status + `), 0 s"; sleep 5; echo "gate: running in slot 1 of 3, after 5 s"; sleep 1`)
+			y.opts = "YARDR_TEST_TIMEOUT=2"
+
+			y.assembly()
+
+			if b := y.bead(); b.Stage != "merged" {
+				t.Fatalf("bead in %s, want merged: the initial wait was not credited:\n%s", b.Stage, y.notes())
+			}
+		})
+	}
+
+	t.Run("still waiting at the deadline", func(t *testing.T) {
+		y := newYard(t)
+		y.tests(`echo "gate: waiting for a slot (2 ahead in line), 20 s"; sleep 5`)
+		y.opts = "YARDR_TEST_TIMEOUT=2"
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: the open wait was not credited:\n%s", b.Stage, y.notes())
+		}
+	})
 }
 
 // The lowering comes before the design check, so a design bead lands as ever on

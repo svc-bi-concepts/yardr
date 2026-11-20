@@ -112,7 +112,7 @@ func TestTextLeftInTheInputIsSaidOnceAndNeverTypedAfter(t *testing.T) {
 		must(t, d.Reconcile(ctx))
 	}
 	n, ev := kindCount(t, s, r.Journal, "nudge_held")
-	if n != 1 || ev.Data["crew"] != "yardmaster" || ev.Data["reason"] == nil {
+	if n != 1 || ev.Data["crew"] != "yardmaster" || ev.Data["reason"] == nil || ev.Data["composer"] != "draft" {
 		t.Fatalf("nudge_held logged %d times, want once, naming the crew member: %+v", n, ev)
 	}
 	if len(f.nudges) != 0 || f.submits != 0 || f.input != "some creative.." {

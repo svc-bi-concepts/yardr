@@ -505,8 +505,10 @@ at all.
 - Text that stays is never cleared and never typed after. After ten minutes
   one `nudge_held` event on the crew member's journal says so, once per wait,
   with the pane (`yardr events --bead <name>-journal`); the nudge is typed
-  when the text is sent or cleared. `nudge_held` is of the class
-  `attention`, so the yardmaster's inbox has it of every other crew member
+  when the text is sent or cleared. Its `composer` names why the input reads
+  as text: `draft`, or `garbled` for a redraw that puts one character on each
+  line. It is one fixed word and never the text itself. `nudge_held` is of
+  the class `attention`, so the yardmaster's inbox has it of every other crew member
   and of a bead's session.
 - One short mail arrives in the nudge itself: where the session's slice
   holds exactly one unread entry, it is mail, and its line is at most 600
@@ -1005,6 +1007,12 @@ without one. A source whose file does not say its replies take files is
 refused (`--file` there would send the words and drop the files); mail
 and a note on another yard's bead take no `--file`.
 
+With `--broadcast`, a reply also appears in the channel when the source
+supports it. Direct and group direct messages, mail and notes on another
+yard's bead cannot be broadcast, and `--broadcast` cannot be combined
+with `--file`. For Slack's required permissions and setup, see
+[the Slack pack](../packs/slack/SETUP.md).
+
 yardr only types. The call is made by the CLI in the crew member's pane with
 the credential its `env_file` put there (`LINEAR_API_KEY`; for GitHub
 [an App's two lines](#as-a-github-app), else `GITHUB_TOKEN`); the server is
@@ -1032,8 +1040,9 @@ at the end of the body, which renders as nothing. Run the same `yardr
 reply` again, after a timeout or a crash, and yardr answers from the
 record when the post is known to have landed, else asks the source for the
 comment that key made and records it, and only posts when there is none.
-Another text, another `--to`, or other files are another reply. A call to a source is
-bounded at two minutes, well past a slow day at Linear, so a post that
+Another text, another `--to`, other files, or changing `--broadcast` are
+another reply. Retry with the same broadcast choice to reuse its record.
+A call to a source is bounded at two minutes, well past a slow day at Linear, so a post that
 landed slowly is not reported as failed and made again.
 
 **Slack.** A Slack delivery lands in the line session's slice, whoever

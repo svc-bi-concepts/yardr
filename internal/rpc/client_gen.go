@@ -40,6 +40,9 @@ func (c *Client) AdvanceNote(ctx context.Context, id, stage, note string, exp st
 func (c *Client) Done(ctx context.Context, id, outcome, note string, exp store.Expect, actor string) (*store.Bead, error) {
 	return callV[*store.Bead](c, ctx, "Done", id, outcome, note, exp, actor)
 }
+func (c *Client) RetryRefusedDone(ctx context.Context, id, session, actor string) (*store.RetriedMove, error) {
+	return callV[*store.RetriedMove](c, ctx, "RetryRefusedDone", id, session, actor)
+}
 func (c *Client) CloseBead(ctx context.Context, id, reason string, exp store.Expect, actor string) (*store.Bead, error) {
 	return callV[*store.Bead](c, ctx, "CloseBead", id, reason, exp, actor)
 }
@@ -532,6 +535,12 @@ func (c *Client) Mail(ctx context.Context, to, text, actor string, files ...stor
 func (c *Client) MailReply(ctx context.Context, to, text, actor string, answered uint64) error {
 	return c.call(ctx, "MailReply", nil, to, text, actor, answered)
 }
+func (c *Client) MailLocalReceipt(ctx context.Context, to, text, actor string, files ...store.BlobFile) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailLocalReceipt", to, text, actor, files)
+}
+func (c *Client) MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailReplyReceipt", to, text, actor, answered)
+}
 func (c *Client) React(ctx context.Context, seq uint64, emoji, actor string) error {
 	return c.call(ctx, "React", nil, seq, emoji, actor)
 }
@@ -679,6 +688,9 @@ func (c *Client) Replying(ctx context.Context, name string, seq uint64, to, body
 }
 func (c *Client) ReplyingWithFormat(ctx context.Context, name string, seq uint64, to, body, format, actor string, files ...store.BlobFile) (*store.Reply, error) {
 	return callV[*store.Reply](c, ctx, "ReplyingWithFormat", name, seq, to, body, format, actor, files)
+}
+func (c *Client) ReplyingBroadcast(ctx context.Context, name string, seq uint64, to, body, actor string, files ...store.BlobFile) (*store.Reply, error) {
+	return callV[*store.Reply](c, ctx, "ReplyingBroadcast", name, seq, to, body, actor, files)
 }
 func (c *Client) Replied(ctx context.Context, name string, rp store.Reply, actor string) error {
 	return c.call(ctx, "Replied", nil, name, rp, actor)
@@ -828,6 +840,15 @@ func (c *Client) PeerSend(ctx context.Context, name, kind string, body json.RawM
 }
 func (c *Client) MailPeer(ctx context.Context, to, peer, text, actor string, files ...store.BlobFile) (*store.PeerOut, error) {
 	return callV[*store.PeerOut](c, ctx, "MailPeer", to, peer, text, actor, files)
+}
+func (c *Client) MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...store.BlobFile) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailPeerReceipt", to, peer, text, actor, files)
+}
+func (c *Client) MailPeerReply(ctx context.Context, answered uint64, text, actor string) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailPeerReply", answered, text, actor)
+}
+func (c *Client) MailReceiptOf(ctx context.Context, seq uint64, actor string) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailReceiptOf", seq, actor)
 }
 func (c *Client) PeerOutbox(ctx context.Context, name string, limit int) ([]store.PeerOut, error) {
 	return callV[[]store.PeerOut](c, ctx, "PeerOutbox", name, limit)

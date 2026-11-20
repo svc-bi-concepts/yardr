@@ -113,7 +113,9 @@ written for it once, when its agent is idle, but a note it never got to
 tell still stands: the session's own `yardr bead done` is refused while a
 note on the bead names that session and is not acked. The refusal lists
 each unread note, with its number, writer and text, and how to ack it
-(`yardr bead note <id> --ack <seq>`); after the ack the same done passes.
+(`yardr bead note <id> --ack <seq>`). The ack of the last such note re-runs
+the same done, with the same outcome and note, so the bead moves with no
+further command; a re-run refused for another reason is reported by that ack.
 A person moving the bead is not gated, nor is a session of a runner with
 no agent to ack (exec, manual, peer).
 
@@ -164,7 +166,10 @@ its test line wrote everything but the outcome, so its nudge names the command:
 `your note is on the bead; report the outcome: yardr bead done <id>`. A session
 still in its stall window, one judged stalled, one with a first prompt still
 unsubmitted, one with a note already due, and one whose own note carries no test
-line are not nudged.
+line are not nudged. When the session's last move on the bead was refused, the
+nudge adds it: for an unread note it names the ack (`yardr bead note <id> --ack
+<seq>`), after which the yard runs the move again itself; for any other reason it
+names the refused command, to run again once it is allowed.
 
 **A move refused to an agent is logged.** A move that works ends the
 agent's session, so an agent whose `yardr bead done` was refused sits idle
@@ -175,7 +180,7 @@ move was checked as: the pane's, else the one `YARDR_SESSION` names):
 
 | field | |
 |---|---|
-| `reason` | `stale` (the session no longer owns the bead, or the bead changed since `--revision`), `not_allowed` (the flow has no such move or outcome for the stage, or a part has no train), `not_member` (the stage's group has members and the agent is none), `not_found` (no such bead), `other` (anything else that failed the move: a flow that does not resolve, say) |
+| `reason` | `stale` (the session no longer owns the bead, or the bead changed since `--revision`), `not_allowed` (the flow has no such move or outcome for the stage, or a part has no train), `not_member` (the stage's group has members and the agent is none), `not_found` (no such bead), `unread` (a note the session was told of is not acked yet), `other` (anything else that failed the move: a flow that does not resolve, say) |
 | `command` | the move as `yardr` words, with the bead as the agent named it: `yardr bead done <id> --outcome shipped` |
 | `error` | what the agent was told |
 | `session`, `agent`, `group`, `stage` | whose session it was and the stage it was started for |
@@ -593,8 +598,8 @@ exits.
    more on the same commit, after a note with the first run's output, and
    what the second run says counts; ended by a signal again, the bead is
    held with both outputs. The script's own kill at its deadline
-   (`YARDR_TEST_TIMEOUT`, 1800 seconds besides what it waited for the race
-   lock) is not that: it is a red run. The rewrite of step 2 has a deadline of
+   ([assembly test deadline](../contrib/assembly/README.md), under Environment)
+   is not that: it is a red run. The rewrite of step 2 has a deadline of
    its own, `YARDR_REWRITE_TIMEOUT`, and past it the bead is held. The
    tests start with no descriptor above 2 that the landing did not give them:
    merge-local closes what it inherited, and where its `sh` cannot name one
@@ -2014,25 +2019,24 @@ bead's tracks link and asks GitHub as the yard's App, as merge-pr does
   and only the tree that is tested is the merge;
 - runs the depot's test command there, the one every landing runs
   (`yardr depot show`). Where the command is a file the base has
-  (`.yardr/test`), the **base commit's** copy of it runs, never the pull
-  request's, so that a pull request cannot change the script that judges
-  it; any other command runs as the pull request's own files make it. It
-  runs with `YARDR_LANDING=1` and without the App's id and key file,
-  because this is the pull request's landing run: merge-pr merges a head
-  this run passed on and no landing by the assembly follows, so no other
-  run of the command stands between the head and the base. Depot yardr's
-  `.yardr/test` then runs what a bead's landing does, the selection plus
-  the six black-box suites under `-race`, and the whole suite for a change
-  it cannot select (a dependency bump's `go.mod` or `go.sum`). The exit
-  codes mean what they do in merge-local: 1 and the like are red, 2 is
-  "could not run", above 128 is a signal and is run once more, and a run
-  past `YARDR_TEST_TIMEOUT` (1800 seconds besides what it waited for the
-  race lock) is killed and is red;
-- on green, asks GitHub for the head once more. The same head commit is
-  recorded on the bead as `ci_head` and reported `done`, to `approved`,
-  with a note naming the commit and which test ran; another commit means
-  the pull request was pushed to meanwhile and is reported `changes`. The
-  base is not asked again before the pull request is merged;
+  (`.yardr/test`), the **base's** copy of it runs, never the pull request's,
+  so that a pull request cannot change the script that judges it; any other
+  command runs as the pull request's own files make it. It runs with
+  `YARDR_LANDING=1` and without the App's id and key file, because this is
+  the pull request's landing run: merge-pr merges a head this run passed on
+  and no landing by the assembly follows, so no other run of the command
+  stands between the head and the base. Depot yardr's `.yardr/test` then runs
+  what a bead's landing does, the selection plus the six black-box suites
+  under `-race`, and the whole suite for a change it cannot select (a
+  dependency bump's `go.mod` or `go.sum`). The exit codes mean what they do
+  in merge-local: 1 and the like are red, 2 is "could not run", above 128 is
+  a signal and is run once more, and a run past the
+  [assembly test deadline](../contrib/assembly/README.md) (under Environment)
+  is killed and is red;
+- on green, asks GitHub for the head once more. The same commit is recorded
+  on the bead as `ci_head` and reported `done`, to `approved`, with a note
+  naming the commit and which test ran; another commit means the pull
+  request was pushed to meanwhile and is reported `changes`;
 - on red reports `changes`, to `contributor`, with the end of the output
   (200 lines) in the note. A head that does not merge into the base has no
   merge to test: it is `changes` too, with the conflicts and the cure,
@@ -2112,10 +2116,11 @@ both, and the github source's `mint_command` is the mint, as there. The App
 needs Pull requests read on the repositories, for the head. The group is the
 yard's, made once, and `--group pr-ci=pr-ci` maps the pack's group to it for
 every depot, so their runs queue one behind another, and a run of depot yardr
-waits for the test gate's race lock as a landing does, since it is raced (the
-wait does not count against `YARDR_TEST_TIMEOUT`). A pull request to depot
-yardr that changes `go.mod` or `go.sum` runs the whole suite, so a machine
-that needs more than the default 1800 seconds for that sets a longer
+waits for the test gate's race lock as a landing does, since it is raced
+(with queue waits accounted for by the
+[assembly test deadline](../contrib/assembly/README.md), under Environment).
+A pull request to depot yardr that changes `go.mod` or `go.sum` runs the whole
+suite, so a machine that needs more than the default for that sets a longer
 `YARDR_TEST_TIMEOUT` in the group's `cmd`. The apply writes the route for each
 depot:
 `ciwait`, type `pr`, to `pr-ci`. A yard whose `pr` flow is its own routes the

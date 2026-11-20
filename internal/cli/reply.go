@@ -88,6 +88,7 @@ func hookEnvelope(ctx context.Context, st store.API, arg string) (uint64, hooks.
 
 func (a *app) replyCmd() *cobra.Command {
 	var member, to, format string
+	var broadcast bool
 	var replyFiles []string
 	cmd := &cobra.Command{
 		Use:   "reply <seq|bead> <text|->",
@@ -127,6 +128,11 @@ whitespace, reach its reply command unchanged. Without --format, text is
 trimmed and the source keeps its usual default. Mail and peer notes take
 no --format. An unresolved reply must be retried with its original mode
 before another mode can be sent for the same answer.
+
+With --broadcast, a source whose thread declaration says broadcast true also
+sends the channel-thread reply to the channel. Sources without that capability
+refuse the option; direct and group direct messages cannot be broadcast.
+Neither option is combined with the other: a reply takes one mode.
 
 Mail to the crew member is answered by mail to its sender: mail from this
 yard (a user or a crew member) as yardr mail <sender> would send it; mail
@@ -206,6 +212,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 						if format != "" {
 							return fmt.Errorf("--format is for declared source thread replies; a peer bead takes no format")
 						}
+						if broadcast {
+							return fmt.Errorf("broadcast replies are only supported for source hook deliveries")
+						}
 						if len(replyFiles) > 0 {
 							return fmt.Errorf("--file carries files into a source's thread: %s is a bead at another yard, answered with a note", bead)
 						}
@@ -224,6 +233,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 			if bead := awayBead(ctx, st, args[0]); bead != "" {
 				if format != "" {
 					return fmt.Errorf("--format is for declared source thread replies; a peer bead takes no format")
+				}
+				if broadcast {
+					return fmt.Errorf("broadcast replies are only supported for source hook deliveries")
 				}
 				if len(replyFiles) > 0 {
 					return fmt.Errorf("--file carries files into a source's thread: %s is a bead at another yard, answered with a note", bead)
@@ -245,6 +257,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				if format != "" {
 					return fmt.Errorf("--format is for declared source thread replies; event %d is mail", seq)
 				}
+				if broadcast {
+					return fmt.Errorf("broadcast replies are only supported for source hook deliveries")
+				}
 				if len(replyFiles) > 0 {
 					return fmt.Errorf("--file carries files into a source's thread: event %d is mail, answered by mail", seq)
 				}
@@ -265,6 +280,18 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 					return fmt.Errorf("source %s cannot carry explicit reply formats", env.Source)
 				}
 				if err := formatted.CheckReplyFormat(format); err != nil {
+					return err
+				}
+			}
+			if broadcast {
+				if len(replyFiles) > 0 {
+					return fmt.Errorf("--broadcast cannot be combined with --file")
+				}
+				br, ok := r.(hooks.BroadcastReplier)
+				if !ok {
+					return fmt.Errorf("source %s does not support broadcast replies", env.Source)
+				}
+				if err := br.CheckBroadcast(env); err != nil {
 					return err
 				}
 			}
@@ -300,6 +327,8 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				if isNoSuchMethod(err, "ReplyingWithFormat") {
 					return fmt.Errorf("reserving explicit reply format (yardr server must support ReplyingWithFormat): %w", err)
 				}
+			} else if broadcast {
+				rp, err = st.ReplyingBroadcast(ctx, name, seq, to, body, a.who(), blobFiles(refs)...)
 			} else {
 				rp, err = st.Replying(ctx, name, seq, to, body, a.who(), blobFiles(refs)...)
 			}
@@ -324,7 +353,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 					}
 				}
 				if !already {
-					if filer != nil {
+					if broadcast {
+						m, err = r.(hooks.BroadcastReplier).ReplyBroadcast(ctx, env, to, body, rp.Key, cred)
+					} else if filer != nil {
 						m, err = postWithFiles(ctx, filer, a.home(), env, to, body, rp.Key, refs, cred, format)
 					} else if formatted != nil {
 						m, err = formatted.ReplyFormat(ctx, env, to, body, rp.Key, format, nil, cred)
@@ -351,6 +382,7 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				})
 		},
 	}
+	cmd.Flags().BoolVar(&broadcast, "broadcast", false, "also send a channel-thread reply to the channel")
 	cmd.Flags().StringVar(&member, "crew", "", "who is replying (default $YARDR_CREW)")
 	cmd.Flags().StringVar(&to, "to", "", "answer under this message's conversation (an id from yardr thread show)")
 	cmd.Flags().StringVar(&format, "format", "", "explicit reply mode declared by the source's thread.formats")
@@ -547,14 +579,18 @@ func (a *app) replyMail(c *cobra.Command, st store.API, seq uint64, e store.Even
 		if from == "" {
 			return fmt.Errorf("event %d is mail with no sender to answer", seq)
 		}
-		m, err := st.MailPeer(ctx, from, peer, body, name)
+		// The store answers the mail by its seq: it takes the sender, the
+		// link and the wire id from the event (MailPeerReply), so the reply
+		// names the mail it answers.
+		r, err := st.MailPeerReply(ctx, seq, body, name)
 		if err != nil {
 			return err
 		}
 		if err := a.ackAnsweredMail(ctx, st, name, seq); err != nil {
 			return err
 		}
-		queued := map[string]any{"seq": seq, "crew": name, "to": from, "peer": peer, "id": m.ID, "sent": "queued"}
+		wire, _ := e.Data["id"].(string)
+		queued := map[string]any{"seq": seq, "crew": name, "to": from, "peer": peer, "id": r.ID, "re": wire, "receipt": r, "sent": "queued"}
 		return a.out(c.OutOrStdout(), queued, func(w io.Writer) {
 			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", from, peer, peer)
 		})

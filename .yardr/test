@@ -1,4 +1,11 @@
 #!/bin/sh
+gate_slot=$HOME/ws_yardr/integrations/gate-slot.sh
+if [ "${1:-}" != sizes ] && [ "${1:-}" != --race-queue ] && [ -z "${YARDR_TEST_PLAN:-}" ] &&
+  [ -z "${YARD_GATE_SLOT_HELD:-}" ] && [ -f "$gate_slot" ]; then
+  YARD_GATE_FRESH=1
+  export YARD_GATE_FRESH
+  exec sh "$gate_slot" -- sh "$0" "$@"
+fi
 # yardr's tests: the depot's test command (yardr depot add yardr . --test
 # .yardr/test). A builder and a reviewer run it in their worktree, as it is
 # on their branch, before they hand on; the assembly runs main's copy of it
@@ -69,7 +76,7 @@
 # A wait in a contrib suite (a fuse against a hang, the deadline of a poll) is
 # written for an idle box, and the race leg sizes it to the machine it runs on
 # (sizewaits): go test -race gets YARDR_TEST_LOAD, the machine's load over its
-# cores from 1 to 4, which internal/testload multiplies each wait by, and a line
+# cores from 1 to 8, which internal/testload multiplies each wait by, and a line
 # names it. So no wait is raised by hand after it flakes in a landing. The
 # re-run of an over-budget package alone gets no factor, so that a slow path of
 # the product still shows there, and a plain run gets none: a test reads the
@@ -1683,10 +1690,12 @@ loadedmachine() {
 # sizewaits sizes the race leg's waits to this machine: it sets under, the
 # command the leg's go test runs behind, to env with YARDR_TEST_LOAD, and says
 # so in a line. The factor is the load over the cores, as loadedmachine's line
-# gives both, from 1 to 4. A machine that is quiet, or whose load is unknown, is
+# gives both, from 1 to 8. A machine that is quiet, or whose load is unknown, is
 # 1: unknown load never widens a wait, as it excuses no package from the budget.
-# 4 is about the ratio a landing has been seen in (a load of 40 on 10 cores) and
-# as much room as the waits raised by hand needed. A wait that is met returns
+# 8 is the cap internal/testload holds the machine's own factor to too (maxFactor),
+# so one rule sizes a wait whichever of the two it comes from. It was 4, and the
+# mini has run at a load of 50 to 77 on 10 cores (a factor of 5 to 8), where a
+# fuse of 60 s at 4 was 240 s and expired (yardr-b2er). A wait that is met returns
 # early however long it is, so the factor costs a green run nothing; one that is
 # not met is a hang, which a longer fuse only makes slower to report, and go
 # test's own ten minutes end a suite whatever the factor. One decimal, with a
@@ -1697,7 +1706,7 @@ sizewaits() {
     $1 == "load" && $5 == "cores" && $4 > 0 {
       f = $2 / $4
       if (f < 1) f = 1
-      if (f > 4) f = 4
+      if (f > 8) f = 8
       printf "%.1f\n", f
       found = 1
     }

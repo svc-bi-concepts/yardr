@@ -164,6 +164,11 @@ func replyHash(to, body string, files []BlobFile) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+func broadcastReplyHash(to, body string, files []BlobFile) string {
+	sum := sha256.Sum256([]byte("yardr:reply-broadcast:v1\x00" + replyHash(to, body, files)))
+	return hex.EncodeToString(sum[:])
+}
+
 // newReplyKey is a fresh UUID v4 (RFC 9562), the form Linear takes as a
 // client-chosen comment id.
 func newReplyKey() string {
@@ -186,7 +191,7 @@ func newReplyKey() string {
 // key. It is where anyone but the crew member and the operator is refused
 // (maySpeakAs), as actor.
 func (s *Store) Replying(ctx context.Context, name string, seq uint64, to, body, actor string, files ...BlobFile) (*Reply, error) {
-	return s.replying(ctx, name, seq, to, body, "", actor, files)
+	return s.replying(ctx, name, seq, to, body, "", actor, false, files)
 }
 
 // ReplyingWithFormat reserves an explicit reply only if the delivery's
@@ -196,10 +201,15 @@ func (s *Store) ReplyingWithFormat(ctx context.Context, name string, seq uint64,
 	if format == "" {
 		return nil, fmt.Errorf("replying with format: a format is required")
 	}
-	return s.replying(ctx, name, seq, to, body, format, actor, files)
+	return s.replying(ctx, name, seq, to, body, format, actor, false, files)
 }
 
-func (s *Store) replying(ctx context.Context, name string, seq uint64, to, body, format, actor string, files []BlobFile) (*Reply, error) {
+// ReplyingBroadcast records an answer whose reply is also sent to its channel.
+func (s *Store) ReplyingBroadcast(ctx context.Context, name string, seq uint64, to, body, actor string, files ...BlobFile) (*Reply, error) {
+	return s.replying(ctx, name, seq, to, body, "", actor, true, files)
+}
+
+func (s *Store) replying(ctx context.Context, name string, seq uint64, to, body, format, actor string, broadcast bool, files []BlobFile) (*Reply, error) {
 	if seq == 0 || body == "" {
 		return nil, fmt.Errorf("replying: the delivery's seq and a body are required")
 	}
@@ -208,6 +218,9 @@ func (s *Store) replying(ctx context.Context, name string, seq uint64, to, body,
 	}
 	legacyHash := replyHash(to, body, files)
 	hash := legacyHash
+	if broadcast {
+		hash = broadcastReplyHash(to, body, files)
+	}
 	answerHash := replyHash(to, strings.TrimSpace(body), files)
 	var out *Reply
 	err := s.changeCrew(name, func(w *wtx, r *CrewMember) error {

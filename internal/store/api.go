@@ -19,6 +19,7 @@ type API interface {
 	Advance(ctx context.Context, id, stage string, exp Expect, actor string) (*Bead, error)
 	AdvanceNote(ctx context.Context, id, stage, note string, exp Expect, actor string) (*Bead, error)
 	Done(ctx context.Context, id, outcome, note string, exp Expect, actor string) (*Bead, error)
+	RetryRefusedDone(ctx context.Context, id, session, actor string) (*RetriedMove, error)
 	CloseBead(ctx context.Context, id, reason string, exp Expect, actor string) (*Bead, error)
 	Reopen(ctx context.Context, id string, exp Expect, actor string) (*Bead, error)
 	SetHold(ctx context.Context, id string, hold bool, exp Expect, actor string) (*Bead, error)
@@ -205,6 +206,8 @@ type API interface {
 	Journal(ctx context.Context, name, kind, text, actor string) (bool, error)
 	Mail(ctx context.Context, to, text, actor string, files ...BlobFile) error
 	MailReply(ctx context.Context, to, text, actor string, answered uint64) error
+	MailLocalReceipt(ctx context.Context, to, text, actor string, files ...BlobFile) (MailReceipt, error)
+	MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (MailReceipt, error)
 	React(ctx context.Context, seq uint64, emoji, actor string) error
 	PutBlob(ctx context.Context, data []byte) (*BlobRef, error)
 	Inbox(ctx context.Context, name string, limit int) (*InboxPage, error)
@@ -255,6 +258,7 @@ type API interface {
 	Threads(ctx context.Context, name string) ([]Participation, error)
 	Replying(ctx context.Context, name string, seq uint64, to, body, actor string, files ...BlobFile) (*Reply, error)
 	ReplyingWithFormat(ctx context.Context, name string, seq uint64, to, body, format, actor string, files ...BlobFile) (*Reply, error)
+	ReplyingBroadcast(ctx context.Context, name string, seq uint64, to, body, actor string, files ...BlobFile) (*Reply, error)
 	Replied(ctx context.Context, name string, rp Reply, actor string) error
 	Opening(ctx context.Context, name, source, in, title, body, actor string) (*Reply, error)
 	Opened(ctx context.Context, name string, rp Reply, actor string) error
@@ -306,6 +310,9 @@ type API interface {
 	RemovePeerIdentity(ctx context.Context, name, crew, source, actor string) (*Peer, error)
 	PeerSend(ctx context.Context, name, kind string, body json.RawMessage, actor string) (*PeerOut, error)
 	MailPeer(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (*PeerOut, error)
+	MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (MailReceipt, error)
+	MailPeerReply(ctx context.Context, answered uint64, text, actor string) (MailReceipt, error)
+	MailReceiptOf(ctx context.Context, seq uint64, actor string) (MailReceipt, error)
 	PeerOutbox(ctx context.Context, name string, limit int) ([]PeerOut, error)
 	PeerDelivered(ctx context.Context, name string, seq uint64) error
 	PeerSendFailed(ctx context.Context, name string, seq uint64, reason string, retryAt time.Time, final bool) error

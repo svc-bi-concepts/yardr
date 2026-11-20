@@ -247,6 +247,14 @@ func TestReplying(t *testing.T) {
 	if err != nil || again.Key != rp.Key || again.Attempts != 2 || again.Posted {
 		t.Fatalf("second attempt: %+v, %v", again, err)
 	}
+	broadcast, err := s.ReplyingBroadcast(ctx, "inv", 7, "", "hello", "inv")
+	if err != nil || broadcast.Key == rp.Key || broadcast.Attempts != 1 {
+		t.Fatalf("broadcast attempt reused ordinary reply: %+v, %v", broadcast, err)
+	}
+	broadcastAgain, err := s.ReplyingBroadcast(ctx, "inv", 7, "", "hello", "inv")
+	if err != nil || broadcastAgain.Key != broadcast.Key || broadcastAgain.Attempts != 2 {
+		t.Fatalf("broadcast retry did not reuse its record: %+v, %v", broadcastAgain, err)
+	}
 	seen := map[string]bool{rp.Key: true}
 	for _, c := range []struct {
 		seq      uint64

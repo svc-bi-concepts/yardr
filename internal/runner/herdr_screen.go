@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,8 +18,9 @@ import (
 
 // HarnessScreen reports whether the pane of handle shows the screen of its
 // harness, which is known by the mark of its input (dispatch.ScreenWatcher).
-// known is false where yardr cannot tell: a kind whose mark it does not
-// know, a handle without a pane, a pane that cannot be read.
+// known is false where yardr cannot tell: a handle without a pane, a pane
+// that cannot be read, or a kind whose mark it does not know (see
+// AgentReady, which the first prompt asks of such a kind).
 //
 // Found live (yardr-bcx5): three Codex sessions started while a release of
 // Codex was out, and each upgraded itself in its pane before it drew
@@ -28,8 +31,11 @@ import (
 func (h *Herdr) HarnessScreen(ctx context.Context, handle map[string]any) (up, known bool) {
 	kind, _ := handle[harnessKind].(string)
 	m, ok := marksOf(kind)
+	if !ok {
+		return false, false
+	}
 	pane, _ := handle["pane"].(string)
-	if !ok || pane == "" {
+	if pane == "" {
 		return false, false
 	}
 	text, err := h.readPane(ctx, pane, promptScan)
@@ -38,6 +44,41 @@ func (h *Herdr) HarnessScreen(ctx context.Context, handle map[string]any) (up, k
 	}
 	lines, _ := rowsOf(kind, strings.Split(text, "\n"), nil)
 	return slices.ContainsFunc(lines, m.begins), true
+}
+
+// AgentReady is herdr's own readiness of the agent of handle: the
+// interactive_ready herdr keeps for every agent, which `agent get` gives. It
+// answers for a kind whose input yardr cannot read (no mark in its file), since
+// the pane of such a kind shows nothing a screen can be told by. Only the first
+// prompt asks it: HarnessScreen stays unknown for such a kind, so a note is
+// still submitted by herdr itself. known is false when herdr does not say,
+// which tells nothing.
+//
+// Found live (yardr-cdj5): a pi crew's first prompt was typed in the seconds
+// after its start, when pi had no input to take it. With no mark there was no
+// screen to wait on, so the dispatcher sent it three times in thirty seconds,
+// each lost (session_prompt_lost 3 of 3, then session_prompt_gave_up). herdr
+// had the agent idle and interactive_ready the whole time, and the same prompt
+// sent by hand, later, was taken.
+func (h *Herdr) AgentReady(ctx context.Context, handle map[string]any) (up, known bool) {
+	name, _ := handle["agent"].(string)
+	if name == "" {
+		return false, false
+	}
+	raw, err := h.run(ctx, "agent", "get", name)
+	if err != nil {
+		return false, false
+	}
+	var info struct {
+		Agent struct {
+			// A pointer tells a false from a field herdr did not give.
+			Ready *bool `json:"interactive_ready"`
+		} `json:"agent"`
+	}
+	if json.Unmarshal(raw, &info) != nil || info.Agent.Ready == nil {
+		return false, false
+	}
+	return *info.Agent.Ready, true
 }
 
 // inputMarks begin the first line of a harness's input: Claude Code's "❯"
@@ -280,17 +321,26 @@ func promptPlace(text, prompt, kind string) (taken, typed, bare bool) {
 // Enter sent their half sentence and the nudge as one message. So what types
 // into an input looks here first.
 func (h *Herdr) InputText(ctx context.Context, handle map[string]any) (text string, known bool, err error) {
+	text, known, _, err = h.InputComposer(ctx, handle)
+	return text, known, err
+}
+
+// InputComposer is InputText with the reason the input reads as it does: one
+// of the fixed Composer codes, "" for an input that holds no text or whose
+// reason is not told. The reason is for a diagnostic, never for what is
+// typed: a draft and a garbled redraw are held alike.
+func (h *Herdr) InputComposer(ctx context.Context, handle map[string]any) (text string, known bool, reason string, err error) {
 	pane, _ := handle["pane"].(string)
 	if pane == "" {
-		return "", false, fmt.Errorf("handle has no pane")
+		return "", false, "", fmt.Errorf("handle has no pane")
 	}
 	styled, err := h.readPaneStyled(ctx, pane, promptScan)
 	if err != nil {
-		return "", false, err
+		return "", false, "", err
 	}
 	kind, _ := handle[harnessKind].(string)
-	text, known = inputText(styled, kind)
-	return text, known, nil
+	text, known, reason = inputComposer(styled, kind)
+	return text, known, reason, nil
 }
 
 // inputText finds, in a pane of a harness of kind read with its styling,
@@ -321,19 +371,56 @@ func (h *Herdr) InputText(ctx context.Context, handle map[string]any) (text stri
 // hint in 38;2;103;108;116 and what a person typed in 38;2;204;211;219
 // (read live, 21 Oct 2026).
 func inputText(styled, kind string) (text string, ok bool) {
+	text, ok, _ = inputComposer(styled, kind)
+	return text, ok
+}
+
+// The reasons an input reads as it does, for the diagnostics of a held nudge
+// (nudge_held's composer). They are fixed codes: no text of the pane is ever
+// given as a reason.
+const (
+	// ComposerDraft is text in the input, taken as someone's.
+	ComposerDraft = "draft"
+	// ComposerGarbled is text of one character a line: the shape of a pane
+	// drawn without its line breaks, which a Ctrl-L redraws. It is held as
+	// a draft is, since nothing says whose it is.
+	ComposerGarbled = "garbled"
+	// ComposerChrome is an empty input with the harness's own line under it
+	// (see claudeChromeLines). The input reads empty, so nothing holds the nudge.
+	ComposerChrome = "chrome"
+)
+
+// claudeChromeLines are the lines Claude Code draws under an empty input
+// that are not text: the recap it ends a turn with, its footer for
+// background agents, and its offer to clear the session to save tokens. Each
+// pattern is anchored at both ends, so a line that only begins or contains
+// the same words is no match.
+var claudeChromeLines = []*regexp.Regexp{
+	regexp.MustCompile(`^※ recap: \S.*$`),
+	regexp.MustCompile(`^⏵⏵ [a-z ]+ on · ← \d+ agents?$`),
+	regexp.MustCompile(`^(new task\? )?/clear to save [\d.,]+[kKmM]? tokens$`),
+}
+
+// inputComposer is inputText with the reason the input reads as it does. A
+// line under an input that holds nothing is chrome only for Claude Code, and
+// only when no text comes before it: a person's line that reads as chrome
+// under their own text stays text, and so does one that is their only text.
+// A run of single-character lines is ComposerGarbled and still text.
+func inputComposer(styled, kind string) (text string, ok bool, reason string) {
 	kindMarks, _ := marksOf(kind)
 	plain, typed := unstyled(styled, kindMarks.placeholderSGR)
 	plain, typed = rowsOf(kind, plain, typed)
 	input, m := inputLine(plain, kind)
 	if input < 0 {
-		return "", false
+		return "", false, ""
 	}
 	if m.placeholder != "" && isPlaceholder(m.unboxed(typed[input]), m.input, m.placeholder) {
 		// The input holds only the harness's gray hint (Kiro's): it
 		// reads empty, the hints under it with it.
-		return "", true
+		return "", true, ""
 	}
 	var lines []string
+	chrome := false
 	for i := input; i < len(plain); i++ {
 		if i > input && (strings.TrimSpace(plain[i]) == "" || isRule(plain[i]) || m.edge != "" && isBottom(plain[i])) {
 			break
@@ -342,11 +429,31 @@ func inputText(styled, kind string) (text string, ok bool) {
 		if i == input {
 			l = strings.TrimPrefix(l, m.input)
 		}
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
+		if l = strings.TrimSpace(l); l == "" {
+			continue
 		}
+		if i > input && len(lines) == 0 && kind == "claude" && isClaudeChrome(l) {
+			chrome = true
+			break
+		}
+		lines = append(lines, l)
 	}
-	return strings.Join(lines, "\n"), true
+	if chrome {
+		return "", true, ComposerChrome
+	}
+	if len(lines) == 0 {
+		return "", true, ""
+	}
+	if len(lines) >= 3 && slices.IndexFunc(lines, func(l string) bool { return len([]rune(l)) != 1 }) < 0 {
+		return strings.Join(lines, "\n"), true, ComposerGarbled
+	}
+	return strings.Join(lines, "\n"), true, ComposerDraft
+}
+
+// isClaudeChrome reports whether line, under an empty input, is one of the
+// lines Claude Code draws there (claudeChromeLines).
+func isClaudeChrome(line string) bool {
+	return slices.ContainsFunc(claudeChromeLines, func(re *regexp.Regexp) bool { return re.MatchString(line) })
 }
 
 // isPlaceholder reports whether line, the first line of an input without

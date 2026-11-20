@@ -101,6 +101,7 @@ var ConfigKeys = []ConfigKey{
 	{GroupPeer, ConfigWord, []string{PeerRunner}, GroupConfig, "the linked yard that works the group's beads (required)"},
 	{GroupTries, ConfigWord, []string{PeerRunner}, GroupConfig, fmt.Sprintf("how often a bead is posted to the peer before it is given up; default %d", PeerBeadTries)},
 	{GroupRemote, ConfigWord, []string{PeerRunner}, GroupConfig, "the remote a branch the peer returns is fetched from; default " + PeerRemote},
+	{GroupAfter, ConfigSpan, []string{PeerRunner}, GroupConfig, "how long a bead waits in its stage before the peer takes it past a full group of its route; unset: none"},
 	{"idle", ConfigLimit, nil, GroupConfig, "how long an agent may wait for input before a session_idle event"},
 	{"max_age", ConfigLimit, nil, GroupConfig, "how long a session may run before a session_aged event"},
 	{"grace", ConfigLimit, nil, GroupConfig, "how long after its event a session still idle or running is stopped"},

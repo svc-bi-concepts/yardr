@@ -36,10 +36,11 @@ const yardTest = ".yardr/test"
 // landing's (docs/testing.md R4).
 const plainWhy = ": testing without -race (race runs at landing only, docs/testing.md R4)"
 
-// noYardHome is the YARDR_HOME a case's script gets: a fixed path under the
-// temp dir that no test creates, so a real yardr reached anyway reads no
-// yard and fails, and the script's filing only warns.
-var noYardHome = filepath.Join(os.TempDir(), "yardr-test-no-yard")
+// noYardHome is the YARDR_HOME a case's script gets: a fixed path that no test
+// creates, so a real yardr reached anyway reads no yard and fails, and the
+// script's filing only warns. It is not under the temp dir: on the Mini that
+// is a cache path other runs share, and a yard home can exist there.
+var noYardHome = string(filepath.Separator) + "nonexistent-yardr-test-no-yard"
 
 // Every run of the gate's script in a fixture repository makes git calls of
 // its own, and the fixtures make theirs, many in all: on macOS each is two
@@ -316,6 +317,12 @@ func goModTemplate(t *testing.T) (template, base, short string) {
 // a CI runner's without room, would refuse every case that runs it, and the
 // fake gos would see the go env call that reads it. The case that means the
 // floor sets it, against a stubbed df.
+// It drops what an outer gate run exported: the slot variables (YARD_GATE_*)
+// and the scratch directories (TMPDIR, GOTMPDIR) on the Mini's /Volumes/Yard.
+// The script re-execs itself under the machine's gate-slot.sh unless
+// YARD_GATE_SLOT_HELD is set, and the wrapper sets TMPDIR for what it runs, so
+// a case's script would queue behind the host's slots and find the outer run's
+// directory, not its own. YARD_GATE_SLOT_HELD=1 makes the script run directly.
 // A case sets what it means the script to have, after these, so its own load
 // wins: one that runs the script sets YARDR_RACE_HELD, so its race step shares
 // the hold instead of taking the machine's lock, except the lock's own test,
@@ -328,9 +335,12 @@ func scriptEnv() []string {
 func scriptEnvFrom(environ []string) []string {
 	env := slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
-		return slices.Contains([]string{"YARDR_BASE", "YARDR_LANDING", "YARDR_TEST_PLAN", "YARDR_TEST_RPC", "GOOS", "GOFLAGS", "YARDR_RACE_HELD", "YARDR_R1_STRICT", "YARDR_QUIET_RUN", "YARDR_CONFORMANCE", "YARDR_TEST_LOAD", "YARDR_TEST_BEADS", "YARDR_HOME", "YARDR_BEAD", "YARDR_DEPOT", "YARDR_ACTOR", "YARDR_SESSION", "GITHUB_ACTIONS"}, k)
+		if strings.HasPrefix(k, "YARD_GATE_") {
+			return true
+		}
+		return slices.Contains([]string{"YARDR_BASE", "YARDR_LANDING", "YARDR_TEST_PLAN", "YARDR_TEST_RPC", "GOOS", "GOFLAGS", "YARDR_RACE_HELD", "YARDR_R1_STRICT", "YARDR_QUIET_RUN", "YARDR_CONFORMANCE", "YARDR_TEST_LOAD", "YARDR_TEST_BEADS", "YARDR_HOME", "YARDR_BEAD", "YARDR_DEPOT", "YARDR_ACTOR", "YARDR_SESSION", "GITHUB_ACTIONS", "TMPDIR", "GOTMPDIR"}, k)
 	})
-	return append(env, "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10", "YARDR_TEST_FLOOR_GIB=0", "YARDR_HOME="+noYardHome)
+	return append(env, "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10", "YARDR_TEST_FLOOR_GIB=0", "YARDR_HOME="+noYardHome, "YARD_GATE_SLOT_HELD=1")
 }
 
 // gateScript is the test command as this checkout has it.
@@ -4795,7 +4805,7 @@ func TestYardTestRaceLockDiesWithTheRun(t *testing.T) {
 //
 // The race leg also gives its go the load factor that sizes the waits of the
 // contrib suites (YARDR_TEST_LOAD, internal/testload), read when the leg starts
-// and named in a line: the machine's load over its cores from 1 to 4. Nothing
+// and named in a line: the machine's load over its cores from 1 to 8. Nothing
 // else gets it, the re-run alone included, so that a slow path of the product
 // still shows there; a factor the caller had is no one's but the gate's.
 //
@@ -4867,7 +4877,7 @@ func TestYardTestBudgetRerunSharesTheRaceHold(t *testing.T) {
 				"test: yardr.dev/yardr/internal/dispatch took 61.2 s with -race, over the 60 s budget (docs/testing.md R1), and its re-run alone failed",
 				"test: R1: yardr.dev/yardr/internal/pack took 61.3 s in the run, 66.6 s alone: over budget, loaded machine (load 72.4 on 10 cores), not judged",
 			},
-			res: "fail", avg: "72.4", factor: "4.0", says: "load 72.4 on 10 cores", par: "-p=2",
+			res: "fail", avg: "72.4", factor: "7.2", says: "load 72.4 on 10 cores", par: "-p=2",
 			second: "yardr.dev/yardr/internal/pack", fail: "yardr.dev/yardr/internal/dispatch"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -6804,7 +6814,10 @@ func TestYardTestBudgets(t *testing.T) {
 	// as a run twice as long as it need be or a backstop that is gone.
 	t.Run("a macOS job of CI's workflow runs the gate on pull requests only, the others on every event", func(t *testing.T) {
 		t.Parallel()
-		const prOnly = "github.event_name == 'pull_request'"
+		// main's repository guard (109dc09a) keeps every macOS job to the
+		// yard's own repository; the gate's job adds the pull request test.
+		const prOnly = "github.event_name == 'pull_request' && github.repository == 'svc-bi-concepts/yardr'"
+		const guard = "github.repository == 'svc-bi-concepts/yardr'"
 		gated, others := 0, 0
 		for name, job := range ciYML(t).Jobs {
 			if !strings.HasPrefix(job.RunsOn, "macos-") {
@@ -6820,8 +6833,8 @@ func TestYardTestBudgets(t *testing.T) {
 				continue
 			}
 			others++
-			if cond != "" {
-				t.Errorf("ci.yml job %s runs on a macOS runner without the gate under the condition %q, want none: what a landing leaves out is the backstop for a push to main", name, cond)
+			if cond != guard {
+				t.Errorf("ci.yml job %s runs on a macOS runner without the gate under the condition %q, want %q: what a landing leaves out is the backstop for a push to main", name, cond, guard)
 			}
 		}
 		if gated == 0 || others == 0 {
@@ -7042,6 +7055,35 @@ func TestYardTestBudgets(t *testing.T) {
 		}
 	})
 
+	t.Run("the outer gate's slot and scratch do not reach the script", func(t *testing.T) {
+		t.Parallel()
+		// A land gate runs this suite inside a slot of the Mini's gate pool,
+		// with TMPDIR and GOTMPDIR on /Volumes/Yard/tmp (yardr-8bc7). A case's
+		// script must not inherit them, nor the wrapper's re-exec: it would
+		// queue behind the host's slots, and df would be asked of the outer
+		// run's directory, which the case never made.
+		inheritedEnv := append(os.Environ(),
+			"YARD_GATE_SLOT=2", "YARD_GATE_SLOT_DIR=/Users/u/.local/state/yard-gate",
+			"YARD_GATE_TMPDIR=/Volumes/Yard/tmp/gate-1", "YARD_GATE_FRESH=1",
+			"TMPDIR=/Volumes/Yard/tmp/gate-1", "GOTMPDIR=/Volumes/Yard/tmp/gate-1/go",
+			"YARD_GATE_SLOT_HELD=")
+		var held []string
+		for _, kv := range scriptEnvFrom(inheritedEnv) {
+			k, v, _ := strings.Cut(kv, "=")
+			switch {
+			case strings.HasPrefix(k, "YARD_GATE_") && k != "YARD_GATE_SLOT_HELD":
+				t.Fatalf("scriptEnv carries %q from the outer gate", kv)
+			case k == "TMPDIR" || k == "GOTMPDIR":
+				t.Fatalf("scriptEnv carries %q from the outer gate", kv)
+			case k == "YARD_GATE_SLOT_HELD":
+				held = append(held, v)
+			}
+		}
+		if !slices.Equal(held, []string{"1"}) {
+			t.Errorf("scriptEnv sets YARD_GATE_SLOT_HELD to %q, want once to 1 so the script runs directly", held)
+		}
+	})
+
 	t.Run("the quiet run's strict setting refuses the verdict over budget alone on a loaded machine", func(t *testing.T) {
 		t.Parallel()
 		// The same loaded re-measurement, judged twice: without the
@@ -7231,7 +7273,7 @@ loadedmachine() {
 		}
 	})
 
-	t.Run("the race leg's wait factor is the load over the cores, from 1 to 4", func(t *testing.T) {
+	t.Run("the race leg's wait factor is the load over the cores, from 1 to 8", func(t *testing.T) {
 		t.Parallel()
 		// sizewaits reads the load as loadedmachine does, so a quiet machine
 		// and an unreadable one are both 1, and says what it set under to.
@@ -7246,7 +7288,9 @@ loadedmachine() {
 			{"a fraction of a core over", "25.3", "10", "2.5", "load 25.3 on 10 cores"},
 			{"fewer cores", "6.8", "4", "1.7", "load 6.8 on 4 cores"},
 			{"four times the cores", "40", "10", "4.0", "load 40 on 10 cores"},
-			{"past four times the cores", "72.4", "10", "4.0", "load 72.4 on 10 cores"},
+			{"eight times the cores", "80", "10", "8.0", "load 80 on 10 cores"},
+			{"the mini at 77 on 10 cores", "77", "10", "7.7", "load 77 on 10 cores"},
+			{"past eight times the cores", "120", "10", "8.0", "load 120 on 10 cores"},
 			{"a load that is no number", "bogus", "10", "1.0", quiet},
 			{"cores that are no number", "20", "many", "1.0", quiet},
 			{"no cores", "20", "0", "1.0", quiet},

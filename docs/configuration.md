@@ -172,7 +172,7 @@ unread.
 **An agent that waits for its own background work is not idle either.** A
 session whose pane says, when it reaches `idle`, that a command its agent
 started in the background still runs (the `background` lines of its kind's
-harness file; Claude Code's `1 shell still running`) raises no
+harness file; Claude Code's `1 shell still running` or `2 monitors still running`) raises no
 `session_idle`, and its idle spell starts again from that look, so `grace`
 does not end it. `max_age` applies. See
 [groups.md](groups.md#a-command-runs-in-the-background).
@@ -472,10 +472,11 @@ depot's path and kind, and clearing the test command, stay the operator's.
 to run it in the worktree before handing on. Its merge script, `merge-local`,
 runs it on the rebased commit before the base moves, with `YARDR_LANDING=1`
 in the environment (unset for a wagon landing on its train's branch) and
-for at most `YARDR_TEST_TIMEOUT` seconds (1800), besides what it waited for
-the race lock. Where the field is a file of the branch that carries a file
-size table (depot yardr's `.yardr/test` does), it first has that file lower the
-table to the branch's files, for at most `YARDR_REWRITE_TIMEOUT` seconds (120),
+with the [assembly test deadline](../contrib/assembly/README.md)
+(described under Environment). Where the field is a file of the branch that
+carries a file size table (depot yardr's `.yardr/test` does), it first has that
+file lower the table to the branch's files, for at most `YARDR_REWRITE_TIMEOUT`
+seconds (120),
 a run that waits on no race lock. Exit 0 lands the bead.
 Exit 2, the command saying it could not run, holds it. Any other exit sends
 it back to its builder with the end of the output in a note. A depot with no
@@ -503,11 +504,9 @@ has to wait says so (`test: waited 312 s for the race lock`). Only a landing
 (`YARDR_LANDING=1`) and the quiet run have a race leg: a run without it, a
 builder's or a reviewer's, whatever it changed, tests without `-race` and
 says so in its first line, queuing only when its step covers the whole
-suite. The deadline of
-a landing, and of a train's integration, does not count that wait:
-`merge-local` and `integrate-train` credit the waited seconds, so one late in
-the queue is killed only when its own run outlasts `YARDR_TEST_TIMEOUT`. The
-rewrite of the file size table, which they run first, has a deadline of its
+suite. The [assembly test deadline](../contrib/assembly/README.md), described
+under Environment, accounts for queue waits. The rewrite of the file size
+table, which merge-local and integrate-train run first, has a deadline of its
 own, `YARDR_REWRITE_TIMEOUT` (120 seconds), and nothing is credited to it: it
 waits on no race lock. Race suites
 run side by side slow each other past Go's per-package timeout while one

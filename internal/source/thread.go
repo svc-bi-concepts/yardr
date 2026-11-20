@@ -59,6 +59,8 @@ type Thread struct {
 	// Formats are the explicit reply modes the command understands. Absent,
 	// replies take no format field and keep the command's default behavior.
 	Formats []string `json:"formats,omitempty"`
+	// Broadcast says thread.reply accepts broadcast: true for a channel reply.
+	Broadcast bool `json:"broadcast,omitempty"`
 }
 
 // CheckFormat refuses a mode the thread command has not declared.
@@ -364,7 +366,7 @@ func expandLink(tmpl string, groups []string) string {
 func (r *reader) thread(e entry) *Thread {
 	t := &Thread{}
 	var place, states, assignee, formats *entry
-	for _, f := range r.entries(e.v, e.path, "reply", "posted", "read", "file", "open", "opened", "state", "place", "states", "labels", "assignee", "files", "formats") {
+	for _, f := range r.entries(e.v, e.path, "reply", "posted", "read", "file", "open", "opened", "state", "place", "states", "labels", "assignee", "files", "formats", "broadcast") {
 		switch f.key {
 		case "reply":
 			t.Reply = r.command(f, "linear/thread, reply")
@@ -418,6 +420,8 @@ func (r *reader) thread(e entry) *Thread {
 				}
 				t.Formats = append(t.Formats, mode)
 			}
+		case "broadcast":
+			t.Broadcast, _ = r.boolean(f.v, f.path)
 		}
 	}
 	if e.v.Kind != yaml.MappingNode {

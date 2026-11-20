@@ -45,8 +45,12 @@ const (
 
 // maxFactor is the most the machine's own load widens a wait: the cap the gate
 // puts on its factor (sizewaits in .yardr/test), so that one rule sizes a wait
-// whichever of the two it comes from.
-const maxFactor = 4
+// whichever of the two it comes from. It is 8, not 4: the mini has run at a load
+// of 50 to 77 on 10 cores, a factor of 5 to 8, and at 4 a fuse of 60 s was 240 s
+// there, too short for a gate's pre-test steps (yardr-b2er, the killed-gate and
+// rerun tests). A wait that is met returns early, so a higher cap costs a green
+// run nothing; it only lengthens a red one under real load.
+const maxFactor = 8
 
 // machineLoad reads the machine's one-minute load average and its core count;
 // ok is false where either cannot be read. It is a variable for the tests of
@@ -77,7 +81,7 @@ func gateFactor() float64 {
 }
 
 // machineFactor is the machine's load over its cores as it reads now, from 1 to
-// 4, the gate's own rule. It is read at each call and kept nowhere: a reading
+// maxFactor, the gate's own rule. It is read at each call and kept nowhere: a reading
 // kept is the load of an earlier minute, the staleness this is for. A machine
 // that is quiet, or whose load cannot be read, is 1: an unknown load never
 // widens a wait, as the gate's does not. The reading is checked here as well as

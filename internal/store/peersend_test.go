@@ -439,6 +439,9 @@ func (h *hangingGit) waitAsked() {
 func (y *peerYard) holdSettle(t *testing.T) (*store.Bead, *hangingGit) {
 	t.Helper()
 	dir := gitRepo(t, map[string]string{".yardr/flows/default.flow": away})
+	// The group's remote is what a return is fetched from, and a bead is
+	// not sent from a depot without it.
+	git(t, dir, "remote", "add", "origin", "https://git.example.test/acme/web.git")
 	keyFile := filepath.Join(t.TempDir(), "peer.key")
 	if _, _, err := yardkey.Ensure(keyFile); err != nil {
 		t.Fatal(err)

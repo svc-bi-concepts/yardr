@@ -260,6 +260,18 @@ func TestDispatchableCarriesNoBody(t *testing.T) {
 		{Bead: first.ID, Stage: "triage", Type: "bug", Priority: 1},
 		{Bead: late.ID, Stage: "new", Type: "task", Depot: &web, Labels: []string{"ui"}, Model: "big", Priority: 3},
 	}
+	// The stay's start is the one field the bead's row adds (the peer
+	// groups' after setting counts from it): it is set, and is the only
+	// one of the row's times the answer carries.
+	if len(got) != len(want) {
+		t.Fatalf("dispatchable has %d beads, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].StayStart.IsZero() {
+			t.Fatalf("bead %s has no stay start", got[i].Bead)
+		}
+		want[i].StayStart = got[i].StayStart
+	}
 	raw, err := json.Marshal(got)
 	if err != nil {
 		t.Fatal(err)

@@ -249,9 +249,9 @@ the same and the command says that the ping is owed.
 Once both yards run a sealed-wire build, each operator independently gets
 the other yard's fresh `yardr-peer-2` invite over a trusted channel
 (`yardr peer invite`, with the unchanged `--url` where the existing link
-has one). Each invite must match the stored signing key, advertised yard
-name and URL. Use each yard's existing local peer name; the names may
-differ between yards.
+has one). Each invite must match the stored signing key and URL, and any
+encryption key already pinned. Use each yard's existing local peer name;
+the names may differ between yards.
 
 The yard at the caller's existing stored URL opens the pairing, using
 `--url` if needed to advertise that same address:
@@ -267,13 +267,21 @@ name and independently obtained invite:
 yardr peer pair <address> <code> --enroll <existing-peer-name> --invite '<fresh-v2-invite>'
 ```
 
-Both operators compare a fresh check. Enrollment requires a terminal and
-refuses `--yes`, `--json`, `--name` and `--expose`. The authenticated check
-binds the encryption key to the existing signing identity. Only the missing pin is
-filled; identities, link settings, permissions, queued messages and accepted
-work stay in place. A fresh pairing can also confirm an equal pin when one
-yard committed first; a different pin is refused. This does not rotate keys
-or make old and new builds transparently compatible.
+Both operators compare a fresh check. When the other yard has renamed
+itself since the link was made, the invite carries its new name: the check
+shows the change, and both operators confirm it as they would any check.
+Both screens show the saved advertised name beside the new one before the
+check. Enrollment updates that name without changing the local peer name;
+its audit event is listed under [Events](#events).
+
+Enrollment requires a terminal and refuses `--yes`, `--json`, `--name` and
+`--expose`. The authenticated check binds the encryption key to the existing
+signing identity. A missing encryption pin is filled; identities, link
+settings, permissions, queued messages and accepted work stay in place.
+A fresh pairing can also confirm an equal pin when one yard committed
+first, or refresh the advertised name of an already enrolled peer; a
+different pin is refused. This does not rotate keys or make old and new
+builds transparently compatible.
 
 If a final answer is lost, waiting is cancelled or a server restarts, one
 yard may have committed already. Inspect `yardr peer show <name>` on both
@@ -1174,6 +1182,37 @@ message does, pushed or pulled. The command returns once it is queued:
 `yardr peer show north` lists it (`waiting: mail <id> from yardmaster to
 yardmaster@north`) until the peer has it.
 
+**Receipts and replies.** Each mail this yard queues for a peer, or writes to
+its own inboxes, has a receipt (`MailReceipt`) written in the same transaction as
+its outbox message and its event: the event's seq, the wire id, the peer as the
+link named it and the peer's key, and the participants. A receipt proves only
+that this yard committed the mail. It lives with the event it names and carries
+no body: the text stays in the event and the outbox, as before.
+
+A reply carries the wire id of the mail it answers as `re`, and the receiving
+yard relates it to that mail only when its own receipt for that id was queued to
+this peer's key, the reply runs back along the same two names, and the original
+mail event is still kept. Only then does the mail event say `in_reply_to`.
+When that event has been pruned, the reply stays ordinary mail with `re` as sent,
+even if the outbox still holds the original message and keeps its receipt.
+The receipt index (`mail_receipt_ids`) is built once, for a store that had
+receipts before it, and is written with them.
+
+The mail event this yard writes for it says so in its data: `id` is the wire id
+of the mail, `re` the id the peer's reply names as sent, kept for provenance,
+and `in_reply_to` the seq, in this yard's own log, of the outgoing mail it
+answers, present only when the relation is validated. `in_reply_to` is never the
+peer's seq for the reply.
+
+The mapping's lifetime follows the custody it serves, with no timer of its own.
+A receipt goes when the event it names is pruned and the outbox no longer holds
+its message. Acknowledging the message does not expire the receipt while the
+event is kept, and a prune that removes the event while the message is still
+queued keeps the receipt until a later prune finds the message gone. A peer
+renamed keeps its relation, since the key is what identifies it; a name made
+again under another key does not inherit one. Mail from before receipts existed
+has none, and stays ordinary mail.
+
 **Who may send.** For a crew member two things must hold, for a user of the
 yard the first alone:
 
@@ -1225,6 +1264,18 @@ with: the reply is mail to `<name>@<peer>`, if the crew member may mail
 that peer (a refusal reads as `yardr mail`'s); a user answers so too, or on
 the sender's row in `yardr chat`. `yardr mail <name>@<peer>` is for writing
 first. There are no thread ids: a mail is one message.
+
+The store's `MailPeerReply(answered, text, actor)` takes the answered inbox seq,
+the reply text and the actor. It takes the sender, the link and the wire id
+from the mail event as it was taken, so the reply goes back to the
+yard it came from and names that mail as `re`, and no caller can choose another
+destination or reference. It is refused for mail that is not to the caller, not
+from a peer, or from a link since removed, and when the caller is no longer
+exposed on the link. With `--json`, `yardr reply` adds `re` (the wire id
+answered) and `receipt` (`seq`, `id`, `direction`, `peer`, `peer_key`, `from`,
+`to`, `at`), and `id` is the reply's own wire id. The top-level `seq` still
+names the answered inbox event; `receipt.seq` names the outgoing reply's event
+in this yard's log.
 
 **From a yard removed since.** After `yardr peer rm north`, mail north sent
 that is still unread shows as
@@ -1709,9 +1760,19 @@ laptop routes `build` to `at-north`, north routes it to its builders.
   peer allow north --send bead`).
 - `--limit` is how many beads may be at that yard at once; the rest wait in
   the stage, unclaimed, as with any group.
+- `after=<duration>` is how long a bead waits in its stage before this group
+  takes it past a full group of its route, such as `after=15m` (unset: at
+  once). A peer group is the route's last group: it takes no `--else wait`
+  after it and no condition. `yardr route add --stage new --group builders
+  --else at-north` sends a bead that `builders` is full for to `at-north`,
+  and with `yardr group set at-north after=15m` it waits fifteen minutes in
+  the stage first.
 - `remote=<name>` is the remote of the bead's depot that a branch the yard
   returns is fetched from (`origin` unless set), and `tries` is also how
   often that fetch is tried ([Code that comes back](#code-that-comes-back)).
+  That remote must be in every depot clone the group sends from: a bead of
+  a depot without it is held unsent, with the command that adds it, rather
+  than sent to come back with its branch nowhere to be taken from.
 - No members. `--type`, `--label` and `--bead-priority` of the route
   choose which beads of the stage go there (only those labelled `remote`, say).
 - `yardr flow show <depot>` has the group under GROUP and `yard north` under
@@ -2685,9 +2746,14 @@ remote, the `bead` message carries `git`: `base`, the branch's name;
 `base_commit`, where the base stands in this yard's depot when the bead is
 sent; and `remote`, the URL of the base's remote: the remote of a base like
 `origin/main`, else the
-upstream of the local base branch, else `origin`. A dir depot, and a depot
-with no remote, send no `git`: such a bead crosses with its words, as
-before.
+upstream of the local base branch, else `origin`. A dir depot sends no
+`git`: such a bead crosses with its words.
+
+Before sending from a repository, the yard checks that it has the peer
+group's `remote` (`origin` by default). If it does not, the bead is held in
+its stage and nothing is sent. Add the remote with
+`git -C <depot path> remote add <remote> <url>`, then
+`yardr bead unhold <id>` tries the send again.
 
 The base commit has to be on the remote. A base that this yard landed on
 and did not push (`merge-local` without `YARDR_PUSH`) is a commit the other
@@ -2788,6 +2854,7 @@ branch is there:
 | what happened | what the yard does |
 |---|---|
 | the fetch failed (the remote is down, a credential is missing) | tries again after a wait that doubles from 30s up to an hour, as an issue move does. After the group's `tries` (5; `--set tries=<n>`, the setting that also counts the posts of the bead) the bead is **held**, with a note that has git's words |
+| the depot has no remote of the group's name (removed after the bead was sent) | the same as a failed fetch: tried again, then held; add the remote with `git -C <depot path> remote add <remote> <url>` and `yardr bead unhold <id>` takes the branch |
 | the branch on the remote is not at the commit the return names | not taken, and held at once: no try changes it |
 | the branch name is no bead's, or the commit no commit's | the same |
 | this yard's `yard/<bead>` exists and the returned commit does not come after it | the same: move or delete the branch first. A bead sent a second time no longer ends here: it starts where this yard's branch stands, or is not sent ([a bead sent again](#a-bead-sent-again)). What is left is a branch that had commits of this yard's own before the bead was first sent |
@@ -2807,8 +2874,7 @@ applied, with a note by `yard` that the branch was not taken and why
 (`peer_bead_not_fetched` on the bead), when:
 
 - the bead's depot is a dir depot, or the bead has none;
-- the remote the branch was pushed to is not this depot's remote, or the depot
-  has no remote of that name.
+- the remote the branch was pushed to is not this depot's remote.
 
 What came back is then the outcome and the notes. For work whose result is
 words that is all there is to take.
@@ -2834,9 +2900,9 @@ b takes c's branch into its own bead's branch, its `return-branch` pushes
 that under b's name, and a takes b's. The bead b sends on names the commit
 a named, so c starts where a's bead starts. Where two of the yards have no
 remote in common, words come back over that hop, and that is not an error:
-the taking yard's depot is a directory, the asking yard's depot has no remote
-to name, or the branch was pushed to a remote the asking yard's depot does
-not have. The yard before it then has the outcome and the notes, and
+the taking yard's depot is a directory, or the branch was pushed to a
+different remote than the asking yard's configured remote. The yard before
+it then has the outcome and the notes, and
 nothing to push. (A taking yard whose depot is a repository with another
 remote than the bead names is the one case that refuses, as
 `base_unknown`: its work would start somewhere else.)
@@ -3296,7 +3362,8 @@ with is 401, as any request that is no peer's.
 | event | when | data |
 |---|---|---|
 | `peer_added` | `peer add`, and a pairing that created a new link | `peer`, `key`, `url`; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was added that way |
-| `peer_encryption_enrolled` | enrollment filled a missing encryption pin; confirming an equal pin emits no event | `peer`, `key` (the signing identity) |
+| `peer_encryption_enrolled` | enrollment filled a missing encryption pin without changing the advertised name; confirming an equal pin and unchanged name emits no event | `peer`, `key` (the signing identity) |
+| `peer_identity_enrolled` | enrollment changed the advertised name, optionally filling a missing encryption pin in the same write | `peer` (the local name), `old_calls`, `new_calls`, `encryption_pin_added` |
 | `peer_pair_opened` | `peer pair` opened a pairing on this yard | `pairing`, its id; `expires`; `url`; `role` `host` |
 | `peer_paired` | a pairing created a new link: with it `peer_added` and `peer_allowed`, in the same write | `peer`, `key`, `url`, `calls`, `role` (`host`: this yard was called; `joiner`: it called), `pairing` on the host |
 | `peer_pair_refused` | a pairing ended without one | `reason`: `wrong_code` (on the host after five, with `wrong_codes`; on the yard that called for each), `declined` (this yard's operator), `peer_declined` (the other's), `timed_out`, `closed` (`--end`, Ctrl+C), `already_peer`, `bad_name`, `own_key`; `role`; `pairing` on the host; `peer`, `calls` and `key` once the other yard is known |
