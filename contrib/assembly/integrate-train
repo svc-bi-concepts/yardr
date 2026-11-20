@@ -521,12 +521,7 @@ runtest() {
     open_s=
     open_at=
     while :; do
-      nap_for=$wait_for
-      case "$nap_for" in
-        ''|*[!0-9]*) ;;
-        *) [ "$nap_for" -le 1 ] || nap_for=1 ;;
-      esac
-      sleep "$nap_for" &
+      sleep "$wait_for" &
       nap=$!
       echo "$nap" >"$napfile"
       wait "$nap"
