@@ -235,6 +235,9 @@ func (c *Client) ApproveSetup(ctx context.Context, id string, ask uint64, option
 func (c *Client) PutDepot(ctx context.Context, r store.Depot, actor string) error {
 	return c.call(ctx, "PutDepot", nil, r, actor)
 }
+func (c *Client) TellDepotVisibility(ctx context.Context, depot, recorded, actual string) error {
+	return c.call(ctx, "TellDepotVisibility", nil, depot, recorded, actual)
+}
 func (c *Client) Depots(ctx context.Context) ([]store.Depot, error) {
 	return callV[[]store.Depot](c, ctx, "Depots")
 }

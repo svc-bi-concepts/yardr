@@ -1536,7 +1536,7 @@ calls:
 		{"hook": "linear", "path": secret, "reason": open.Error()},
 		{"crew": "yardmaster", "handle": map[string]any{"dir": crewDir, "first_prompt": handle["first_prompt"]}},
 		{"user": "sam", "source": "push", "reason": "not_set_up", "tries": float64(0), "error": sendErr},
-		{"depot": "wharf", "kind": store.DepotDir, "base": "", "path": depotDir, "test": "make -C " + depotDir + " test"},
+		{"depot": "wharf", "kind": store.DepotDir, "base": "", "path": depotDir, "test": "make -C " + depotDir + " test", "visibility": store.DepotPrivate},
 		{"every": "1h", "dir": backupDir, "reason": backupErr},
 		{"session": "s1", "worktree": worktree, "reason": keptWhy},
 		{"agent": "yd-crm-new", "group": "builders", "reason": "not_allowed", "session": "s1", "session_bead": "yd-crm", "stage": "new",

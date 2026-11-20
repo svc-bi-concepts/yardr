@@ -1101,6 +1101,11 @@ func TestSchema18StoreDropsTheChecks(t *testing.T) {
 		"plain": {Name: "plain", Path: "/src/plain", Kind: store.DepotGit, Base: "origin/main", Test: "make test"},
 		"web":   {Name: "web", Path: "/src/web", Kind: store.DepotGit, Base: "main", Test: "npm test"},
 	}
+	// A depot the upgrade wrote with no visibility reads as private.
+	for name, d := range want {
+		d.Visibility = store.DepotPrivate
+		want[name] = d
+	}
 	var first map[string]string
 	for _, pass := range []string{"the upgrade", "the next start"} {
 		s, err = store.Open(path)

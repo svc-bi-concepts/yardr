@@ -158,6 +158,12 @@ type Dispatcher struct {
 	TelemetryURL     string
 	TelemetryTimeout time.Duration
 
+	// HostVisibility reads the visibility the code host records for the
+	// repository a checkout at dir is of: the daily check (visibility.go)
+	// calls it once a depot a day. Nil, there is no check: the daemon gives
+	// ReadHostVisibility, and a test gives a stand-in or nothing.
+	HostVisibility func(ctx context.Context, dir string) (string, error)
+
 	// PeerKey is the file of the yard's key, with which requests to its
 	// peers are signed; PeerHTTP makes them (nil: http.DefaultClient).
 	// PeerTries is how often a message is posted to a peer before it is
@@ -260,6 +266,16 @@ type Dispatcher struct {
 	// telemetryTold is the last local fault of the telemetry pass that was
 	// said, so each is said once until it is gone. See telemetry.
 	telemetryTold string
+
+	// visibilityDay is the UTC day visibilityDone belongs to, and
+	// visibilityDone the depots already asked that day, so that each is asked
+	// once a day even where a pass stopped at the deadline. See visibility.go.
+	visibilityDay  string
+	visibilityDone map[string]bool
+
+	// visibilityDeadline bounds the whole daily check; zero is
+	// visibilityTotal. A test shortens it.
+	visibilityDeadline time.Duration
 
 	// timerDue is when the earliest timer left is due, as of the last pass
 	// (see timers); nil with none.
@@ -967,6 +983,9 @@ func (d *Dispatcher) Reconcile(ctx context.Context) error {
 	// Once a day at most, and bounded: a push (pushes.go) waits as long.
 	pass.step("telemetry")
 	d.telemetry(ctx)
+	// Once a day at most, one call to the host a git depot (visibility.go).
+	pass.step("visibility")
+	d.visibility(ctx)
 	// Last: a peer that does not answer holds up nothing of this yard's,
 	// and neither does a remote. What a peer's return brought in this pass
 	// is fetched in it.
@@ -1390,37 +1409,6 @@ func (d *Dispatcher) route(ctx context.Context, groups map[string]store.Group, a
 		})
 	}
 	return nil
-}
-
-// runtimeDown notes that g's runtime could not start anything. The first
-// failure of an outage is logged as runtime_down for the group, so the
-// yardmaster hears of it once; later ones only lengthen the wait, doubling up
-// to RuntimeBackoffMax.
-func (d *Dispatcher) runtimeDown(ctx context.Context, g store.Group, err error) {
-	o := d.down[g.Name]
-	if o == nil {
-		o = &outage{delay: d.RuntimeBackoff}
-		d.down[g.Name] = o
-		d.Log.Warn("runtime down; the group's beads wait", "group", g.Name, "runner", g.Runner, "err", err)
-		if lerr := d.Store.LogDispatch(ctx, "", "runtime_down", actor, map[string]any{
-			"group": g.Name, "runner": g.Runner, "reason": err.Error()}); lerr != nil {
-			d.Log.Warn("runtime_down event", "err", lerr)
-		}
-	} else {
-		o.delay = min(2*o.delay, d.RuntimeBackoffMax)
-	}
-	o.until = time.Now().Add(o.delay)
-}
-
-// runtimeUp ends g's outage, if it had one, once a Start got past the
-// runtime.
-func (d *Dispatcher) runtimeUp(ctx context.Context, g store.Group) {
-	if d.down[g.Name] == nil {
-		return
-	}
-	delete(d.down, g.Name)
-	d.Log.Info("runtime back", "group", g.Name, "runner", g.Runner)
-	_ = d.Store.LogDispatch(ctx, "", "runtime_up", actor, map[string]any{"group": g.Name, "runner": g.Runner})
 }
 
 // nextStages is where b's flow lets it go next, and the outcomes its stage

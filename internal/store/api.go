@@ -95,6 +95,7 @@ type API interface {
 	ApproveSetup(ctx context.Context, id string, ask uint64, option int, values map[string]string, account, actor string, weighed bool) (*AskSetupApproved, error)
 
 	PutDepot(ctx context.Context, r Depot, actor string) error
+	TellDepotVisibility(ctx context.Context, depot, recorded, actual string) error
 	Depots(ctx context.Context) ([]Depot, error)
 	GetDepot(ctx context.Context, name string) (*Depot, error)
 	DeleteDepot(ctx context.Context, name, actor string) (*DepotRemoval, error)
