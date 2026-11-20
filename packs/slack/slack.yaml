@@ -70,6 +70,14 @@ calls:
       path: /conversations.join
       body: { channel: "{channel}" }
     answer: { select: [ok, error, channel] }
+  user:                           # the member id of a name, for a mention's <@U...>
+    kind: read
+    about: "Workspace members whose real or display name holds the name given (users.list, paged by the program): id, real_name, display_name and is_bot only, at most five"
+    run: [slack/lookup, user]
+    params:
+      name: { type: string, max: 100 }
+    # slack/lookup prints only those four fields of a member, never the profile's email, phone or picture; users:read is its one scope.
+    answer: { select: [users] }
 check: whoami
 
 # ---- what it sends us ----------------------------------------------------

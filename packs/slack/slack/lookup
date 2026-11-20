@@ -1,0 +1,80 @@
+#!/bin/bash
+# lookup: the workspace's people as a mention needs them, the user call's
+# run program. One JSON object on stdin, {"params":{"name":…}}, and one on
+# stdout, as the declaration's answer says. SLACK_BOT_TOKEN and
+# YARDR_SOURCE_BASE, the declaration's base, are in the environment. Needs
+# curl and jq.
+#
+# The directory is read here and never printed: users.list pages through
+# every member, each page is cut to the matches before the next is read,
+# and only the four fields a mention needs leave the program. A profile
+# also carries the email, the phone and the picture, which no answer
+# holds. The name is matched as a case-insensitive substring of the real
+# name or the display name, the match is at most five rows, and a
+# deactivated account is none. Case folds ASCII only: jq's ascii_downcase
+# is the whole of it, which the names a workspace mostly uses survive.
+set -euo pipefail
+in=$(cat)
+
+: "${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is not set}"
+: "${YARDR_SOURCE_BASE:?YARDR_SOURCE_BASE is not set}"
+
+# api <method> <curl argument>...: the whole answer. The token goes to curl
+# as a config line on its stdin, written by the shell itself: an argument
+# can be read by every process on the machine while curl runs.
+api() {
+  local method=$1
+  shift
+  printf 'header = "Authorization: Bearer %s"\n' "$SLACK_BOT_TOKEN" \
+    | curl -sS --fail-with-body -K - "$YARDR_SOURCE_BASE/$method" "$@"
+}
+
+# callform <method> <name=value>...: a read method, whose arguments Slack
+# takes form-encoded (the reason is in thread's callform).
+callform() {
+  local method=$1 pair
+  shift
+  local data=()
+  for pair in "$@"; do data+=(--data-urlencode "$pair"); done
+  api "$method" "${data[@]}"
+}
+
+# ok: whether the answer on stdin is a success; if not, Slack's reason on
+# stderr. Slack answers a refusal as 200 with ok false, so the status alone
+# is no proof.
+ok() {
+  local page
+  page=$(cat)
+  jq -e '.ok == true' >/dev/null <<<"$page" \
+    || { jq -r '"slack \(.error // "refused the call")"' >&2 <<<"$page"; return 1; }
+}
+
+case "${1:-}" in
+user)
+  name=$(jq -r '.params.name // ""' <<<"$in")
+  [ -n "$name" ] || { echo "user lookup was handed no name" >&2; exit 1; }
+  cursor=""
+  matches='[]'
+  while :; do
+    args=("limit=200")
+    [ -z "$cursor" ] || args+=("cursor=$cursor")
+    # The page's error goes to stderr with the reason; the loop stops at
+    # the first page that refuses, so no partial directory is answered.
+    page=$(callform users.list "${args[@]}") || exit 1
+    ok <<<"$page" || exit 1
+    matches=$(jq -c --arg name "$name" --argjson m "$matches" '
+      ($name | ascii_downcase) as $n
+      | ($m + [ (.members // [])[]
+          | select(.deleted != true)
+          | {id: (.id // ""), real_name: (.real_name // ""),
+             display_name: (.profile.display_name // ""), is_bot: (.is_bot // false)}
+          | select(((.real_name | ascii_downcase) | contains($n))
+                   or ((.display_name | ascii_downcase) | contains($n))) ])[0:5]
+    ' <<<"$page")
+    cursor=$(jq -r '.response_metadata.next_cursor // ""' <<<"$page")
+    [ -n "$cursor" ] || break
+  done
+  jq -cn --argjson m "$matches" '{users: $m[0:5]}'
+  ;;
+*) echo "unknown lookup: ${1:-}" >&2; exit 2 ;;
+esac

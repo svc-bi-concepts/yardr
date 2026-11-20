@@ -13,8 +13,10 @@
 # is told when it is mentioned, the four histories so conversations.replies
 # reads a heard thread back on the bot token in each kind of conversation,
 # chat:write so it answers in the thread, channels:read and groups:read so
-# conversations.list names the channels it is not in, and channels:join so
-# conversations.join puts it in a public one. The bot hears a channel,
+# conversations.list names the channels it is not in, channels:join so
+# conversations.join puts it in a public one, and users:read so the user
+# call finds a member's id for a mention (users.list; no users:read.email,
+# since lookup matches names only). The bot hears a channel,
 # group or group direct message it is in through message.channels,
 # message.groups and message.mpim, subscribed in SETUP.md step 6, so those
 # three histories read back what it stored.
@@ -37,6 +39,7 @@ oauth_config:
       - im:history
       - mpim:history
       - chat:write
+      - users:read
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false

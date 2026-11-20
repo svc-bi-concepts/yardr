@@ -25,11 +25,12 @@ yard if it differs.
    pack as the yard installed it). The manifest names the bot user and
    the scopes (`app_mentions:read`, `channels:history`, `channels:join`,
    `channels:read`, `groups:history`, `groups:read`, `im:history`,
-   `mpim:history`, `chat:write` — the four histories are bot scopes, and
+   `mpim:history`, `chat:write`, `users:read` — the four histories are bot scopes, and
    they are what `conversations.replies` reads a thread back with on the
    bot token in each kind of conversation; `channels:join` lets the
    `join` call put the bot in a public channel, and `channels:read` and
-   `groups:read` let the `channels` call list the ones it is not in),
+   `groups:read` let the `channels` call list the ones it is not in, and
+   `users:read` lets the `user` call find a member's id for a mention),
    and carries no event subscriptions and no Request URL. A
    manifest that names events without a Request URL does not validate,
    so the events cannot stand in the document the app is created from
@@ -47,7 +48,7 @@ yard if it differs.
    yardr bead ask <bead> "Add Slack to the yard?" --run "pack apply slack" --context "The yard hears the workspace's mentions and direct messages through it."
    ```
    The card shows the declaration whole, as the apply card renders every
-   field of it, the two scripts with their checksums among them.
+   field of it, the scripts with their checksums among them.
 3. **The bot token, on a secret card.**
    ```sh
    yardr bead ask <bead> "The Slack bot token" --secret slack --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
@@ -223,3 +224,22 @@ name it as actor where Slack sends them back, and never reach its
 inbox: a delivery whose sender is the crew member's `slack` identity,
 by its id or its key, is dropped before hearing, with no mapping card,
 under any Unknown word.
+
+## Looking up a member for a mention
+
+The `user` call finds a member's id from a name, so a mention can be
+written as `<@U…>`. It needs the `users:read` scope of step 1: an app that
+was installed without it adds the scope under OAuth & Permissions and
+reinstalls once, as the channel scopes above. Then the operator grants it
+to the yardmaster and it answers from the yard:
+
+```sh
+yardr source grant slack user --crew yardmaster
+yardr call slack user 'name=Ada Lovelace'
+```
+
+It matches a substring of the real or display name, ignoring ASCII case,
+and skips deactivated accounts. It answers at most five members in directory
+order, each with `id`, `real_name`, `display_name` and `is_bot`. The directory
+is paged inside the program and never printed whole, and no profile email,
+phone or picture leaves it. The lookup itself stores no directory data.
