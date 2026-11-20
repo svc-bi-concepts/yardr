@@ -27,7 +27,7 @@ func worktreesOf(ctx context.Context, cfg *config.Config, st store.API) (*worktr
 		return nil, err
 	}
 	if root := all[store.WorktreeRootSetting]; root != "" {
-		return &worktreesState{Root: root, Set: true, There: config.WorktreeMounted(root, all[store.WorktreeRootVolume])}, nil
+		return &worktreesState{Root: root, Set: true, There: store.WorktreeMounted(root, all[store.WorktreeRootVolume])}, nil
 	}
 	return &worktreesState{Root: cfg.Worktrees(), There: true}, nil
 }

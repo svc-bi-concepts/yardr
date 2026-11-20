@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	bolt "go.etcd.io/bbolt"
-
-	"yardr.dev/yardr/internal/config"
 )
 
 // WorktreeRootSetting is the directory new bead worktrees are made under
@@ -57,7 +55,7 @@ func (w *wtx) setWorktreeVolume(root string) error {
 		return w.Bucket(bMeta).Delete([]byte(WorktreeRootVolume))
 	}
 	recorded := string(w.Bucket(bMeta).Get([]byte(WorktreeRootVolume)))
-	if recorded != "" && !config.WorktreeMounted(recorded, recorded) {
+	if recorded != "" && !WorktreeMounted(recorded, recorded) {
 		var previous string
 		if _, err := get(w.Tx, bSettings, WorktreeRootSetting, &previous); err != nil {
 			return err
@@ -74,7 +72,7 @@ func (w *wtx) setWorktreeVolume(root string) error {
 			return nil
 		}
 	}
-	volume, err := config.WorktreeVolume(root)
+	volume, err := WorktreeVolume(root)
 	if err != nil {
 		return fmt.Errorf("worktree_root volume: %w", err)
 	}

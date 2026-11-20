@@ -149,6 +149,9 @@ func TestStartDoesNotRunAgentWithoutARecordedPane(t *testing.T) {
 	} {
 		h, st := shellHerdr(t, wt)
 		h.YardHome = t.TempDir()
+		if _, err := st.CreateBead(ctx, store.NewBead{ID: "yard-13", Title: "record the pane"}, "me"); err != nil {
+			t.Fatal(err)
+		}
 		h.Bin = fakeHerdrBin(t, `printf '%s\n' "$*" >> `+st.calls+`
 case "$1 $2" in
   "worktree create") echo '{"result":{"workspace":{"workspace_id":"w1"},"tab":{"tab_id":"t1"},"root_pane":{"pane_id":"p1"},"worktree":{"path":"`+wt+`"}}}' ;;
@@ -202,6 +205,9 @@ func TestHerdrStartRecordsItsPaneBeforeTheAgentStarts(t *testing.T) {
 		}
 		h, st := shellHerdr(t, wt)
 		h.YardHome = t.TempDir()
+		if _, err := st.CreateBead(ctx, store.NewBead{ID: job.Bead.ID, Title: "record the pane"}, "me"); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := h.Start(ctx, job); err != nil {
 			t.Fatalf("%s depot: %v", name, err)
 		}
@@ -214,6 +220,9 @@ func TestHerdrStartRecordsItsPaneBeforeTheAgentStarts(t *testing.T) {
 
 		h, st = shellHerdr(t, wt)
 		h.YardHome = t.TempDir()
+		if _, err := st.CreateBead(ctx, store.NewBead{ID: job.Bead.ID, Title: "record the pane"}, "me"); err != nil {
+			t.Fatal(err)
+		}
 		st.refuse = errors.New("the store is away")
 		handle, err := h.Start(ctx, job)
 		if err == nil || !strings.Contains(err.Error(), "the store is away") || strings.Contains(readCalls(t, st.calls), "agent start") {
