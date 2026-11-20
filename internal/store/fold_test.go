@@ -423,6 +423,48 @@ func sizes(labels ...string) []NewBead {
 	return out
 }
 
+// foldPartBounds cuts total rows into at most procs parts of one size, the
+// last one short, as [start, end) pairs. The size is rounded up, so procs
+// parts can run past the end (72 rows over 14 procs is size 6, and a part
+// that starts at 78 has no rows): parts are made while they start inside
+// total, so none is empty.
+func foldPartBounds(total, procs int) [][2]int {
+	n := min(procs, total)
+	if n <= 0 {
+		return nil
+	}
+	size := (total + n - 1) / n
+	var out [][2]int
+	for start := 0; start < total; start += size {
+		out = append(out, [2]int{start, min(start+size, total)})
+	}
+	return out
+}
+
+// The split of TestFoldBeads's rows must cover every row once, in order, and
+// never run past the end, whatever the machine's parallelism. The machine
+// decides procs, so a range of counts is checked here: 14 procs on 72 rows panicked.
+func TestFoldPartBounds(t *testing.T) {
+	for total := 1; total <= 100; total++ {
+		for procs := 1; procs <= 64; procs++ {
+			parts := foldPartBounds(total, procs)
+			if len(parts) > procs {
+				t.Fatalf("%d rows over %d procs: %d parts", total, procs, len(parts))
+			}
+			next := 0
+			for _, p := range parts {
+				if p[0] != next || p[1] <= p[0] || p[1] > total {
+					t.Fatalf("%d rows over %d procs: part %v after row %d", total, procs, p, next)
+				}
+				next = p[1]
+			}
+			if next != total {
+				t.Fatalf("%d rows over %d procs: parts end at row %d", total, procs, next)
+			}
+		}
+	}
+}
+
 // A fold makes one carrier, and what it is made of is the done-when of
 // yardr-d1hb: each row is one of its lines. A refused fold makes no bead.
 func TestFoldBeads(t *testing.T) {
@@ -1699,13 +1741,11 @@ func TestFoldBeads(t *testing.T) {
 		{name: "no bead is refused", depot: "plain", opts: FoldOptions{To: "ready"}, wantErr: "needs beads"},
 	}
 
-	// The rows run in as many parts as the machine runs parallel tests,
+	// The rows run in at most as many parts as the machine runs parallel tests,
 	// each part over a yard of its own: a part's rows run in turn as they
 	// always did, and no row shares with another part.
-	n := min(runtime.GOMAXPROCS(0), len(rows))
-	size := (len(rows) + n - 1) / n
-	for c := range n {
-		part := rows[c*size : min((c+1)*size, len(rows))]
+	for c, bounds := range foldPartBounds(len(rows), runtime.GOMAXPROCS(0)) {
+		part := rows[bounds[0]:bounds[1]]
 		t.Run(fmt.Sprintf("part %d", c), func(t *testing.T) {
 			t.Parallel()
 			s := foldYard(t)
