@@ -35,6 +35,12 @@ jobs:
     # to 14 minutes on a runner's four cores, and its 30 minutes are about
     # twice the longest of those.
     timeout-minutes: 30
+    # The race leg (go test -race, in .yardr/test's landing run) needs cgo:
+    # the race detector is a C library, and a Go with cgo off refuses -race
+    # outright ("go: -race requires cgo"). The runner's Go defaults to off,
+    # so the gate sets it here, for every step of the job.
+    env:
+      CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # go-version-file pins the toolchain go.mod names; cache keeps the
@@ -43,6 +49,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # cgo needs a C compiler on the runner's PATH. Checked here, before the
+      # tests, so a runner without one fails at this step with the reason
+      # rather than deep in the race leg. Nothing is installed: the runner
+      # has no sudo, so a missing compiler is the runner image's to fix.
+      - name: C compiler (cgo for the race leg)
+        run: |
+          if ! cc_path=$(command -v cc); then
+            echo "no C compiler (cc) on the runner: cgo, and so go test -race, cannot run."
+            echo "The runner image needs gcc or clang installed."
+            exit 1
+          fi
+          echo "cc: $cc_path"
+          "$cc_path" --version | head -1
       - name: gofmt
         run: |
           out=$(gofmt -l .)
