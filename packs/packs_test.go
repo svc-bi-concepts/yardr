@@ -2126,7 +2126,7 @@ func TestSlackPack(t *testing.T) {
 		commands = append(commands, c.Key+" "+strings.Join(c.Argv, " "))
 	}
 	if want := []string{"thread.reply slack/thread reply", "thread.posted slack/thread posted",
-		"thread.read slack/thread read", "hook.normalize slack/normalize"}; !slices.Equal(commands, want) {
+		"thread.read slack/thread read", "hook.normalize slack/normalize", "call.user.run slack/lookup user"}; !slices.Equal(commands, want) {
 		t.Fatalf("commands = %q, want %q", commands, want)
 	}
 	if c := d.Credential; c == nil || c.Env != "SLACK_BOT_TOKEN" || c.Header != "Authorization: Bearer {credential}" {
@@ -2211,7 +2211,7 @@ func TestSlackPack(t *testing.T) {
 			botScopes = append(botScopes, name)
 		}
 	}
-	if want := []string{"app_mentions:read", "channels:history", "channels:join", "channels:read", "groups:history", "groups:read", "im:history", "mpim:history", "chat:write"}; !slices.Equal(botScopes, want) {
+	if want := []string{"app_mentions:read", "channels:history", "channels:join", "channels:read", "groups:history", "groups:read", "im:history", "mpim:history", "chat:write", "users:read"}; !slices.Equal(botScopes, want) {
 		t.Errorf("the manifest's bot scopes = %q, want %q", botScopes, want)
 	}
 	var forbidden []string

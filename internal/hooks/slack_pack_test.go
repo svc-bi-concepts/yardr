@@ -116,8 +116,13 @@ func TestSlackPackDeclaration(t *testing.T) {
 	if !ok || join.Kind != source.Update || join.Request.Line() != "POST /conversations.join" || len(join.Params) != 1 {
 		t.Fatalf("join call = %+v", join)
 	}
-	if len(d.Calls) != 4 {
-		t.Fatalf("calls = %d, want whoami, post, channels and join", len(d.Calls))
+	user, ok := d.Call("user")
+	if !ok || user.Kind != source.Read || strings.Join(user.Run, " ") != "slack/lookup user" || len(user.Params) != 1 ||
+		!reflect.DeepEqual(user.Answer.Select, []string{"users"}) {
+		t.Fatalf("user call = %+v", user)
+	}
+	if len(d.Calls) != 5 {
+		t.Fatalf("calls = %d, want whoami, post, channels, join and user", len(d.Calls))
 	}
 	h := d.Hook
 	if h == nil {
@@ -974,4 +979,176 @@ func TestSlackPackChannelCalls(t *testing.T) {
 	if len(got) != sent {
 		t.Errorf("a refused join sent %d requests", len(got)-sent)
 	}
+}
+
+// The user call's program, slack/lookup user, answers the members of the
+// workspace whose real or display name holds the name it is handed, as a
+// mention needs their ids. The stand-in's users.list is two pages, each
+// profile carrying an email, a phone and a picture, which must reach no
+// answer: the answer holds id, real_name, display_name and is_bot only,
+// at most five members in directory order, a deactivated account is none,
+// and the match is case-insensitive on either name. Slack's refusal of a
+// page is the program's error, its reason alone on stderr, and no partial
+// answer.
+func TestSlackPackUser(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed, and the pack's lookup command calls the service with it")
+	}
+	_, home := slackDecl(t)
+	prog := filepath.Join(home, "sources", "slack", "slack", "lookup")
+	member := func(id, real, display string, bot, deleted bool) map[string]any {
+		return map[string]any{"id": id, "real_name": real, "is_bot": bot, "deleted": deleted,
+			"profile": map[string]any{"display_name": display, "email": display + "@example.com",
+				"phone": "+41 79 000 00 00", "image_192": "https://img.example/" + id + ".png", "title": "Analyst"}}
+	}
+	page1 := []map[string]any{
+		member("U012AB3CD", "Ada Lovelace", "ada", false, false),
+		member("U034EF56G", "Grace Hopper", "grace", false, false),
+		member("U999BOT99", "yardr", "yardr", true, false),
+	}
+	page2 := []map[string]any{
+		member("U078GH90J", "Ada Byron", "byron", false, false),
+		member("U55DEL555", "Ada Former", "former", false, true),
+		member("U100ADM01", "Adam Ash", "adam", false, false),
+		member("U100ADM02", "Adam Birch", "birch", false, false),
+		member("U100ADM03", "Adam Cole", "cole", false, false),
+		member("U100ADM04", "Adam Dunn", "dunn", false, false),
+	}
+	refuse := false
+	var cursors []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.TrimPrefix(r.URL.Path, "/") != "users.list" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"ok":false,"error":"unknown_method"}`)
+			return
+		}
+		if m, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); m != "" && m != "application/x-www-form-urlencoded" {
+			t.Errorf("users.list was sent as %q, want form-encoded", m)
+		}
+		if r.Header.Get("Authorization") != "Bearer xoxb-test-token" {
+			t.Errorf("users.list was called with Authorization %q", r.Header.Get("Authorization"))
+		}
+		if refuse {
+			_, _ = io.WriteString(w, `{"ok":false,"error":"missing_scope"}`)
+			return
+		}
+		form, _ := url.ParseQuery(readAllString(t, r))
+		cursor := form.Get("cursor")
+		cursors = append(cursors, cursor)
+		out := map[string]any{"ok": true}
+		if cursor == "" {
+			out["members"] = page1
+			out["response_metadata"] = map[string]any{"next_cursor": "page2"}
+		} else {
+			if cursor != "page2" {
+				t.Errorf("users.list was sent cursor %q, want page2", cursor)
+			}
+			out["members"] = page2
+			out["response_metadata"] = map[string]any{"next_cursor": ""}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	}))
+	defer srv.Close()
+	run := func(name string) (string, string, int) {
+		t.Helper()
+		in, err := json.Marshal(map[string]any{"params": map[string]any{"name": name}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(prog, "user")
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "SLACK_BOT_TOKEN=xoxb-test-token", "YARDR_SOURCE_BASE=" + srv.URL}
+		cmd.Stdin = bytes.NewReader(in)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		code := 0
+		if err := cmd.Run(); err != nil {
+			exit, ok := err.(*exec.ExitError)
+			if !ok {
+				t.Fatal(err)
+			}
+			code = exit.ExitCode()
+		}
+		return stdout.String(), stderr.String(), code
+	}
+	// The answer's ids and names, and nothing a profile holds beyond them.
+	ids := func(out string) []string {
+		t.Helper()
+		for _, leaked := range []string{"@example.com", "+41", "img.example", "Analyst"} {
+			if strings.Contains(out, leaked) {
+				t.Errorf("the answer carries %q: %s", leaked, out)
+			}
+		}
+		var a struct {
+			Users []map[string]any `json:"users"`
+		}
+		if err := json.Unmarshal([]byte(out), &a); err != nil {
+			t.Fatalf("answer is no users object: %v: %s", err, out)
+		}
+		var got []string
+		for _, u := range a.Users {
+			if len(u) != 4 {
+				t.Errorf("a user carries %d fields, want id, real_name, display_name and is_bot: %v", len(u), u)
+			}
+			got = append(got, u["id"].(string))
+		}
+		return got
+	}
+	out, errOut, code := run("ada")
+	if code != 0 || errOut != "" {
+		t.Fatalf("ada: exit %d, stderr %q", code, errOut)
+	}
+	// Lovelace and Byron match, the deactivated Former does not, and the
+	// first five of the six matches in directory order are the answer.
+	if want := []string{"U012AB3CD", "U078GH90J", "U100ADM01", "U100ADM02", "U100ADM03"}; !reflect.DeepEqual(ids(out), want) {
+		t.Errorf("ada: ids = %q, want %q", ids(out), want)
+	}
+	if !reflect.DeepEqual(cursors, []string{"", "page2"}) {
+		t.Errorf("users.list was asked with cursors %q, want the first page then page2", cursors)
+	}
+	out, errOut, code = run("GRACE")
+	if code != 0 || errOut != "" || !reflect.DeepEqual(ids(out), []string{"U034EF56G"}) {
+		t.Errorf("GRACE: exit %d, stderr %q, answer %s", code, errOut, out)
+	}
+	var grace struct {
+		Users []map[string]any `json:"users"`
+	}
+	_ = json.Unmarshal([]byte(out), &grace)
+	if want := (map[string]any{"id": "U034EF56G", "real_name": "Grace Hopper", "display_name": "grace", "is_bot": false}); !reflect.DeepEqual(grace.Users[0], want) {
+		t.Errorf("GRACE: user = %v, want %v", grace.Users[0], want)
+	}
+	// The bot is a member like any other: its name matches, and is_bot says so.
+	out, _, _ = run("yard")
+	var bot struct {
+		Users []map[string]any `json:"users"`
+	}
+	_ = json.Unmarshal([]byte(out), &bot)
+	if len(bot.Users) != 1 || bot.Users[0]["is_bot"] != true {
+		t.Errorf("yard: answer = %s, want the bot with is_bot true", out)
+	}
+	if out, errOut, code := run("nobody"); code != 0 || errOut != "" || strings.TrimSpace(out) != `{"users":[]}` {
+		t.Errorf("nobody: exit %d, stderr %q, answer %q, want an empty list", code, errOut, out)
+	}
+	if out, _, code := run("former"); code != 0 || strings.TrimSpace(out) != `{"users":[]}` {
+		t.Errorf("former: exit %d, answer %q: a deactivated account matches nothing", code, out)
+	}
+	if out, errOut, code := run(""); code == 0 || out != "" || !strings.Contains(errOut, "no name") {
+		t.Errorf("an empty name: exit %d, stdout %q, stderr %q, want a refusal before any request", code, out, errOut)
+	}
+	refuse = true
+	out, errOut, code = run("ada")
+	if code == 0 || out != "" || strings.TrimSpace(errOut) != "slack missing_scope" {
+		t.Errorf("refused: exit %d, stdout %q, stderr %q, want no answer and slack missing_scope alone", code, out, errOut)
+	}
+}
+
+// readAllString is the request's body as text, for a test that reads the
+// form a command sent.
+func readAllString(t *testing.T, r *http.Request) string {
+	t.Helper()
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
