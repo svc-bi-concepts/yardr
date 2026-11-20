@@ -32,7 +32,8 @@ const mcpStdioHelperEnv = "YARDR_TEST_MCP_STDIO_HELPER"
 func TestMCPStdoutIsOnlyJSONRPC(t *testing.T) {
 	t.Parallel()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMCPStdioHelper$")
-	cmd.Env = append(os.Environ(), mcpStdioHelperEnv+"=1")
+	tmp := t.TempDir()
+	cmd.Env = append(os.Environ(), mcpStdioHelperEnv+"=1", "TMPDIR="+tmp)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
@@ -113,21 +114,25 @@ func TestMCPStdoutIsOnlyJSONRPC(t *testing.T) {
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("yardr mcp exited with %v; stderr: %s", err, stderr.String())
 	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("helper left temporary fixtures behind: %v", entries)
+	}
 }
 
 // TestMCPStdioHelper is the child of TestMCPStdoutIsOnlyJSONRPC. It runs
 // only when that test starts it: a yard of one user, served as yardr mcp
-// on the process's own stdin and stdout, then exits without the testing
-// package writing its PASS line to stdout.
+// on the process's own stdin and stdout.
 func TestMCPStdioHelper(t *testing.T) {
 	t.Parallel()
 	if os.Getenv(mcpStdioHelperEnv) == "" {
 		t.Skip("runs only as the child of TestMCPStdoutIsOnlyJSONRPC")
 	}
-	home, err := os.MkdirTemp("", "mcpstdio")
-	if err != nil {
-		t.Fatal(err)
-	}
+	defer func() { os.Stdout = os.Stderr }()
+	home := t.TempDir()
 	st := storetest.NewIn(t, home)
 	ctx := t.Context()
 	if _, err := st.AddUser(ctx, "ada", "ada"); err != nil {
@@ -139,13 +144,7 @@ func TestMCPStdioHelper(t *testing.T) {
 	a := &app{st: st, actor: "ada", env: testEnv(t, home)}
 	cmd := a.mcpCmd()
 	cmd.SetArgs([]string{})
-	err = cmd.Execute()
-	// os.Exit skips the deferred cleanups, so the home goes here, and the
-	// testing package's own output (PASS) never reaches stdout.
-	_ = os.RemoveAll(home)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
 	}
-	os.Exit(0)
 }
