@@ -22,11 +22,11 @@ import (
 // is never made for the bead's branch beside it. A recorded path that is no
 // longer there is not reused, as before: the bead is set up again under the
 // root.
-func (h *Herdr) worktreePath(ctx context.Context, job dispatch.Job, depot string) (string, error) {
-	if p, err := h.recordedWorktree(ctx, job.Bead.ID); p != "" || err != nil {
+func worktreePath(ctx context.Context, st store.API, defaultRoot string, job dispatch.Job, depot string) (string, error) {
+	if p, err := recordedWorktree(ctx, st, job.Bead.ID); p != "" || err != nil {
 		return p, err
 	}
-	root, err := h.worktreeRoot(ctx, job)
+	root, err := worktreeRoot(ctx, st, defaultRoot, job)
 	if err != nil || root == "" {
 		return "", err
 	}
@@ -40,12 +40,12 @@ func (h *Herdr) worktreePath(ctx context.Context, job dispatch.Job, depot string
 // worktree must not then be made in an empty directory on the disk the
 // setting was meant to leave: the session is refused instead, and it starts
 // once the volume is back.
-func (h *Herdr) worktreeRoot(ctx context.Context, job dispatch.Job) (string, error) {
+func worktreeRoot(ctx context.Context, st store.API, defaultRoot string, job dispatch.Job) (string, error) {
 	if root := str(job.Group.Config, "worktrees", ""); root != "" {
 		return root, nil
 	}
-	if h.Store != nil {
-		all, err := h.Store.Settings(ctx)
+	if st != nil {
+		all, err := st.Settings(ctx)
 		if err != nil {
 			return "", fmt.Errorf("worktree_root: %w", err)
 		}
@@ -57,16 +57,16 @@ func (h *Herdr) worktreeRoot(ctx context.Context, job dispatch.Job) (string, err
 			return root, nil
 		}
 	}
-	return h.WorktreeRoot, nil
+	return defaultRoot, nil
 }
 
 // recordedWorktree is the path of the newest worktree a session of the bead
 // recorded that still stands on disk, "" for none.
-func (h *Herdr) recordedWorktree(ctx context.Context, bead string) (string, error) {
-	if h.Store == nil {
+func recordedWorktree(ctx context.Context, st store.API, bead string) (string, error) {
+	if st == nil {
 		return "", nil
 	}
-	sessions, err := h.Store.ListSessions(ctx, store.SessionFilter{Bead: bead, All: true})
+	sessions, err := st.ListSessions(ctx, store.SessionFilter{Bead: bead, All: true})
 	if err != nil {
 		return "", err
 	}

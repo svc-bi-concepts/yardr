@@ -193,6 +193,7 @@ func TestWorktreeRecordedPathKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := start(claimed.ID, "new")
+	mustT(t, s.SetHandle(ctx, claimed.ID, first))
 	wt := first["worktree"].(string)
 	if want := filepath.Join(old, "r", "r-1"); wt != want {
 		t.Fatalf("first stage at %s, want %s", wt, want)
@@ -272,8 +273,17 @@ func TestWorktreeRemovalWaitsForVolume(t *testing.T) {
 	if !strings.Contains(gitOutT(t, repo, "worktree", "list", "--porcelain"), wt) {
 		t.Fatalf("git's record of %s was pruned while its volume was away", wt)
 	}
-	if _, err := h.worktreePath(ctx, dispatch.Job{Bead: store.Bead{ID: "r-1"}}, "r"); !dispatch.IsBlocked(err) {
+	if _, err := worktreePath(ctx, h.Store, h.WorktreeRoot, dispatch.Job{Bead: store.Bead{ID: "r-1"}}, "r"); !dispatch.IsBlocked(err) {
 		t.Fatalf("offline recorded path: %v", err)
+	}
+	assembly := All(t.TempDir(), s, nil, nil)["exec"].(*Exec)
+	assemblyJob, output := execEnvJob(t, &depot, "")
+	assemblyJob.Bead.ID = "r-1"
+	if _, err := assembly.Start(ctx, assemblyJob); !dispatch.IsBlocked(err) {
+		t.Fatalf("assembly accepted offline recorded worktree: %v", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("assembly ran while recorded volume was offline: %v", err)
 	}
 	for _, name := range []string{"present", "missing"} {
 		sibling := filepath.Join(t.TempDir(), name)
@@ -316,7 +326,7 @@ func TestWorktreeRootUnmountedDirectoryRefuses(t *testing.T) {
 	mustT(t, err)
 	settings[store.WorktreeRootVolume] = root
 	h := &Herdr{Store: &worktreeSettings{API: s, settings: settings}}
-	_, err = h.worktreePath(ctx, dispatch.Job{Bead: store.Bead{ID: "r-1"}}, "r")
+	_, err = worktreePath(ctx, h.Store, h.WorktreeRoot, dispatch.Job{Bead: store.Bead{ID: "r-1"}}, "r")
 	if !dispatch.IsBlocked(err) {
 		t.Fatalf("unmounted directory accepted: %v", err)
 	}
