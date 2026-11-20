@@ -903,22 +903,6 @@ func CheckWebHost(whose, name string) (string, error) {
 	return host, nil
 }
 
-// Settings returns every setting, and files_max beside them: how many
-// files one mail or note may carry. That count is the yard's own, not a
-// setting the operator changes, so a client needs no copy of the number.
-func (s *Store) Settings(ctx context.Context) (map[string]string, error) {
-	out := map[string]string{}
-	err := s.read(func(tx *bolt.Tx) error {
-		return each(tx, bSettings, "", func(k []byte, v *string) error {
-			out[string(k)] = *v
-			return nil
-		})
-	})
-	// The yard's own count wins over anything stored under its key.
-	out[FilesMaxSetting] = strconv.Itoa(MaxMailFiles)
-	return out, err
-}
-
 // SetSetting sets key to value; an empty value removes it. A key that is
 // not in KnownSettings is refused with the keys there are, and so is a
 // value the key's check does not take: whoever writes (the CLI, init, the
@@ -993,6 +977,11 @@ func (w *wtx) setSetting(ctx context.Context, key, value string, known bool, act
 		if w.Bucket(bDepots).Get([]byte(value)) == nil {
 			return fmt.Errorf("%s: depot %s is not in the yard: add it first (yardr depot add %s <path>)",
 				UpgradeFromSetting, value, value)
+		}
+	}
+	if key == WorktreeRootSetting {
+		if err := w.setWorktreeVolume(value); err != nil {
+			return err
 		}
 	}
 	var err error

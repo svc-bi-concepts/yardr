@@ -45,6 +45,19 @@ func TestDoctorWorktreesLine(t *testing.T) {
 		t.Fatalf("set and there line = %+v", l)
 	}
 
+	settings, err := st.Settings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings[store.WorktreeRootVolume] = root
+	offline, err := worktreesOf(ctx, cfg, &doctorWorktreeSettings{API: st, settings: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offline.There || offline.line("yardr").tag != tagFault {
+		t.Fatalf("unmounted directory reported healthy: %+v", offline)
+	}
+
 	gone := filepath.Join(root, "not-mounted")
 	if err := st.SetSetting(ctx, store.WorktreeRootSetting, gone, "me"); err != nil {
 		t.Fatal(err)
@@ -58,4 +71,13 @@ func TestDoctorWorktreesLine(t *testing.T) {
 	if l := w.line("yardr"); l.tag != tagFault || !strings.Contains(l.text, gone) {
 		t.Fatalf("absent root line = %+v", l)
 	}
+}
+
+type doctorWorktreeSettings struct {
+	store.API
+	settings map[string]string
+}
+
+func (s *doctorWorktreeSettings) Settings(context.Context) (map[string]string, error) {
+	return s.settings, nil
 }

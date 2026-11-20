@@ -266,6 +266,7 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 		_, _ = h.run(ctx, "workspace", "rename", wt.Workspace.ID, label)
 	}
 	handle["workspace"], handle["worktree"] = wt.Workspace.ID, wt.Worktree.Path
+	worktreeVolume(handle)
 	if job.Pull != nil {
 		head, err := h.pullHead(ctx, wt.Worktree.Path, job.Pull.Number)
 		if err != nil {
