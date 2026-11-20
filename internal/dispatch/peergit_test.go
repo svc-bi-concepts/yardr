@@ -889,3 +889,73 @@ func TestPeerBaseKeptByARef(t *testing.T) {
 		t.Fatalf("b's refs after its daemon started anew = %q", refs())
 	}
 }
+
+// A bead whose branch of this yard's holds commits the base does not is sent
+// with the branch pushed first, to the base's remote, and starts from the
+// pushed head: the first sending has no return to start from. The push is
+// what makes the commit the peer's to fetch.
+func TestPeerBeadBranchPushedBeforeSend(t *testing.T) {
+	t.Parallel()
+	clock := newClock()
+	a, b := newPeerYard(t, "a", clock), newPeerYard(t, "b", clock)
+	link(t, a, b, true, true)
+	remote := sharedRemote(t)
+	b.clones(t, remote)
+	b.takes(t, "a", "web")
+	aRepo := a.sendsFrom(t, remote, "b", nil)
+
+	mine := a.bead(t, "Add the export")
+	branch := store.Branch(mine.ID)
+	gitIn(t, aRepo, "checkout", "-q", "-b", branch, "main")
+	own := commitIn(t, aRepo, "export.txt", "a's own\n")
+	gitIn(t, aRepo, "checkout", "-q", "main")
+	a.pass(t)
+
+	sent := a.beadEvents(t, mine.ID, "peer_bead_sent")
+	if len(sent) != 1 || sent[0].Data["base"] != branch || sent[0].Data["base_commit"] != own {
+		t.Fatalf("a's peer_bead_sent = %+v, want it to start at %s on %s", sent, own, branch)
+	}
+	if at := gitIn(t, remote, "rev-parse", "--verify", "refs/heads/"+branch); at != own {
+		t.Fatalf("the remote has %s at %s, want the pushed head %s", branch, at, own)
+	}
+	if got := b.from(t, "a"); got.Peer.Git == nil || got.Peer.Git.BaseCommit != own || got.Peer.Git.Base != branch {
+		t.Fatalf("b's bead starts from %+v, want %s", got.Peer.Git, own)
+	}
+}
+
+// The remote a branch is pushed to is the group's remote setting, the remote
+// the peer's returns come from, when the group sets one: here a second
+// remote of a's depot, which the base's remote is not.
+func TestPeerBeadBranchPushedToGroupRemote(t *testing.T) {
+	t.Parallel()
+	clock := newClock()
+	a, b := newPeerYard(t, "a", clock), newPeerYard(t, "b", clock)
+	link(t, a, b, true, true)
+	remote := sharedRemote(t)
+	b.takes(t, "a", "web")
+	aRepo := a.sendsFrom(t, remote, "b", nil)
+	overflow := filepath.Join(t.TempDir(), "overflow.git")
+	gitIn(t, filepath.Dir(overflow), "init", "-q", "--bare", overflow)
+	gitIn(t, aRepo, "remote", "add", "overflow", overflow)
+	ctx := context.Background()
+	must(t, a.api.PutGroup(ctx, store.Group{Name: "at-b", Runner: store.PeerRunner, Limit: 3,
+		Config: map[string]any{store.GroupPeer: "b", store.GroupRemote: "overflow"}}, "me"))
+
+	mine := a.bead(t, "Add the export")
+	branch := store.Branch(mine.ID)
+	gitIn(t, aRepo, "checkout", "-q", "-b", branch, "main")
+	own := commitIn(t, aRepo, "export.txt", "a's own\n")
+	gitIn(t, aRepo, "checkout", "-q", "main")
+	a.pass(t)
+
+	if at := gitIn(t, overflow, "rev-parse", "--verify", "refs/heads/"+branch); at != own {
+		t.Fatalf("overflow has %s at %s, want %s", branch, at, own)
+	}
+	if out, err := gitCmd(remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).CombinedOutput(); err == nil {
+		t.Fatalf("origin has the branch too: %s", out)
+	}
+	sent := a.beadEvents(t, mine.ID, "peer_bead_sent")
+	if len(sent) != 1 || sent[0].Data["base_commit"] != own || sent[0].Data["remote"] == nil {
+		t.Fatalf("a's peer_bead_sent = %+v", sent)
+	}
+}
