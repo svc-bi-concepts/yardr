@@ -185,5 +185,5 @@ jobs:
             gh release create "$TAG" yardr_linux_amd64 yardr_darwin_arm64 SHA256SUMS \
               --target "$GITHUB_SHA" --prerelease \
               --title "internal ${TAG#internal-}" \
-              --notes "Internal build of $GITHUB_SHA on main, from svc-bi-concepts/yardr. Not signed; not an official release. The darwin binary is signed and notarized when the mini installs it, and the mini pins that signed sha: the sha256 here is the download's check, not the pin."
+              --notes "Internal build of $GITHUB_SHA on main, from svc-bi-concepts/yardr. Not signed; not an official release. The darwin binary is signed by the mini when it installs it, and the mini pins that signed sha: the sha256 here is the download's check, not the pin."
           fi
