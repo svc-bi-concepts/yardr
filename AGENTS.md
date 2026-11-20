@@ -30,8 +30,10 @@ worked); user docs live in `docs/` and are not repeated here.
 - `harnesses/`: one `<kind>.yaml` per agent harness kind, embedded and read
   by `internal/agents`.
 - `contrib/`: operator and developer tools, each with its own README
-  (assembly, bench, burn, deploy, github-mint, isolated-yard,
-  peer, release, server-yard, shot). google-mint is no longer here: each
+  (assembly, bench, burn, deploy, github-mint, internal, isolated-yard,
+  peer, release, server-yard, shot). `internal` installs an internal build
+  (CI's prerelease) against the committed BI Concepts key, beside `install.sh`,
+  which it does not change. google-mint is no longer here: each
   google pack under `packs/` carries it as its declarations' mint command.
   `contrib/server-yard/managers` installs the stand-in service managers
   that the server-yard suite and the yard-shape matrix
