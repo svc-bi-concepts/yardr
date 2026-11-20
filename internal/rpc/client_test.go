@@ -384,3 +384,22 @@ func TestCallSendsFreshWitness(t *testing.T) {
 		t.Fatalf("context headers = %+v, want %+v", got, want)
 	}
 }
+
+// A store sentinel the runner matches with errors.Is must come through the
+// socket as that sentinel: a bead whose depot lacks the peer's remote is
+// held on ErrNoPeerRemote, and over the wire it was only text, so the
+// session ended failed instead (TestPeerBeadNotSentWithoutRemote under
+// YARDR_TEST_RPC=1).
+func TestCallKeepsPeerRemoteSentinel(t *testing.T) {
+	sock := socket(t)
+	serve(t, sock, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, reply{Error: toWire(fmt.Errorf("%w: depot web has no remote origin", store.ErrNoPeerRemote))})
+	})
+	_, err := NewClient(sock).PeerBeadSend(context.Background(), "s")
+	if !errors.Is(err, store.ErrNoPeerRemote) {
+		t.Fatalf("PeerBeadSend error = %v; want errors.Is(store.ErrNoPeerRemote)", err)
+	}
+	if !strings.Contains(err.Error(), "depot web has no remote origin") {
+		t.Fatalf("PeerBeadSend error = %q; want the owner's message kept", err)
+	}
+}

@@ -448,7 +448,7 @@ type reply struct {
 }
 
 type wireError struct {
-	Code    string `json:"code"` // not-found, taken, at-limit, conflict, ambiguous, replacing, error
+	Code    string `json:"code"` // not-found, taken, at-limit, conflict, ambiguous, no-peer-remote, replacing, error
 	Message string `json:"message"`
 }
 
@@ -465,6 +465,10 @@ func toWire(err error) *wireError {
 		code = "conflict"
 	case errors.Is(err, store.ErrAmbiguous):
 		code = "ambiguous"
+	// The runner holds a bead on this sentinel, not on its text: a session
+	// that is started over the socket must hold it too, or it ends failed.
+	case errors.Is(err, store.ErrNoPeerRemote):
+		code = "no-peer-remote"
 	}
 	return &wireError{Code: code, Message: err.Error()}
 }

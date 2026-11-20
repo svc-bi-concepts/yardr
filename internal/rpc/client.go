@@ -227,6 +227,8 @@ func (c *Client) callOnce(ctx context.Context, method string, out any, body []by
 			return wrapped{r.Error.Message, store.ErrConflict}
 		case "ambiguous":
 			return wrapped{r.Error.Message, store.ErrAmbiguous}
+		case "no-peer-remote":
+			return wrapped{r.Error.Message, store.ErrNoPeerRemote}
 		case "replacing":
 			return retryable{fmt.Errorf("%s", r.Error.Message)}
 		}

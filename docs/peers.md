@@ -2740,9 +2740,14 @@ remote, the `bead` message carries `git`: `base`, the branch's name;
 `base_commit`, where the base stands in this yard's depot when the bead is
 sent; and `remote`, the URL of the base's remote: the remote of a base like
 `origin/main`, else the
-upstream of the local base branch, else `origin`. A dir depot, and a depot
-with no remote, send no `git`: such a bead crosses with its words, as
-before.
+upstream of the local base branch, else `origin`. A dir depot sends no
+`git`: such a bead crosses with its words.
+
+Before sending from a repository, the yard checks that it has the peer
+group's `remote` (`origin` by default). If it does not, the bead is held in
+its stage and nothing is sent. Add the remote with
+`git -C <depot path> remote add <remote> <url>`, then
+`yardr bead unhold <id>` tries the send again.
 
 The base commit has to be on the remote. A base that this yard landed on
 and did not push (`merge-local` without `YARDR_PUSH`) is a commit the other
@@ -2863,8 +2868,7 @@ applied, with a note by `yard` that the branch was not taken and why
 (`peer_bead_not_fetched` on the bead), when:
 
 - the bead's depot is a dir depot, or the bead has none;
-- the remote the branch was pushed to is not this depot's remote, or the depot
-  has no remote of that name.
+- the remote the branch was pushed to is not this depot's remote.
 
 What came back is then the outcome and the notes. For work whose result is
 words that is all there is to take.
@@ -2890,9 +2894,9 @@ b takes c's branch into its own bead's branch, its `return-branch` pushes
 that under b's name, and a takes b's. The bead b sends on names the commit
 a named, so c starts where a's bead starts. Where two of the yards have no
 remote in common, words come back over that hop, and that is not an error:
-the taking yard's depot is a directory, the asking yard's depot has no remote
-to name, or the branch was pushed to a remote the asking yard's depot does
-not have. The yard before it then has the outcome and the notes, and
+the taking yard's depot is a directory, or the branch was pushed to a
+different remote than the asking yard's configured remote. The yard before
+it then has the outcome and the notes, and
 nothing to push. (A taking yard whose depot is a repository with another
 remote than the bead names is the one case that refuses, as
 `base_unknown`: its work would start somewhere else.)
