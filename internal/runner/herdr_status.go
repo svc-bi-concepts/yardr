@@ -170,8 +170,8 @@ func (h *Herdr) Stop(ctx context.Context, handle map[string]any) error {
 // worktree list, and the moved directory is deleted in the
 // background. Finish runs inside the dispatcher's pass, where waiting on
 // a big tree (a webapp's node_modules) would stall every group past
-// git's own timeout; a rename and a prune take milliseconds. A status
-// that names only deleted tracked files is a removal that died midway,
+// git's own timeout; a rename and an admin entry removal take milliseconds.
+// A status that names only deleted tracked files is a removal that died midway,
 // whose branch holds every one of those files, so it is removed rather
 // than refused as uncommitted changes.
 func (h *Herdr) Finish(ctx context.Context, handle map[string]any) error {

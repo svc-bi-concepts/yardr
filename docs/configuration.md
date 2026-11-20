@@ -588,7 +588,7 @@ Everything yardr keeps for itself lives in one directory, the yard's
 | `otel-export.json` | what `yardr otel export` has sent, where the next run continues ([otel.md](otel.md#what-it-remembers)) |
 | `telemetry.json`, `telemetry.json.lock` | the install id and the consent bookkeeping of yardr's opt-in telemetry, made by the first `yardr telemetry on`, mode 0600: when consent was given and withdrawn, the day batches count from, the day of the latest attempt to send, and the last day sent. The lock is held for a moment by whichever of the daemon and the `yardr telemetry` commands writes the file. Deleting `telemetry.json` forgets the id ([telemetry.md](telemetry.md#the-install-id)) |
 | `logs/sessions/yard-<session>.log` | what the command of an exec group's session printed, for a group that sets no `log` ([groups.md](groups.md#runners)); nothing prunes them |
-| `worktrees/<depot>/<bead>` | herdr bead worktrees, unless `worktree_root` names another directory for the new ones ([below](#where-the-worktrees-go)) |
+| `worktrees/<depot>/<bead>` | the default location of bead worktrees ([Where the worktrees go](#where-the-worktrees-go)) |
 | `depots/<name>` | depots registered with `depot add --clone`; `depot rm` leaves the clone here |
 | `packs/<pack>/` | a pack's roles and scripts as an import installed them, filled with the yard's names ([packs.md](packs.md#how-a-pack-maps-to-the-yard)): what the groups and crew members of a depot set up from the pack read. `yardr init` installs the yardmaster's role here, from the default pack, before any depot |
 | `flows/<pack>.<flow>/` | the stage files of a pack's flow, installed the same way |
@@ -690,7 +690,7 @@ still the way to have them gone at once.
 match it (`--depot <name>`) and its flow pointers, logging one `depot_removed`
 event. It is refused, naming them, while the depot has open beads or live
 sessions; closed beads keep the depot's name as history. Nothing on disk
-changes: the clone, its worktrees under `worktrees/<depot>/` and its `.yardr/`
+changes: the clone, its worktrees ([Where the worktrees go](#where-the-worktrees-go)) and its `.yardr/`
 stay where they are for you to remove.
 
 ### Which yardr a yard runs
@@ -1371,12 +1371,11 @@ they stop, so the home goes last.
 | the home | `~/.yardr`, or what `YARDR_HOME` names: the store, the roles, the logs, `packs/` and `flows/` (an imported pack's roles, scripts and stage files; the assembly's `merge-local` is one of them), `worktrees/`, `depots/` | `ls -a <home>` | `rm -rf <home>`, typed by you with the path. Read the next paragraph first |
 | a depot's `.yardr` files | in the repository, committed on its base branch: `.yardr/roles/`, `.yardr/flows/` | `git -C <repo> ls-files .yardr` | keep them: a new yard that adds the repository as a depot reads them as they are. To start the depot's configuration over too: `git -C <repo> rm -r .yardr`, and commit |
 
-**Before the home is removed**, look at two directories in it, because they
-hold work and not only yardr's state. `<home>/worktrees/<depot>/<bead>` (or
-under `worktree_root`, see [Where the worktrees go](#where-the-worktrees-go)) are
-the worktrees of beads, on branches `yard/<bead>` of the depot's repository:
-the commits on those branches stay in the repository, and what is not
-committed in a worktree goes with the home. `<home>/depots/<name>` are
+**Before the home is removed**, check the [bead worktrees](#where-the-worktrees-go)
+and `<home>/depots/<name>`, because they hold work and not only yardr's state.
+Commits on the beads' `yard/<bead>` branches stay in the depot's repository.
+Uncommitted work in a worktree inside the home goes with the home; worktrees
+outside it stay on disk. `<home>/depots/<name>` are
 repositories themselves, cloned by `yardr depot add --clone`: removing the home
 removes those clones, with every branch that was never pushed. Move out what
 you want to keep. Credential files you kept in the home
@@ -1464,25 +1463,30 @@ A yard whose yardmaster has another name gives `--crew yardmaster=<name>`.
 
 ### Where the worktrees go
 
-A bead's worktree is made under `<home>/worktrees` unless the operator sets
-`worktree_root`, an absolute path, to another directory, such as a volume of
-its own:
+A new bead worktree goes at `<root>/<depot>/<bead>`. The root is the group's
+`worktrees` config when set, else the yard's `worktree_root` setting, else
+`<home>/worktrees`. To select another directory for the yard, give its
+absolute path (the path below is an example):
 
 ```sh
-yardr settings set worktree_root /Volumes/Yard/worktrees/yard   # unset: the home's worktrees
+yardr settings set worktree_root /mnt/work/worktrees/my-yard
+yardr settings set worktree_root ""   # return to the default root
 ```
 
 Only new worktrees go there. A worktree that stands keeps the path it was
 made at, which the bead's session records, so a later stage reopens it there,
 and removing it works as before. Set the root while its volume is mounted:
 yardr records the mount as well as each session's worktree location. The
-directory and its recorded mount must be available when a worktree is made.
+directory must already exist, and its recorded mount must be available when
+a worktree is made using the setting.
 Otherwise the session is refused with a message that names the directory,
 and nothing is written in its place on the home's disk. `yardr doctor`
-says where new worktrees go and whether their volume is mounted. Cleanup of
+says the yard's root and whether its volume is mounted. A group's explicit
+`worktrees` config bypasses this setting and its mount check. Cleanup of
 an offline worktree waits for a later dispatch pass after remounting, even
-if the setting has since changed. Moving the worktrees that
-already stand is not done by yardr: they stay where they are until their beads are done.
+if the setting has since changed. After successful cleanup, the recorded
+location is cleared, so reopening the bead uses the current root. Moving
+existing worktrees is not done by yardr.
 
 ### Copies of the store
 

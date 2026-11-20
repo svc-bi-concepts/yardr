@@ -31,9 +31,9 @@ var worktreeRootSetting = Setting{Key: WorktreeRootSetting, Help: "the directory
 
 const WorktreeRootVolume = "worktree_root_volume"
 
-// Settings returns every setting, and files_max beside them: how many
-// files one mail or note may carry. That count is the yard's own, not a
-// setting the operator changes, so a client needs no copy of the number.
+// Settings returns every setting, the derived worktree_root_volume when
+// recorded, and files_max: how many files one mail or note may carry.
+// The latter two are metadata, not settings the operator changes.
 func (s *Store) Settings(ctx context.Context) (map[string]string, error) {
 	out := map[string]string{}
 	err := s.read(func(tx *bolt.Tx) error {

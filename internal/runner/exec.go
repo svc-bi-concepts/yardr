@@ -38,7 +38,7 @@ import (
 //	                starts, that commit: nothing of it lands here
 //	YARDR_BRANCH    the bead's branch, yard/<bead>
 //	YARDR_WORKTREE  where the herdr runner keeps that branch checked out
-//	                (<worktrees>/<depot>/<bead>; config.worktrees as for herdr)
+//	                (the recorded path, else selected by worktreeRoot as for herdr)
 //	YARDR_TEST      the depot's test command (yardr depot add --test), for the
 //	                script to run with sh -c if it tests; unset when the
 //	                depot has none
