@@ -219,6 +219,7 @@ type API interface {
 	DevicePairCloseSelf(ctx context.Context, user string) (*DevicePairing, error)
 	DevicePairCodeSelf(ctx context.Context, user string) (*DevicePairingCode, error)
 	UserInbox(ctx context.Context, name string, limit int, actor string) (*Mailbox, error)
+	HeldCards(ctx context.Context, name, actor string) ([]HeldCard, error)
 	AckUserInbox(ctx context.Context, name string, through uint64, actor string) error
 	UserNotifications(ctx context.Context, name string, limit int, actor string) (*NotificationPage, error)
 	AckUserNotifications(ctx context.Context, name string, through uint64, actor string) error

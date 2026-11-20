@@ -194,6 +194,7 @@ var eventDataTold = map[string][]string{
 	"hook_rejected":        {"count", "hook", "last", "reason", "status"},
 	"hook_files":           {"seq"},
 	"hook_quiet":           {"gap", "hook", "last", "source"},
+	"identity_held":        {"card", "channel", "held", "sender", "source"},
 	"hook_listener_failed": {},
 	"pack_applied":         {"approved", "auth", "commit", "depot", "pack"},
 	"pack_unchanged":       {"approved", "auth", "commit", "depot", "pack"},

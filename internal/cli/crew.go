@@ -73,13 +73,6 @@ func copiedDefault(r store.CrewMember, yardr string) string {
 		r.Name, store.KindAttention, gains, yardr, r.Name, strings.Join(on, ","))
 }
 
-// knownKinds are offered in the interactive form.
-var knownKinds = []string{"gave_up", "session_blocked", "session_died", "session_failed", "unrouted", "stranded",
-	"runtime_down", "runtime_up", "backup_failed", "session_idle", "session_aged", "session_stalled", "session_harness_error", "session_harness_dialog",
-	"session_harness_retry", "session_harness_starting", "session_model_mismatch", "session_prompt_gave_up", "session_prompt_lost", "session_prompt_typed", "move_refused", "make_refused", "nudge_held", "note_untold",
-	"no_runner", "capped", "workspace_kept", "crew_gave_up", "created", "claimed", "advanced", "closed",
-	"held", "waited", "released", "noted", "dep_added", "hook_rejected", "hook_quiet", "folded", "fold_refused"}
-
 func (a *app) crewCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "crew", Short: "Always-on sessions not tied to a bead (a yardmaster)"}
 
@@ -1297,6 +1290,8 @@ func printInboxEvent(w io.Writer, e store.Event, member, home string, delivered 
 	case "timer":
 		// The text says it is a timer, who set it and when.
 		fmt.Fprintf(w, "%6d %s  %s\n", e.Seq, e.At.Local().Format("01-02 15:04"), show(e.Data["text"]))
+	case store.KindIdentityHeld:
+		printHeldNotice(w, e)
 	default:
 		printBeadDelivery(w, e, member, home)
 	}

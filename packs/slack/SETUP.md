@@ -203,15 +203,12 @@ Who is heard is what the subscriptions above carry, and who each
 speaker is. The pack hears mapped members as themselves: a delivery
 whose sender is a user's `slack` identity arrives named as them, and a
 subscription may filter with `--where speaker=<user>`. An unmapped
-sender is what the hook's word says: under step 6's `unknown` their
-delivery is dropped and offers the operator one mapping card per source
-and sender — a pick among the yard's users, each naming the identity it
-writes, "someone new" named by the pick's words, and "nobody", who is
-ignored — under `allow` it is heard as an outsider, and under `ignore`
-it is dropped with no card. Picking nobody ignores that sender without
-a second card; `yardr source show slack` and `yardr source ignore
-slack` list the ignored ids, and `yardr source ignore slack --rm <id>`
-hears them again. Three limits, where you meet them: a reply run again
+sender follows the hook's Unknown policy: see
+[identity hearing](../../docs/integrations.md#what-the-service-sends-in)
+for held deliveries, their inbox notices, the operator's mapping card and
+its answers. `yardr source show slack` and `yardr source ignore slack`
+list the ignored ids, and `yardr source ignore slack --rm <id>` hears
+them again. Three limits, where you meet them: a reply run again
 after its answer was lost posts twice, since the service takes no
 idempotency key; `yardr thread show` on a delivery whose conversation
 the bot has left, or whose kind its token has no history scope for,
