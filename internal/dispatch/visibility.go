@@ -10,9 +10,13 @@ import (
 	"yardr.dev/yardr/internal/store"
 )
 
-// visibilityTimeout bounds one gh call, so a host that does not answer
-// holds the pass up for no longer than this.
-const visibilityTimeout = 30 * time.Second
+// visibilityTimeout bounds one gh call, and visibilityTotal the whole check
+// across depots, so a host that does not answer holds the pass up for no
+// longer than the total.
+const (
+	visibilityTimeout = 15 * time.Second
+	visibilityTotal   = 60 * time.Second
+)
 
 // visibility is the daily check of each git depot's recorded visibility
 // against the host's record of its repository: once a UTC day, one gh call per depot. A
@@ -23,35 +27,54 @@ const visibilityTimeout = 30 * time.Second
 // daemon was given a reader (HostVisibility), which the tests leave out so
 // that no test reaches the host.
 //
-// A day gets one attempt, as telemetry's does, so a depot the host does not
-// answer is not asked again until the next day. The day is kept in memory:
-// a daemon that restarts makes one more pass over the depots that day.
+// A day gets one attempt per depot, as telemetry's does, so a depot the host
+// does not answer is not asked again until the next day. The whole check has
+// one deadline: the depots not reached by then stay due and are asked on the
+// next pass. The day is kept in memory: a daemon that restarts makes one more
+// pass over the depots that day.
 func (d *Dispatcher) visibility(ctx context.Context) {
 	if d.HostVisibility == nil {
 		return
 	}
 	day := d.now().UTC().Format(time.DateOnly)
-	if day == d.visibilityDay {
-		return
+	if day != d.visibilityDay {
+		d.visibilityDay = day
+		d.visibilityDone = map[string]bool{}
 	}
-	d.visibilityDay = day
 	depots, err := d.Store.Depots(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			d.Log.Warn("visibility: reading the depots", "err", err)
 		}
-		d.visibilityDay = "" // the next pass tries again
 		return
 	}
-	for _, r := range depots {
-		if ctx.Err() != nil {
-			d.visibilityDay = "" // the daemon is stopping: the next one checks
-			return
-		}
-		if r.IsDir() || r.Path == "" {
+	total := d.visibilityDeadline
+	if total == 0 {
+		total = visibilityTotal
+	}
+	dctx, cancel := context.WithTimeout(ctx, total)
+	defer cancel()
+	for i, r := range depots {
+		if r.IsDir() || r.Path == "" || d.visibilityDone[r.Name] {
 			continue
 		}
-		actual, err := d.HostVisibility(ctx, r.Path)
+		if ctx.Err() != nil {
+			return // the daemon is stopping: the next one checks
+		}
+		if dctx.Err() != nil {
+			d.visibilityStopped(depots[i:])
+			return
+		}
+		actual, err := d.HostVisibility(dctx, r.Path)
+		if dctx.Err() != nil {
+			// The deadline, or the daemon stopping, cut this call short: the
+			// depot is neither answered nor attempted.
+			if ctx.Err() == nil {
+				d.visibilityStopped(depots[i:])
+			}
+			return
+		}
+		d.visibilityDone[r.Name] = true
 		if err != nil {
 			d.Log.Info("visibility: the host does not say", "depot", r.Name, "err", err)
 			continue
@@ -68,6 +91,18 @@ func (d *Dispatcher) visibility(ctx context.Context) {
 		d.Log.Info("visibility: depot differs from its host's record", "depot", r.Name,
 			"recorded", r.Visibility, "actual", actual)
 	}
+}
+
+// visibilityStopped logs, once, that the check stopped at its deadline, with
+// the count of git depots it left for the next pass.
+func (d *Dispatcher) visibilityStopped(rest []store.Depot) {
+	left := 0
+	for _, r := range rest {
+		if !r.IsDir() && r.Path != "" && !d.visibilityDone[r.Name] {
+			left++
+		}
+	}
+	d.Log.Info("visibility: the check stopped at its deadline", "left", left)
 }
 
 // ReadHostVisibility is the visibility the host records for the repository

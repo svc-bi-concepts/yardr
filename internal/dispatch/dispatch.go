@@ -267,9 +267,15 @@ type Dispatcher struct {
 	// said, so each is said once until it is gone. See telemetry.
 	telemetryTold string
 
-	// visibilityDay is the UTC day the daily visibility check last ran on,
-	// so that it runs once a day. See visibility.go.
-	visibilityDay string
+	// visibilityDay is the UTC day visibilityDone belongs to, and
+	// visibilityDone the depots already asked that day, so that each is asked
+	// once a day even where a pass stopped at the deadline. See visibility.go.
+	visibilityDay  string
+	visibilityDone map[string]bool
+
+	// visibilityDeadline bounds the whole daily check; zero is
+	// visibilityTotal. A test shortens it.
+	visibilityDeadline time.Duration
 
 	// timerDue is when the earliest timer left is due, as of the last pass
 	// (see timers); nil with none.

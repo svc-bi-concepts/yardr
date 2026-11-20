@@ -300,3 +300,6 @@ const QuietRunKey = quietRunKey
 // CheckVisibility runs the daily visibility check once, as a pass does, so a
 // test need not run the whole pass (whose other steps read the depots' repositories).
 func CheckVisibility(ctx context.Context, d *Dispatcher) { d.visibility(ctx) }
+
+// SetVisibilityDeadline shortens the daily check's total deadline.
+func SetVisibilityDeadline(d *Dispatcher, v time.Duration) { d.visibilityDeadline = v }

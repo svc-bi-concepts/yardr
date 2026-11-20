@@ -180,6 +180,50 @@ func TestVisibilityCheckSkipsWhatGitHubDoesNotAnswer(t *testing.T) {
 	}
 }
 
+// A host that hangs on every depot ends the pass at the check's deadline,
+// leaves the depots due (a later pass asks them again) and flags none.
+func TestVisibilityCheckStopsAtItsDeadline(t *testing.T) {
+	t.Parallel()
+	y := newVisibilityYard(t)
+	ctx := context.Background()
+	var calls int
+	var mu sync.Mutex
+	y.d.HostVisibility = func(ctx context.Context, _ string) (string, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	for _, n := range []string{"a", "b", "c"} {
+		if err := y.s.PutDepot(ctx, store.Depot{Name: n, Path: t.TempDir(), Base: "main"}, "operator"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dispatch.SetVisibilityDeadline(y.d, 100*time.Millisecond)
+	start := time.Now()
+	y.check()
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("the check took %v against a 100ms deadline", took)
+	}
+	mu.Lock()
+	first := calls
+	mu.Unlock()
+	if first != 1 {
+		t.Fatalf("a hanging host was asked %d times before the deadline, want 1", first)
+	}
+	if n := len(y.mismatches()); n != 0 {
+		t.Fatalf("a hanging host was flagged: %d events", n)
+	}
+	y.check()
+	mu.Lock()
+	second := calls
+	mu.Unlock()
+	if second != 2 {
+		t.Fatalf("the depots were not left due: %d calls after two passes, want 2", second)
+	}
+}
+
 // With no reader, the daemon asks no one: a test that runs passes never
 // reaches GitHub.
 func TestVisibilityCheckIsOffWithoutAReader(t *testing.T) {
