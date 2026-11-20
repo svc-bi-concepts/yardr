@@ -1388,6 +1388,38 @@ func TestMergeLocalHoldsARewriteThatRunsPastItsDeadline(t *testing.T) {
 	}
 }
 
+// The machine-wide gate slots are a wait like the race lock's: a test command
+// run through integrations/gate-slot.sh prints its line while it waits for a
+// slot and its final wait once admitted, and the deadline counts those seconds
+// as it does the race lock's, so a run admitted late in a long line still gets
+// its full LIMIT (doc-platform-ybbh). Here LIMIT is 2 and the wait 20 s, so the
+// run of 5 s must pass; without the credit it is killed at 2 s. A wait still
+// open at the deadline counts too, for as long as its line is the newest.
+func TestMergeLocalDeadlineCountsAGateSlotWait(t *testing.T) {
+	t.Run("admitted after its wait", func(t *testing.T) {
+		y := newYard(t)
+		y.tests(`echo "gate: running in slot 1 of 3, after 20 s"; sleep 5`)
+		y.opts = "YARDR_TEST_TIMEOUT=2"
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: the wait was not credited:\n%s", b.Stage, y.notes())
+		}
+	})
+	t.Run("still waiting at the deadline", func(t *testing.T) {
+		y := newYard(t)
+		y.tests(`echo "gate: waiting for a slot (2 ahead in line), 20 s"; sleep 5`)
+		y.opts = "YARDR_TEST_TIMEOUT=2"
+
+		y.assembly()
+
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: the open wait was not credited:\n%s", b.Stage, y.notes())
+		}
+	})
+}
+
 // The lowering comes before the design check, so a design bead lands as ever on
 // a right table, and one on a base whose table was left high is held by the
 // check, naming the test script: what a design lands is its document and no
