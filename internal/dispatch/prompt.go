@@ -66,6 +66,14 @@ type ScreenWatcher interface {
 	HarnessScreen(ctx context.Context, handle map[string]any) (up, known bool)
 }
 
+// AgentReadier is implemented by runners that know whether the agent of a
+// session is ready for input by other means than its screen (herdr's
+// interactive_ready), for a kind whose screen they cannot read. Only the
+// first prompt asks it, where ScreenWatcher says nothing.
+type AgentReadier interface {
+	AgentReady(ctx context.Context, handle map[string]any) (up, known bool)
+}
+
 // TrustAcceptor is implemented by runners that answer the folder-trust
 // dialog a harness draws on its first start in a directory, the
 // use-this-API-key dialog one draws on its first start with a key in its
@@ -644,6 +652,9 @@ func (d *Dispatcher) pendingPrompt(ctx context.Context, r Runner, key string, ha
 	if sw, ok := r.(ScreenWatcher); ok {
 		done := askTimer(ctx, askPane)
 		up, known := sw.HarnessScreen(ctx, handle)
+		if ar, ok := r.(AgentReadier); ok && !known {
+			up, known = ar.AgentReady(ctx, handle)
+		}
 		done()
 		if known && !up {
 			// Idle counts from the screen, which a harness may still be

@@ -2011,7 +2011,9 @@ check the footer's model instead.
   Enter on that pass, and one for an agent at a dialog is not typed and
   not counted, as one that ends with the agent at a dialog counts none
   either when the pane has no echo of it (herdr reports `blocked`: the agent
-  took nothing). A pane that cannot be read keeps the send guarded. A
+  took nothing). A pane that cannot be read keeps the send guarded. For a
+  kind whose input mark yardr does not know, the first prompt waits on
+  herdr's own `interactive_ready` for the agent instead of a screen. A
   delivery that has done neither after ten
   seconds was lost (`session_prompt_lost`) and is made again, three times in
   all; after the third, `session_prompt_gave_up` tells the yardmaster, its `hint`
