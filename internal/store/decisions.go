@@ -187,6 +187,48 @@ func (s *Store) WriterAsks(ctx context.Context, writer string, viewer ...string)
 	return out, nil
 }
 
+// putNewNote writes a note the store has just numbered. An ask is indexed
+// under the person it names in the same write, so the index never misses one
+// a queue would list.
+func (w *wtx) putNewNote(uuid string, n Note) error {
+	if err := put(w.Tx, bNotes, join(uuid, seqKey(n.Seq)), n); err != nil {
+		return err
+	}
+	if n.Kind == NoteAsk {
+		return indexAsk(w.Tx, uuid, n)
+	}
+	return nil
+}
+
+// indexAsk puts an ask note under the person it is addressed to, in
+// bAskTo. An ask that does not parse, or names no one, is listed by no
+// queue (ResolveAsks), so it is not indexed. Answers, declines, put-asides
+// and closes do not touch the index: an ask's state is read from its notes
+// and the clock, and an index entry says only that the ask exists.
+func indexAsk(tx *bolt.Tx, uuid string, n Note) error {
+	a, err := ParseAsk(n)
+	if err != nil || a.To == "" {
+		return nil
+	}
+	return tx.Bucket(bAskTo).Put([]byte(join(a.To, uuid, seqKey(n.Seq))), []byte{})
+}
+
+// askBeads lists the UUIDs of the beads that carry an ask to name, each
+// once. The index sorts by person, then bead, so a bead's asks are next to
+// each other and one bead is seen once.
+func askBeads(tx *bolt.Tx, name string) []string {
+	var out []string
+	c := tx.Bucket(bAskTo).Cursor()
+	p := []byte(join(name, ""))
+	for k, _ := c.Seek(p); k != nil && bytes.HasPrefix(k, p); k, _ = c.Next() {
+		uuid, _, _ := strings.Cut(string(k[len(p):]), "\x00")
+		if len(out) == 0 || out[len(out)-1] != uuid {
+			out = append(out, uuid)
+		}
+	}
+	return out
+}
+
 // UserAsks reads the person's queue: every open ask addressed to them, on
 // beads the viewer may see in any stage and of any type (a crew journal
 // holds the yard's own asks) and from the linked yards, oldest first, with
@@ -210,13 +252,28 @@ func (s *Store) UserAsks(ctx context.Context, name, actor string, viewer ...stri
 	}); err != nil {
 		return nil, err
 	}
-	// An ask remains open until answered, declined or returned. Closing its
-	// bead does not answer it, so include closed beads in this queue too.
-	// So does a bead that is no work: the yard asks how to log a harness in
-	// on the crew member's journal. One listing that keeps them, not one
-	// more per type, since this is read on every noted event.
-	beads, err := s.ListBeads(ctx, BeadFilter{All: true, Knowledge: true, Viewer: firstViewer(viewer)})
-	if err != nil {
+	// The beads that carry an ask to name, from the index, and only those
+	// the viewer may see: what ListBeads with All and Knowledge kept, read
+	// without the notes of the beads that name nobody here. Closed beads
+	// stay in, since closing a bead does not answer its ask, and so does a
+	// bead that is no work (the crew member's journal holds the yard's own
+	// asks).
+	var beads []Bead
+	if err := s.read(func(tx *bolt.Tx) error {
+		for _, uuid := range askBeads(tx, name) {
+			var row beadRow
+			if ok, err := get(tx, bBeads, uuid, &row); err != nil {
+				return err
+			} else if !ok {
+				continue
+			}
+			if s.may(ctx, tx, firstViewer(viewer), ActSee, Object{Kind: KindBead, Name: row.ID}) != nil {
+				continue
+			}
+			beads = append(beads, row.Bead)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	now := now()

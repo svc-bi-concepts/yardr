@@ -1183,7 +1183,7 @@ func (w *wtx) addNotedNotifySession(row *beadRow, kind, text, actor, notify stri
 		return nil, err
 	}
 	n := Note{Bead: row.UUID, Kind: kind, Author: actor, Text: text, At: now(), Seq: seq, Via: w.viaOf(actor), Notify: notify, Files: files, Session: session}
-	if err := put(w.Tx, bNotes, join(row.UUID, seqKey(seq)), n); err != nil {
+	if err := w.putNewNote(row.UUID, n); err != nil {
 		return nil, err
 	}
 	// The bead's representation counts its notes (bd's comment_count).
