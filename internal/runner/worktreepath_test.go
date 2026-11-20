@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -311,6 +312,31 @@ func TestWorktreeRemovalWaitsForVolume(t *testing.T) {
 	}
 	if _, err := os.Stat(wt); !os.IsNotExist(err) {
 		t.Fatalf("worktree remains: %v", err)
+	}
+	if cleaned.Handle["worktree"] != nil || cleaned.Handle["worktree_volume"] != nil {
+		t.Fatalf("removed worktree location retained: %v", cleaned.Handle)
+	}
+	mustT(t, os.Rename(root, away))
+	mustT(t, os.Mkdir(root, 0o755))
+	newRoot := t.TempDir()
+	mustT(t, s.SetSetting(ctx, store.WorktreeRootSetting, newRoot, "me"))
+	reopened, err := s.Reopen(ctx, "r-1", store.Expect{}, "me")
+	mustT(t, err)
+	job := dispatch.Job{Bead: *reopened, Group: store.Group{Name: "g"}, Depot: &depot}
+	want := filepath.Join(newRoot, "r", "r-1")
+	if env := execEnvT(t, All(t.TempDir(), s, nil, nil)["exec"].(*Exec), job, nil); !slices.Contains(env, "YARDR_WORKTREE="+want) {
+		t.Fatalf("exec did not select the new root: %v", env)
+	}
+	next, err := s.Claim(ctx, "r-1", "g", reopened.Stage, "me")
+	mustT(t, err)
+	job.Session = *next
+	created, err := h.Start(ctx, job)
+	mustT(t, err)
+	if path := created["worktree"].(string); mustEval(t, path) != mustEval(t, want) {
+		t.Fatalf("reopened worktree at %s, want %s", path, want)
+	}
+	if _, err := os.Stat(filepath.Join(want, ".git")); err != nil {
+		t.Fatalf("worktree was not recreated at the new root: %v", err)
 	}
 }
 
