@@ -861,14 +861,14 @@ gradle_fails() {
 # in $lines, the failing tests in $fails (the full log's FAIL and XCTest
 # lines, and the Gradle names, deduped, at most $FAILS, only when the log
 # runs past the tail), and $late set when it ran past $LIMIT seconds besides
-# what it waited for the race lock. It adds the seconds the run took to $secs,
+# reported race-lock and gate-slot waits. It adds the run's seconds to $secs,
 # which a second run after a signal adds to. A red run's full log stays in
 # $log until the outcome attaches it to the bead; a green run's is removed
 # at once, as ever.
 #
 # The bound is sh's own, since timeout(1) is not everywhere (macOS has none):
 # the command runs in the background beside a watcher that sleeps $LIMIT
-# seconds, credits the race-lock seconds the run waited, and then kills it.
+# seconds, credits reported queue waits, and then kills it.
 # Killing sh alone would leave go test and its
 # test binaries running, and a shell without a terminal gives a background
 # job no process group of its own to signal, so the watcher finds the
@@ -931,8 +931,9 @@ runtest() {
     # N s` every minute while it waits, the seconds since it began, and
     # `gate: running in slot K of M, after N s` once it is admitted, the
     # final wait. An admitted wait counts its N; one still open counts its
-    # latest N plus the seconds since this watcher first saw that line, so
-    # a wait outlasting the deadline is never cut off between two lines.
+    # latest N plus the seconds since the preceding inspection (or watcher
+    # startup for the first inspection), so a wait outlasting the deadline
+    # is never cut off between two lines.
     # Those seconds count up to two of the gate's line intervals only: a gate
     # still waiting prints a newer line by then, and a stray waiting line
     # (a gate killed while it waited, a test's own output) followed by a hang

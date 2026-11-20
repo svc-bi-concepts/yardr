@@ -20,7 +20,8 @@
 #                       pr_head_repo in its metadata); needs YARDR_PUSH, and
 #                       gh and jq on PATH, gh logged in as the operator
 #   YARDR_TEST_TIMEOUT  seconds the test command may run, besides what it
-#                       waited for the race lock (default 1800)
+#                       waited for the race lock and for a machine-wide
+#                       gate slot (default 1800)
 #   YARDR_REWRITE_TIMEOUT
 #                       seconds the file size table rewrite may run (default
 #                       120); it waits on no race lock
@@ -458,9 +459,9 @@ gradle_fails() {
 # in $lines, the failing tests in $fails (the full log's FAIL and XCTest
 # lines, and the Gradle names, deduped, at most $FAILS, only when the log
 # runs past the tail), and $late set when it ran past $LIMIT seconds besides
-# what it waited for the race lock. A red run's full log stays in $log until
-# the outcome attaches it to the train; a green run's is removed at once, as
-# ever. The bound is sh's own, as in merge-local, which says why it is made
+# reported race-lock and gate-slot waits. A red run's full log stays in $log
+# until the outcome attaches it to the train; a green run's is removed at
+# once, as ever. The bound is sh's own, as in merge-local, which says why it is made
 # this way.
 runtest() {
   # Each file of the run is made by a mktemp of its own, never named from
@@ -505,8 +506,9 @@ runtest() {
     # N s` every minute while it waits, the seconds since it began, and
     # `gate: running in slot K of M, after N s` once it is admitted, the
     # final wait. An admitted wait counts its N; one still open counts its
-    # latest N plus the seconds since this watcher first saw that line, so
-    # a wait outlasting the deadline is never cut off between two lines.
+    # latest N plus the seconds since the preceding inspection (or watcher
+    # startup for the first inspection), so a wait outlasting the deadline
+    # is never cut off between two lines.
     # Those seconds count up to two of the gate's line intervals only: a gate
     # still waiting prints a newer line by then, and a stray waiting line
     # (a gate killed while it waited, a test's own output) followed by a hang

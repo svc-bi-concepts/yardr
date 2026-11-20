@@ -570,8 +570,8 @@ exits.
    more on the same commit, after a note with the first run's output, and
    what the second run says counts; ended by a signal again, the bead is
    held with both outputs. The script's own kill at its deadline
-   (`YARDR_TEST_TIMEOUT`, 1800 seconds besides what it waited for the race
-   lock) is not that: it is a red run. The rewrite of step 2 has a deadline of
+   ([assembly test deadline](../contrib/assembly/README.md), under Environment)
+   is not that: it is a red run. The rewrite of step 2 has a deadline of
    its own, `YARDR_REWRITE_TIMEOUT`, and past it the bead is held. The
    tests start with no descriptor above 2 that the landing did not give them:
    merge-local closes what it inherited, and where its `sh` cannot name one
@@ -1974,8 +1974,9 @@ bead's tracks link and asks GitHub as the yard's App, as merge-pr does
   under `-race`, and the whole suite for a change it cannot select (a
   dependency bump's `go.mod` or `go.sum`). The exit codes mean what they do
   in merge-local: 1 and the like are red, 2 is "could not run", above 128 is
-  a signal and is run once more, and a run past `YARDR_TEST_TIMEOUT` (1800
-  seconds besides what it waited for the race lock) is killed and is red;
+  a signal and is run once more, and a run past the
+  [assembly test deadline](../contrib/assembly/README.md) (under Environment)
+  is killed and is red;
 - on green, asks GitHub for the head once more. The same commit is recorded
   on the bead as `ci_head` and reported `done`, to `approved`, with a note
   naming the commit and which test ran; another commit means the pull
@@ -2053,10 +2054,11 @@ both, and the github source's `mint_command` is the mint, as there. The App
 needs Pull requests read on the repositories, for the head. The group is the
 yard's, made once, and `--group pr-ci=pr-ci` maps the pack's group to it for
 every depot, so their runs queue one behind another, and a run of depot yardr
-waits for the test gate's race lock as a landing does, since it is raced (the
-wait does not count against `YARDR_TEST_TIMEOUT`). A pull request to depot
-yardr that changes `go.mod` or `go.sum` runs the whole suite, so a machine
-that needs more than the default 1800 seconds for that sets a longer
+waits for the test gate's race lock as a landing does, since it is raced
+(with queue waits accounted for by the
+[assembly test deadline](../contrib/assembly/README.md), under Environment).
+A pull request to depot yardr that changes `go.mod` or `go.sum` runs the whole
+suite, so a machine that needs more than the default for that sets a longer
 `YARDR_TEST_TIMEOUT` in the group's `cmd`. The apply writes the route for each
 depot:
 `ciwait`, type `pr`, to `pr-ci`. A yard whose `pr` flow is its own routes the
