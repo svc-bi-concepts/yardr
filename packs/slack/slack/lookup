@@ -64,12 +64,12 @@ user)
     ok <<<"$page" || exit 1
     matches=$(jq -c --arg name "$name" --argjson m "$matches" '
       ($name | ascii_downcase) as $n
-      | $m + [ (.members // [])[]
+      | ($m + [ (.members // [])[]
           | select(.deleted != true)
           | {id: (.id // ""), real_name: (.real_name // ""),
              display_name: (.profile.display_name // ""), is_bot: (.is_bot // false)}
           | select(((.real_name | ascii_downcase) | contains($n))
-                   or ((.display_name | ascii_downcase) | contains($n))) ]
+                   or ((.display_name | ascii_downcase) | contains($n))) ])[0:5]
     ' <<<"$page")
     cursor=$(jq -r '.response_metadata.next_cursor // ""' <<<"$page")
     [ -n "$cursor" ] || break

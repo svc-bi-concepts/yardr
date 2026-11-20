@@ -1135,6 +1135,21 @@ func TestSlackPackUser(t *testing.T) {
 	if out, errOut, code := run(""); code == 0 || out != "" || !strings.Contains(errOut, "no name") {
 		t.Errorf("an empty name: exit %d, stdout %q, stderr %q, want a refusal before any request", code, out, errOut)
 	}
+	page1 = nil
+	for i := 0; i < 200; i++ {
+		page1 = append(page1, member(fmt.Sprintf("U%08d", i), "Ada "+strings.Repeat("x", 2048), "ada", false, false))
+	}
+	cursors = nil
+	out, errOut, code = run("ada")
+	if code != 0 || errOut != "" {
+		t.Fatalf("large matching directory: exit %d, stderr %q", code, errOut)
+	}
+	if want := []string{"U00000000", "U00000001", "U00000002", "U00000003", "U00000004"}; !reflect.DeepEqual(ids(out), want) {
+		t.Errorf("large matching directory: ids = %q, want %q", ids(out), want)
+	}
+	if !reflect.DeepEqual(cursors, []string{"", "page2"}) {
+		t.Errorf("large matching directory: cursors = %q, want both pages", cursors)
+	}
 	refuse = true
 	out, errOut, code = run("ada")
 	if code == 0 || out != "" || strings.TrimSpace(errOut) != "slack missing_scope" {
