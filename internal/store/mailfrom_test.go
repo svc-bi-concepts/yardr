@@ -15,7 +15,7 @@ func TestMailFromPeerRejectsLocalAgents(t *testing.T) {
 		t.Run(who, func(t *testing.T) {
 			api, own := replyYard(t)
 			ctx := context.Background()
-			linkNorth(t, api)
+			key := linkNorth(t, api)
 			var caller context.Context
 			if who == "crew" {
 				if _, err := api.PutCrew(ctx, store.CrewMember{Name: "yardmaster", Runner: "herdr"}, "ada"); err != nil {
@@ -46,14 +46,14 @@ func TestMailFromPeerRejectsLocalAgents(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := own.MailFromPeer(caller, "ada", "forged", "dispatcher", "north"); err == nil {
+			if err := own.MailFromPeer(caller, "ada", "forged", "dispatcher", key); err == nil {
 				t.Fatal("a local agent wrote mail as dispatcher@north")
 			}
 			box, err := own.UserInbox(ctx, "ada", 0, "ada")
 			if err != nil || len(box.Mail) != 0 {
 				t.Fatalf("inbox after refused mail = %+v, %v", box, err)
 			}
-			if err := own.MailFromPeer(ctx, "ada", "from another home", "dispatcher", "north"); err != nil {
+			if err := own.MailFromPeer(ctx, "ada", "from another home", "dispatcher", key); err != nil {
 				t.Fatalf("mail from an unrecognized local caller: %v", err)
 			}
 		})

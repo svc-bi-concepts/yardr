@@ -44,17 +44,17 @@ func TestMailReplyFollowsPeerIdentity(t *testing.T) {
 				if _, err := run(t, south.a.crewCmd(), "set", "yardmaster", "peers=north,east"); err != nil {
 					t.Fatal(err)
 				}
+				p, err := south.st.GetPeer(ctx, "north")
+				if err != nil {
+					t.Fatal(err)
+				}
 				if wired {
-					p, err := south.st.GetPeer(ctx, "north")
-					if err != nil {
-						t.Fatal(err)
-					}
 					body, _ := json.Marshal(map[string]string{"to": "yardmaster", "from": "dispatcher", "text": "freeze?"})
 					got, err := south.own.PeerReceive(ctx, "north", p.Key, []store.PeerMessage{{ID: "original", Kind: store.PeerMail, Body: body}})
 					if err != nil || len(got) != 1 || got[0].Refused != "" {
 						t.Fatalf("received mail = %+v, %v", got, err)
 					}
-				} else if err := south.st.MailFromPeer(ctx, "yardmaster", "freeze?", "dispatcher", "north"); err != nil {
+				} else if err := south.st.MailFromPeer(ctx, "yardmaster", "freeze?", "dispatcher", p.Key); err != nil {
 					t.Fatal(err)
 				}
 				seq := mailSeq(t, south.st)

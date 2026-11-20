@@ -516,8 +516,8 @@ func (c *Client) Mail(ctx context.Context, to, text, actor string, files ...stor
 	return c.call(ctx, "Mail", nil, to, text, actor, files)
 }
 
-func (c *Client) MailFromPeer(ctx context.Context, to, text, from, peer string, files ...store.BlobFile) error {
-	return c.call(ctx, "MailFromPeer", nil, to, text, from, peer, files)
+func (c *Client) MailFromPeer(ctx context.Context, to, text, from, peerKey string, files ...store.BlobFile) error {
+	return c.call(ctx, "MailFromPeer", nil, to, text, from, peerKey, files)
 }
 func (c *Client) MailReply(ctx context.Context, to, text, actor string, answered uint64) error {
 	return c.call(ctx, "MailReply", nil, to, text, actor, answered)

@@ -194,7 +194,7 @@ type API interface {
 	Journal(ctx context.Context, name, kind, text, actor string) (bool, error)
 	Mail(ctx context.Context, to, text, actor string, files ...BlobFile) error
 	// MailFromPeer is mail of a linked yard's crew member or user written into this yard (mailfrom.go).
-	MailFromPeer(ctx context.Context, to, text, from, peer string, files ...BlobFile) error
+	MailFromPeer(ctx context.Context, to, text, from, peerKey string, files ...BlobFile) error
 	MailReply(ctx context.Context, to, text, actor string, answered uint64) error
 	MailLocalReceipt(ctx context.Context, to, text, actor string, files ...BlobFile) (MailReceipt, error)
 	MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (MailReceipt, error)

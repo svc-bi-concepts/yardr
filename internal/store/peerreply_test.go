@@ -594,7 +594,7 @@ func TestPeerReplyRequiresEncryptionPin(t *testing.T) {
 				t.Fatal(err)
 			}
 			if direct {
-				if err := own.MailFromPeer(ctx, "ada", "freeze?", "dispatcher", "north"); err != nil {
+				if err := own.MailFromPeer(ctx, "ada", "freeze?", "dispatcher", key); err != nil {
 					t.Fatal(err)
 				}
 			} else {

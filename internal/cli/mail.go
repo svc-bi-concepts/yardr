@@ -145,7 +145,7 @@ more (yardr peer rm) is shown as from "<name> at a yard no longer linked (was
 					return err
 				}
 				// Before any file is put: a mail refused for its sender leaves nothing.
-				from, foreign, err := a.mailForeign(ctx, st)
+				peerKey, foreign, err := a.mailForeign(ctx, st)
 				if err != nil {
 					return err
 				}
@@ -154,7 +154,7 @@ more (yardr peer rm) is shown as from "<name> at a yard no longer linked (was
 					return err
 				}
 				if foreign {
-					err = store.MailTextFrom(st, ctx, to, text, a.who(), from, blobFiles(refs)...)
+					err = store.MailTextFrom(st, ctx, to, text, a.who(), peerKey, blobFiles(refs)...)
 				} else {
 					err = store.MailText(st, ctx, to, text, a.who(), blobFiles(refs)...)
 				}
@@ -238,11 +238,10 @@ func putFiles(ctx context.Context, st store.API, paths []string) ([]store.BlobRe
 
 // mailForeign says whether mail this run sends into its home is from another
 // yard: its actor is neither a crew member nor a user of the home, and the run
-// started in another home (--home), whose yard is the sender. Then from is
-// the name the home has for that yard's link, which the yard's own key
-// identifies. A home with no link to the sending yard refuses, as no reply
-// could reach the sender from it.
-func (a *app) mailForeign(ctx context.Context, st store.API) (from string, foreign bool, err error) {
+// started in another home (--home), whose yard is the sender. Then peerKey is
+// the sending yard's key, which identifies its link in the target home. A home
+// with no link to the sending yard refuses, as no reply could reach the sender.
+func (a *app) mailForeign(ctx context.Context, st store.API) (peerKey string, foreign bool, err error) {
 	actor := a.who()
 	if a.ownHome == "" || a.ownHome == a.home() {
 		return "", false, nil
@@ -268,7 +267,7 @@ func (a *app) mailForeign(ctx context.Context, st store.API) (from string, forei
 	key := store.Public(yard)
 	for _, p := range peers {
 		if p.Key == key {
-			return p.Name, true, nil
+			return key, true, nil
 		}
 	}
 	return "", false, fmt.Errorf("mail from %s, of the yard at %s, into a home with no link to that yard: no reply could reach its sender from here. "+

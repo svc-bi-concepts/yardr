@@ -234,13 +234,13 @@ func (s *Store) mail(ctx context.Context, to, text, actor string, files []BlobFi
 }
 
 // MailTextFrom is MailText for mail from a linked yard's crew member or user
-// (MailFromPeer): the same parts, each sent from from at peer.
-func MailTextFrom(api API, ctx context.Context, to, text, from, peer string, files ...BlobFile) error {
+// (MailFromPeer): the same parts, each sent from from at the yard with peerKey.
+func MailTextFrom(api API, ctx context.Context, to, text, from, peerKey string, files ...BlobFile) error {
 	return mailParts(to, text, func(i int, part string) error {
 		var first []BlobFile
 		if i == 0 {
 			first = files
 		}
-		return api.MailFromPeer(ctx, to, part, from, peer, first...)
+		return api.MailFromPeer(ctx, to, part, from, peerKey, first...)
 	})
 }
