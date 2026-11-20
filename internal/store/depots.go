@@ -79,8 +79,8 @@ func depotVisibility(v string) string {
 // alone; its test command or base is the operator's, and a run ask may
 // propose it. Naming a test command on a depot the yard has not is the
 // operator's alone; adding one without a test command, and re-adding one
-// with all four unchanged, are anyone's. Its visibility is the operator's
-// alone, in either direction. From a session's or a crew
+// with those fields and visibility unchanged, are anyone's. Its visibility
+// is the operator's alone, in either direction. From a session's or a crew
 // member's pane the write is recorded as that session's actor or that crew
 // member, whatever actor says; from anywhere else, as given (paneAuthor).
 func (s *Store) PutDepot(ctx context.Context, r Depot, actor string) error {
