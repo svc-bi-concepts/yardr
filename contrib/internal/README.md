@@ -50,6 +50,45 @@ Keep the key apart from the release key. `install.sh` checks public releases
 against yardr's release key; this script checks only against the internal-build
 key.
 
+## Signing in CI
+
+The release job of `.github/workflows/internal.yml` signs `SHA256SUMS` with
+the key, as `SHA256SUMS.minisig`, in the same run as the publish. The sign
+step runs after the plan job's ancestry check, so only a commit on the public
+`main` is ever signed. It signs the sums only, not each binary: the sums name
+both binaries, and `install-internal.sh` checks the sums first.
+
+- The key is read from OpenBao by a jwt login with the job's GitHub id token
+  (audience `openbao`). The job's `id-token: write` permission is for that
+  login, and the release job is the only one with `contents: write`.
+- The key is written to `/dev/shm` (the step refuses if that is not tmpfs),
+  under a directory an `always()` step removes. The key is never printed.
+- `minisign` is 0.12, the upstream tarball, pinned by its sha256 as the go
+  step pins Go. The job also needs `jq`, which the runner must have.
+- The key has no password (`minisign -G -W`): CI has no tty for a prompt.
+
+The sign step reads five repository variables. None is written in the
+workflow, because they are infra's to set:
+
+| Variable | What it is | Set by |
+|---|---|---|
+| `OPENBAO_ADDR` | the OpenBao address the runner reaches | infra |
+| `OPENBAO_JWT_MOUNT` | the name of the jwt auth mount | infra |
+| `OPENBAO_JWT_ROLE` | the jwt role for `svc-bi-concepts/yardr-ci` on `main` (aws-infra-npfg) | infra |
+| `OPENBAO_MINISIGN_PATH` | the read path of the key, as the API takes it (`secret/data/prod/yardr-release/minisign-key` for KV v2) | infra |
+| `OPENBAO_MINISIGN_FIELD` | the field of that secret that holds the key file | the admin |
+
+With none of the five set, the release is published unsigned: the job prints a
+warning and the release notes say it is not signed. That is how releases made
+before the key keep working. With some set and not all, the job fails, so a
+release meant to be signed is never published unsigned by mistake. With all
+five set, the release is signed.
+
+The first signed release is the check that the whole chain works. Once it is
+published, run `install-internal.sh` on it against the committed
+`docs/internal-builds.pub`; a release that verifies there is the proof this
+step and the key agree.
+
 ## Fetching a release
 
 With the GitHub CLI and access to the mirror:
@@ -67,3 +106,9 @@ yard, a tampered `SHA256SUMS`, a one-character edit to it, a signature from
 another key, a binary that does not match its sum, a binary that names another
 commit, no minisign, no committed key, a key carried in the release, and the
 usage and the short commit.
+
+The gate does not run the workflow's sign step: it runs only on GitHub
+Actions. `actionlint` checks the workflow, and the sign and publish steps'
+scripts were run with stubs for `curl`, `gh` and OpenBao, against a throwaway
+key, to check each branch: no variables (unsigned), some variables (fail), all
+five (signed, verified with the key's public half, its key removed afterwards).
