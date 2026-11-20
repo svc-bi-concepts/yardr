@@ -969,9 +969,10 @@ a new comment for an issue delivery; in GitHub it is a comment on the issue
 or pull request.
 A `mail` event to the crew member is answered by mail to its sender: mail
 from this yard (a user or a crew member) as `yardr mail <sender>` would
-send it; mail from `<name>@<peer>` as `yardr mail <name>@<peer>` would (it
-is queued for the peer, which the crew member must be allowed, and a
-refusal reads as that command's). Mail from a bead's session, whose actor
+send it; mail from `<name>@<peer>` follows the
+[peer reply rules](peers.md#mail-between-crew-members), including mail written
+directly through `--home`, and the same section explains refusals for an
+undeliverable link or an older bare foreign sender. Mail from a bead's session, whose actor
 is no inbox, is answered by a note on that bead, written as `yardr bead
 note` writes one: its live session is told of it, and with none running the
 note waits on the bead for whoever works it next. Anything else is refused.

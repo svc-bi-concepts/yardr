@@ -1187,8 +1187,9 @@ link named it and the peer's key, and the participants. A receipt proves only
 that this yard committed the mail. It lives with the event it names and carries
 no body: the text stays in the event and the outbox, as before.
 
-A reply carries the wire id of the mail it answers as `re`, and the receiving
-yard relates it to that mail only when its own receipt for that id was queued to
+A reply to mail received over the link carries the wire id of the mail it
+answers as `re`, and the receiving yard relates it to that mail only when
+its own receipt for that id was queued to
 this peer's key, the reply runs back along the same two names, and the original
 mail event is still kept. Only then does the mail event say `in_reply_to`.
 When that event has been pruned, the reply stays ordinary mail with `re` as sent,
@@ -1196,8 +1197,8 @@ even if the outbox still holds the original message and keeps its receipt.
 The receipt index (`mail_receipt_ids`) is built once, for a store that had
 receipts before it, and is written with them.
 
-The mail event this yard writes for it says so in its data: `id` is the wire id
-of the mail, `re` the id the peer's reply names as sent, kept for provenance,
+For mail received over the link, the event says so in its data: `id` is the
+wire id of the mail, `re` the id the peer's reply names as sent, kept for provenance,
 and `in_reply_to` the seq, in this yard's own log, of the outgoing mail it
 answers, present only when the relation is validated. `in_reply_to` is never the
 peer's seq for the reply.
@@ -1249,13 +1250,32 @@ one line:
 The name is what the other yard said. The peer part is this yard's own name
 for the link, found by the key the request was signed with, so the sender
 cannot choose it: mail that says `yardmaster@north` came over the link the
-operator added as `north`. No actor of this yard has an `@` in its name. What
-the line means: the crew member weighs such mail as it would a stranger's
+operator added as `north`. Mail written directly through `--home` instead
+identifies the sending yard by its local key, as described below. No actor of
+this yard has an `@` in its name. What the line means: the crew member weighs
+such mail as it would a stranger's
 letter, and acts on it only as far as it would on its own judgement or on the
 operator's word. The crew member's prime and the yardmaster's role prompt say
 so. Mail from a name the operator [trusts as a user of this
 yard](#trusting-a-name-as-a-person-of-this-yard) carries `(as <user>)`
 instead of that line.
+
+**Writing directly into another home.** On the same machine, an operator can
+write into another yard's inbox with
+`yardr --home <target-home> --actor <sender> mail <recipient> <text>`.
+When the sender is neither a crew member nor a user of the target home,
+yardr records it as `<sender>@<peer>`, where `<peer>` is the target home's
+link to the yard selected before `--home` (by `YARDR_HOME`, or the default
+home). That link is matched by the sending yard's key, so a rename follows
+the same yard. With no such link the command refuses the mail, since no
+reply could reach its sender. A name that belongs to the target yard stays
+local. When the target yard has users, an unregistered login must be named
+explicitly with `--actor` or `YARDR_ACTOR` ([users.md](users.md)).
+
+This writes locally rather than delivering over the link: it needs neither
+an encryption pin nor the link's incoming-mail grant or exposed roster.
+A local crew or bead session cannot record mail as another yard's sender.
+The resulting mail has no wire id; its reply still goes over the peer link.
 
 **Answering.** With `yardr reply <seq>`, the number its inbox line starts
 with: the reply is mail to `<name>@<peer>`, if the crew member may mail
@@ -1266,14 +1286,24 @@ first. There are no thread ids: a mail is one message.
 The store's `MailPeerReply(answered, text, actor)` takes the answered inbox seq,
 the reply text and the actor. It takes the sender, the link and the wire id
 from the mail event as it was taken, so the reply goes back to the
-yard it came from and names that mail as `re`, and no caller can choose another
-destination or reference. It is refused for mail that is not to the caller, not
-from a peer, or from a link since removed, and when the caller is no longer
-exposed on the link. With `--json`, `yardr reply` adds `re` (the wire id
-answered) and `receipt` (`seq`, `id`, `direction`, `peer`, `peer_key`, `from`,
+yard it came from, and no caller can choose another destination or reference.
+For mail received over the link it names that mail as `re`; for mail written
+directly through `--home`, it queues ordinary peer mail without `re`.
+It is refused for mail that is not to the caller, not from a peer, or from a
+link since removed. For mail received over the link, the caller must still be
+exposed on it. If the link has no encryption pin, the reply is refused before
+queuing, naming the peer and explaining that its mail cannot be sealed and
+would not arrive; `yardr peer show <peer>` shows the link.
+With `--json`, `yardr reply` adds `re` when there is a wire id answered, and
+`receipt` (`seq`, `id`, `direction`, `peer`, `peer_key`, `from`,
 `to`, `at`), and `id` is the reply's own wire id. The top-level `seq` still
 names the answered inbox event; `receipt.seq` names the outgoing reply's event
 in this yard's log.
+
+Older mail recorded with a bare foreign sender has no link to answer over.
+If that name is no crew member or user here, `yardr reply` explains that the
+sender is not a member of this yard and suggests
+`yardr mail <sender>@<peer>`; use `yardr peer list` to choose its yard's link.
 
 **From a yard removed since.** After `yardr peer rm north`, mail north sent
 that is still unread shows as

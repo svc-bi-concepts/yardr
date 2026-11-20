@@ -302,6 +302,7 @@ var Access = map[string]Class{
 	"MailReply":        Agent,
 	"MailLocalReceipt": Agent,
 	"MailReplyReceipt": Agent,
+	"MailFromPeer":     Agent, // but not from local crew or bead sessions (store.MailFromPeer)
 	"React":            Agent,
 	"PutBlob":          Agent,
 	"Inbox":            Read,

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -498,27 +499,19 @@ func (a *app) replyMail(c *cobra.Command, st store.API, seq uint64, e store.Even
 		return fmt.Errorf("event %d is mail from %s at a yard no longer linked (was %s): no address would reach its sender", seq, from, was)
 	}
 	if peer, _ := e.Data["from_peer"].(string); peer != "" {
-		from, _ := e.Data["from"].(string)
-		if from == "" {
-			from, _, _ = strings.Cut(e.Actor, "@")
-		}
-		if from == "" {
-			return fmt.Errorf("event %d is mail with no sender to answer", seq)
-		}
-		// The store answers the mail by its seq: it takes the sender, the
-		// link and the wire id from the event (MailPeerReply), so the reply
-		// names the mail it answers.
 		r, err := st.MailPeerReply(ctx, seq, body, name)
 		if err != nil {
 			return err
 		}
+		queued := map[string]any{"seq": seq, "crew": name, "to": r.To, "peer": r.Peer, "sent": "queued", "id": r.ID, "receipt": r}
+		if wire, _ := e.Data["id"].(string); wire != "" {
+			queued["re"] = wire
+		}
 		if err := a.ackAnsweredMail(ctx, st, name, seq); err != nil {
 			return err
 		}
-		wire, _ := e.Data["id"].(string)
-		queued := map[string]any{"seq": seq, "crew": name, "to": from, "peer": peer, "id": r.ID, "re": wire, "receipt": r, "sent": "queued"}
 		return a.out(c.OutOrStdout(), queued, func(w io.Writer) {
-			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", from, peer, peer)
+			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", r.To, r.Peer, r.Peer)
 		})
 	}
 	if bead, _ := e.Data["from_bead"].(string); bead != "" {
@@ -530,6 +523,12 @@ func (a *app) replyMail(c *cobra.Command, st store.API, seq uint64, e store.Even
 	}
 	if err := a.mayMailUser(from); err != nil {
 		return err
+	}
+	// Mail recorded before its sender had a yard (a bare name, not from a link) is
+	// answered only where that name is a crew member or user; elsewhere the
+	// store would say not found, which is no help.
+	if err := replyableHere(ctx, st, from); err != nil {
+		return fmt.Errorf("event %d: %w", seq, err)
 	}
 	if err := store.MailReplyText(st, ctx, from, body, name, seq); err != nil {
 		return err
@@ -824,4 +823,22 @@ waiting:
 func delivered(env hooks.Envelope, m hooks.Message) bool {
 	_, frag, _ := strings.Cut(env.URL, "#comment-")
 	return frag != "" && strings.HasPrefix(m.ID, frag)
+}
+
+// replyableHere is nil when from is a crew member or user of this yard, and
+// says otherwise how to reach it: mail to a name of another yard goes with
+// the link's name for that yard (name@peer).
+func replyableHere(ctx context.Context, st store.API, from string) error {
+	if _, err := st.GetCrew(ctx, from); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if _, err := st.GetUser(ctx, from); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return fmt.Errorf("%s is not a crew member or user of this yard, so this reply cannot reach it. "+
+		"Its mail was recorded without the yard it writes from: send to it with yardr mail %s@<peer>, <peer> being the link to its yard (yardr peer list)", from, from)
 }

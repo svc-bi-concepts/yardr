@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -68,7 +69,7 @@ func (s *Store) mailReply(ctx context.Context, to, text, actor string, answered 
 		if to != e.Actor {
 			return fmt.Errorf("message %d is from %s, not %s: a reply goes to the mail's sender", answered, e.Actor, to)
 		}
-		r, err := s.sendMail(w, to, text, actor, sess, nil, answered)
+		r, err := s.sendMailReceipt(w, to, text, actor, sess, nil, answered, nil)
 		got = r
 		return err
 	})
@@ -82,11 +83,18 @@ func (s *Store) mailReply(ctx context.Context, to, text, actor string, answered 
 // Mail sends it, carrying answered where it answers mail, 0 for a new
 // message. actor is resolved (paneAuthorSession) and sess its session, if
 // the call comes from a bead session's pane, whose bead the mail then
-// names. It is what Mail and MailReply share; the recipient checks read
-// as Mail's. It returns the receipt of the mail, written in the same
+// names. fields are the data the event carries beyond its text, as MailFromPeer
+// gives a mail its sender. The recipient checks read as Mail's.
+func (s *Store) sendMail(w *wtx, to, text, actor string, sess *Session, refs []BlobRef, answered uint64, fields map[string]any) error {
+	_, err := s.sendMailReceipt(w, to, text, actor, sess, refs, answered, fields)
+	return err
+}
+
+// sendMailReceipt returns the receipt of the mail, written in the same
 // transaction as its event.
-func (s *Store) sendMail(w *wtx, to, text, actor string, sess *Session, refs []BlobRef, answered uint64) (MailReceipt, error) {
+func (s *Store) sendMailReceipt(w *wtx, to, text, actor string, sess *Session, refs []BlobRef, answered uint64, fields map[string]any) (MailReceipt, error) {
 	data := map[string]any{"to": to, "text": text}
+	maps.Copy(data, fields)
 	if len(refs) > 0 {
 		data["files"] = refs
 	}
