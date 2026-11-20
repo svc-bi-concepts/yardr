@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"yardr.dev/yardr/internal/config"
 	"yardr.dev/yardr/internal/store"
@@ -28,8 +27,7 @@ func worktreesOf(ctx context.Context, cfg *config.Config, st store.API) (*worktr
 		return nil, err
 	}
 	if root := all[store.WorktreeRootSetting]; root != "" {
-		fi, err := os.Stat(root)
-		return &worktreesState{Root: root, Set: true, There: err == nil && fi.IsDir()}, nil
+		return &worktreesState{Root: root, Set: true, There: config.WorktreeMounted(root, all[store.WorktreeRootVolume])}, nil
 	}
 	return &worktreesState{Root: cfg.Worktrees(), There: true}, nil
 }
@@ -42,8 +40,8 @@ func (w *worktreesState) line(yardr string) docLine {
 		return docLine{tagOK, "worktrees", fmt.Sprintf("new ones under %s (the home's; worktree_root unset)", w.Root)}
 	}
 	if !w.There {
-		return docLine{tagFault, "worktrees", fmt.Sprintf("%s (worktree_root) is not there: a new bead worktree is refused until its volume is mounted. "+
+		return docLine{tagFault, "worktrees", fmt.Sprintf("%s (worktree_root) is not available or its volume is not mounted: a new bead worktree is refused until its volume is mounted. "+
 			"To go back to the home's worktrees: %s settings set worktree_root \"\"", w.Root, yardr)}
 	}
-	return docLine{tagOK, "worktrees", fmt.Sprintf("new ones under %s (worktree_root), which is there", w.Root)}
+	return docLine{tagOK, "worktrees", fmt.Sprintf("new ones under %s (worktree_root), whose volume is mounted", w.Root)}
 }

@@ -1474,11 +1474,14 @@ yardr settings set worktree_root /Volumes/Yard/worktrees/yard   # unset: the hom
 
 Only new worktrees go there. A worktree that stands keeps the path it was
 made at, which the bead's session records, so a later stage reopens it there,
-and removing it works as before. The directory must be there when a worktree
-is made: while it is not (the volume is not mounted), a session that would
-make one is refused with a message that names the directory, and nothing is
-written in its place on the home's disk. `yardr doctor` says where new
-worktrees go and whether that directory is there. Moving the worktrees that
+and removing it works as before. Set the root while its volume is mounted:
+yardr records the mount as well as each session's worktree location. The
+directory and its recorded mount must be available when a worktree is made.
+Otherwise the session is refused with a message that names the directory,
+and nothing is written in its place on the home's disk. `yardr doctor`
+says where new worktrees go and whether their volume is mounted. Cleanup of
+an offline worktree waits for a later dispatch pass after remounting, even
+if the setting has since changed. Moving the worktrees that
 already stand is not done by yardr: they stay where they are until their beads are done.
 
 ### Copies of the store

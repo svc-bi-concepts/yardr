@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"yardr.dev/yardr/internal/config"
 	"yardr.dev/yardr/internal/dispatch"
 	"yardr.dev/yardr/internal/store"
 )
@@ -23,8 +23,8 @@ import (
 // longer there is not reused, as before: the bead is set up again under the
 // root.
 func (h *Herdr) worktreePath(ctx context.Context, job dispatch.Job, depot string) (string, error) {
-	if p := h.recordedWorktree(ctx, job.Bead.ID); p != "" {
-		return p, nil
+	if p, err := h.recordedWorktree(ctx, job.Bead.ID); p != "" || err != nil {
+		return p, err
 	}
 	root, err := h.worktreeRoot(ctx, job)
 	if err != nil || root == "" {
@@ -50,8 +50,8 @@ func (h *Herdr) worktreeRoot(ctx context.Context, job dispatch.Job) (string, err
 			return "", fmt.Errorf("worktree_root: %w", err)
 		}
 		if root := all[store.WorktreeRootSetting]; root != "" {
-			if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-				return "", dispatch.Blocked(fmt.Errorf("the worktree of %s is not made: %s (worktree_root) is not there, so its volume may not be mounted; "+
+			if !config.WorktreeMounted(root, all[store.WorktreeRootVolume]) {
+				return "", dispatch.Blocked(fmt.Errorf("the worktree of %s is not made: %s (worktree_root) is unavailable or its recorded volume is not mounted; "+
 					"mount it, or unset the setting with yardr settings set %s \"\"", job.Bead.ID, root, store.WorktreeRootSetting))
 			}
 			return root, nil
@@ -62,44 +62,52 @@ func (h *Herdr) worktreeRoot(ctx context.Context, job dispatch.Job) (string, err
 
 // recordedWorktree is the path of the newest worktree a session of the bead
 // recorded that still stands on disk, "" for none.
-func (h *Herdr) recordedWorktree(ctx context.Context, bead string) string {
+func (h *Herdr) recordedWorktree(ctx context.Context, bead string) (string, error) {
 	if h.Store == nil {
-		return ""
+		return "", nil
 	}
 	sessions, err := h.Store.ListSessions(ctx, store.SessionFilter{Bead: bead, All: true})
 	if err != nil {
-		return ""
+		return "", err
 	}
-	best, at := "", time.Time{}
+	best, at := store.Session{}, time.Time{}
 	for _, s := range sessions {
 		p, _ := s.Handle["worktree"].(string)
-		if p == "" || s.Cleaned || (best != "" && !s.StartedAt.After(at)) {
-			continue
+		if p != "" && (best.Handle == nil || s.StartedAt.After(at)) {
+			best, at = s, s.StartedAt
 		}
-		if fi, err := os.Stat(p); err != nil || !fi.IsDir() {
-			continue
-		}
-		best, at = p, s.StartedAt
 	}
-	return best
+	if err := worktreeOffline(best.Handle); err != nil {
+		return "", dispatch.Blocked(err)
+	}
+	path, _ := best.Handle["worktree"].(string)
+	if path == "" {
+		return "", nil
+	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
-// unmounted says a worktree at path that is missing lies under the
-// worktree_root setting's directory, and that directory is not there: its
-// volume is not mounted, so the worktree is not gone. A failed read of the
-// setting is not taken for it, and the removal proceeds as before.
-func (h *Herdr) unmounted(ctx context.Context, path string) bool {
-	if h.Store == nil {
-		return false
+func worktreeOffline(handle map[string]any) error {
+	path, _ := handle["worktree"].(string)
+	volume, _ := handle["worktree_volume"].(string)
+	if volume == "" {
+		return nil
 	}
-	all, err := h.Store.Settings(ctx)
-	if err != nil {
-		return false
+	actual, err := config.WorktreeVolume(path)
+	if !config.WorktreeMounted(volume, volume) || err != nil || actual != volume {
+		return fmt.Errorf("worktree %s: volume %s is not mounted: %w", path, volume, dispatch.ErrWorktreeOffline)
 	}
-	root := all[store.WorktreeRootSetting]
-	if root == "" || !strings.HasPrefix(path, root+string(filepath.Separator)) {
-		return false
+	return nil
+}
+
+func worktreeVolume(handle map[string]any) {
+	path, _ := handle["worktree"].(string)
+	if volume, err := config.WorktreeVolume(path); err == nil {
+		handle["worktree_volume"] = volume
 	}
-	_, err = os.Stat(root)
-	return os.IsNotExist(err)
 }

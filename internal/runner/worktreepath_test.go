@@ -2,12 +2,14 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"yardr.dev/yardr/internal/config"
 	"yardr.dev/yardr/internal/dispatch"
 	"yardr.dev/yardr/internal/store"
 	"yardr.dev/yardr/internal/storetest"
@@ -52,7 +54,7 @@ func TestWorktreeRootSetting(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	if err := s.SetSetting(ctx, store.WorktreeRootSetting, root, "me"); err != nil {
+	if err := s.SetSetting(ctx, store.WorktreeRootSetting, root+string(filepath.Separator), "me"); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := start("r-2", store.Group{Name: "g"}), filepath.Join(root, "r", "r-2"); got != want {
@@ -88,6 +90,7 @@ func TestWorktreeRootAbsentRefuses(t *testing.T) {
 	if err := s.PutDepot(ctx, depot, "me"); err != nil {
 		t.Fatal(err)
 	}
+	claimBead(t, s, "r-1")
 	gone := filepath.Join(t.TempDir(), "Volumes", "Yard", "worktrees")
 	if err := s.SetSetting(ctx, store.WorktreeRootSetting, gone, "me"); err != nil {
 		t.Fatal(err)
@@ -194,9 +197,11 @@ func TestWorktreeRecordedPathKept(t *testing.T) {
 	if want := filepath.Join(old, "r", "r-1"); wt != want {
 		t.Fatalf("first stage at %s, want %s", wt, want)
 	}
-	if err := s.SetSetting(ctx, store.WorktreeRootSetting, root, "me"); err != nil {
+	if err := s.SetSetting(ctx, store.WorktreeRootSetting, root+string(filepath.Separator), "me"); err != nil {
 		t.Fatal(err)
 	}
+
+	mustT(t, s.MarkCleaned(ctx, claimed.ID))
 
 	// The root moved: the next stage reopens the worktree where it stands.
 	next := start(claimed.ID, "review")
@@ -237,7 +242,7 @@ func TestWorktreeRemovalWaitsForVolume(t *testing.T) {
 	}
 	root := filepath.Join(t.TempDir(), "volume")
 	mustT(t, os.Mkdir(root, 0o755))
-	mustT(t, s.SetSetting(ctx, store.WorktreeRootSetting, root, "me"))
+	mustT(t, s.SetSetting(ctx, store.WorktreeRootSetting, root+string(filepath.Separator), "me"))
 	handle, err := h.Start(ctx, dispatch.Job{Bead: store.Bead{ID: "r-1", Stage: "new"}, Group: store.Group{Name: "g"},
 		Depot: &depot, Session: store.Session{ID: sess.ID}})
 	if err != nil {
@@ -245,24 +250,94 @@ func TestWorktreeRemovalWaitsForVolume(t *testing.T) {
 	}
 	wt := handle["worktree"].(string)
 
-	// The volume is unplugged: its directory is not there.
+	volume := handle["worktree_volume"]
 	away := root + ".away"
 	mustT(t, os.Rename(root, away))
-	defer os.Rename(away, root)
-	err = h.Finish(ctx, handle)
-	if err == nil || !strings.Contains(err.Error(), "not mounted") {
-		t.Fatalf("Finish with the volume away: err = %v, want the volume named as not mounted", err)
+	mustT(t, os.Mkdir(root, 0o755))
+	gitT(t, repo, "config", "gc.worktreePruneExpire", "now")
+	handle["worktree_volume"] = root
+	mustT(t, s.SetHandle(ctx, sess.ID, handle))
+	mustT(t, s.SetSetting(ctx, store.WorktreeRootSetting, t.TempDir(), "me"))
+	_, err = s.CloseBead(ctx, "r-1", "done", store.Expect{}, "me")
+	mustT(t, err)
+	d := &dispatch.Dispatcher{Store: s, Runners: map[string]dispatch.Runner{"herdr": h}}
+	mustT(t, d.Reconcile(ctx))
+	kept, err := s.GetSession(ctx, sess.ID)
+	mustT(t, err)
+	if kept.Cleaned {
+		t.Fatal("offline worktree marked cleaned")
 	}
+	mustT(t, s.SetSetting(ctx, store.WorktreeRootSetting, "", "me"))
+	mustT(t, d.Reconcile(ctx))
 	if !strings.Contains(gitOutT(t, repo, "worktree", "list", "--porcelain"), wt) {
 		t.Fatalf("git's record of %s was pruned while its volume was away", wt)
 	}
-
-	// The volume is back: the worktree is removed at its path.
+	if _, err := h.worktreePath(ctx, dispatch.Job{Bead: store.Bead{ID: "r-1"}}, "r"); !dispatch.IsBlocked(err) {
+		t.Fatalf("offline recorded path: %v", err)
+	}
+	for _, name := range []string{"present", "missing"} {
+		sibling := filepath.Join(t.TempDir(), name)
+		gitT(t, repo, "worktree", "add", "-b", name, sibling, "main")
+		if name == "missing" {
+			mustT(t, os.RemoveAll(sibling))
+		}
+		err := h.Finish(ctx, map[string]any{"worktree": sibling, "repo": repo})
+		if err != nil && !errors.Is(err, dispatch.ErrNothingLeft) {
+			t.Fatal(err)
+		}
+		if !strings.Contains(gitOutT(t, repo, "worktree", "list", "--porcelain"), wt) {
+			t.Fatal("sibling cleanup pruned offline worktree")
+		}
+	}
+	mustT(t, os.Remove(root))
 	mustT(t, os.Rename(away, root))
-	if err := h.Finish(ctx, handle); err != nil {
-		t.Fatalf("Finish with the volume back: %v", err)
+	handle["worktree_volume"] = volume
+	mustT(t, s.SetHandle(ctx, sess.ID, handle))
+	mustT(t, d.Reconcile(ctx))
+	cleaned, err := s.GetSession(ctx, sess.ID)
+	mustT(t, err)
+	if !cleaned.Cleaned {
+		t.Fatal("remounted worktree was not cleaned")
 	}
-	if _, err := os.Stat(wt); err == nil {
-		t.Errorf("the worktree at %s was not removed", wt)
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("worktree remains: %v", err)
 	}
+}
+
+func TestWorktreeRootUnmountedDirectoryRefuses(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storetest.New(t)
+	_, err := s.CreateBead(ctx, store.NewBead{ID: "r-1", Title: "one"}, "me")
+	mustT(t, err)
+	root := t.TempDir()
+	mustT(t, s.SetSetting(ctx, store.WorktreeRootSetting, root+string(filepath.Separator), "me"))
+	settings, err := s.Settings(ctx)
+	mustT(t, err)
+	settings[store.WorktreeRootVolume] = root
+	h := &Herdr{Store: &worktreeSettings{API: s, settings: settings}}
+	_, err = h.worktreePath(ctx, dispatch.Job{Bead: store.Bead{ID: "r-1"}}, "r")
+	if !dispatch.IsBlocked(err) {
+		t.Fatalf("unmounted directory accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "r")); !os.IsNotExist(err) {
+		t.Fatalf("wrote under unmounted root: %v", err)
+	}
+	volume, err := config.WorktreeVolume(root)
+	mustT(t, err)
+	if !config.WorktreeMounted(root, volume) {
+		t.Fatal("real mounted volume refused")
+	}
+	if config.WorktreeMounted(root, root) {
+		t.Fatal("ordinary directory accepted as a mount")
+	}
+}
+
+type worktreeSettings struct {
+	store.API
+	settings map[string]string
+}
+
+func (s *worktreeSettings) Settings(context.Context) (map[string]string, error) {
+	return s.settings, nil
 }
