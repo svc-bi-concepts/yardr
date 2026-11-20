@@ -3,6 +3,8 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"maps"
+	"path/filepath"
 
 	"yardr.dev/yardr/internal/store"
 )
@@ -19,7 +21,13 @@ func (d *Dispatcher) cleanup(ctx context.Context, groups map[string]store.Group)
 	for _, s := range done {
 		g := groups[s.Group]
 		if f, ok := d.runnerFor(s, groups).(Finisher); ok && g.Config["cleanup"] != false {
-			if err := f.Finish(ctx, s.Handle); errors.Is(err, ErrNothingLeft) {
+			err := f.Finish(ctx, s.Handle)
+			if err == nil || errors.Is(err, ErrNothingLeft) {
+				if err := d.retireWorktree(ctx, s); err != nil {
+					return err
+				}
+			}
+			if errors.Is(err, ErrNothingLeft) {
 				// another stage's session already handled it
 			} else if errors.Is(err, ErrWorktreeOffline) {
 				continue
@@ -37,4 +45,40 @@ func (d *Dispatcher) cleanup(ctx context.Context, groups map[string]store.Group)
 		}
 	}
 	return nil
+}
+
+func (d *Dispatcher) retireWorktree(ctx context.Context, removed store.Session) error {
+	path, _ := removed.Handle["worktree"].(string)
+	if path == "" {
+		return nil
+	}
+	sessions, err := d.Store.ListSessions(ctx, store.SessionFilter{Bead: removed.Bead, All: true})
+	if err != nil {
+		return err
+	}
+	path = cleanupPath(path)
+	for _, s := range sessions {
+		recorded, _ := s.Handle["worktree"].(string)
+		if recorded == "" || cleanupPath(recorded) != path {
+			continue
+		}
+		handle := maps.Clone(s.Handle)
+		delete(handle, "worktree")
+		delete(handle, "worktree_volume")
+		if err := d.Store.SetHandle(ctx, s.ID, handle); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cleanupPath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		return filepath.Join(parent, filepath.Base(path))
+	}
+	return path
 }
