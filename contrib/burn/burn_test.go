@@ -694,8 +694,11 @@ func TestRace(t *testing.T) {
 // The real go is started with the caller's CGO_ENABLED and CC, as it is with the
 // caller's PATH: a runner's cgo setting and its zig compiler reach the build.
 // The stand-in go writes down what it is started with, which says the same on
-// every host (a -r build without cgo is refused on some hosts and not others).
-// Not parallel: it sets the caller's environment, which the parallel tests read.
+// every host. The run has no -r: a race build with cgo off is refused on Linux
+// and accepted on macOS, so a -r run would pass on one host and fail on the
+// other for a reason this test does not check. The -r cases above cover the
+// race build. Not parallel: it sets the caller's environment, which the
+// parallel tests read.
 func TestBurnPassesTheCallersCgoToGo(t *testing.T) {
 	t.Setenv("CGO_ENABLED", "0")
 	t.Setenv("CC", "zig cc -target x86_64-linux-gnu")
@@ -720,7 +723,7 @@ func TestRace(t *testing.T) {
 	// started as, then runs the real go.
 	scripttest.Write(t, filepath.Join(r.dir, "bin", "go"),
 		"echo \"CGO_ENABLED=$CGO_ENABLED CC=$CC\" >> \"$RIG/cgo-seen\"\nexec \"$REAL_GO\" \"$@\"\n")
-	cmd, _, stderr := r.burn(0, "-r", "-n", "1", "-x", "1", "-c", "1", ".", "TestRace")
+	cmd, _, stderr := r.burn(0, "-n", "1", "-x", "1", "-c", "1", ".", "TestRace")
 	if code := finish(t, cmd); code != 0 && code != 1 {
 		t.Fatalf("exit status = %d, want the build to run\n%s", code, stderr)
 	}
