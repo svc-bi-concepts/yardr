@@ -1027,6 +1027,9 @@ func configNotes(ctx context.Context, st store.API, crew []store.CrewMember, gro
 	dispatch.SortRoutes(routes)
 	notes = append(notes, narrowedRouteNotes(routes, groups, operator, yardr)...)
 	for _, k := range sortedKeys(all) {
+		if k == store.WorktreeRootVolume {
+			continue
+		}
 		if _, ok := store.SettingOf(k); !ok {
 			notes = append(notes, fmt.Sprintf("setting %s is stored and nothing reads it (there is: %s). Remove it: %s settings set %s \"\"",
 				k, strings.Join(store.SettingKeys(), ", "), yardr, k))

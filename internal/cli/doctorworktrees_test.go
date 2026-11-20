@@ -81,3 +81,45 @@ type doctorWorktreeSettings struct {
 func (s *doctorWorktreeSettings) Settings(context.Context) (map[string]string, error) {
 	return s.settings, nil
 }
+
+func TestWorktreeMetadataExcludedFromSettings(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := storetest.New(t)
+	if err := st.SetSetting(ctx, store.WorktreeRootSetting, t.TempDir(), "me"); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := st.Settings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings[store.WorktreeRootVolume] == "" {
+		t.Fatal("missing mount metadata")
+	}
+	settings["retired_setting"] = "old"
+	notes, err := configNotes(ctx, &doctorWorktreeSettings{API: st, settings: settings}, nil, nil, "yardr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired := false
+	for _, note := range notes {
+		if strings.Contains(note, store.WorktreeRootVolume) {
+			t.Fatalf("mount metadata reported as obsolete: %s", note)
+		}
+		retired = retired || strings.Contains(note, "retired_setting")
+	}
+	if !retired {
+		t.Fatal("obsolete stored setting no longer reported")
+	}
+	root, obsolete := false, false
+	for _, row := range settingRows(t.TempDir(), settings) {
+		if row.Key == store.WorktreeRootVolume {
+			t.Fatalf("metadata exposed as a setting row: %+v", row)
+		}
+		root = root || row.Key == store.WorktreeRootSetting
+		obsolete = obsolete || row.Key == "retired_setting"
+	}
+	if !root || !obsolete {
+		t.Fatal("settings rows lost the root or obsolete stored setting")
+	}
+}

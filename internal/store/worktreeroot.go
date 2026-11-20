@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	bolt "go.etcd.io/bbolt"
 
@@ -54,6 +55,24 @@ func (s *Store) Settings(ctx context.Context) (map[string]string, error) {
 func (w *wtx) setWorktreeVolume(root string) error {
 	if root == "" {
 		return w.Bucket(bMeta).Delete([]byte(WorktreeRootVolume))
+	}
+	recorded := string(w.Bucket(bMeta).Get([]byte(WorktreeRootVolume)))
+	if recorded != "" && !config.WorktreeMounted(recorded, recorded) {
+		var previous string
+		if _, err := get(w.Tx, bSettings, WorktreeRootSetting, &previous); err != nil {
+			return err
+		}
+		same := filepath.Clean(root) == filepath.Clean(previous)
+		if !same {
+			oldPath, oldErr := filepath.EvalSymlinks(previous)
+			newPath, newErr := filepath.EvalSymlinks(root)
+			same = oldErr == nil && newErr == nil && oldPath == newPath
+		}
+		relative, err := filepath.Rel(recorded, root)
+		beneath := err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+		if same || beneath {
+			return nil
+		}
 	}
 	volume, err := config.WorktreeVolume(root)
 	if err != nil {
