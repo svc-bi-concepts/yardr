@@ -81,7 +81,7 @@ func TestHarnessListAndShow(t *testing.T) {
 		"Login screen, drawn in place of its input: told of at once (nudge_held), never typed into",
 		"  ^Select login method:", "  ^Paste code here if prompted",
 		"Background work of its agent, drawn around its input: not idle to the idle limit while it shows",
-		`   · \d+ shells? still running$`,
+		`   · \d+ (shells?|monitors?) still running$`,
 		"Dialogs it draws in place of its input: told of at once (nudge_held), never answered",
 		`auto_mode_setup  ^Teach auto mode about your environment\?`)
 	// Claude's file names a context, two entries of usage and three
