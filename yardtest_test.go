@@ -6873,7 +6873,7 @@ func TestYardTestBudgets(t *testing.T) {
 		{"the 60 s budget still fails a package that takes 91 s alone", cliSlow, nil,
 			[]string{"FAKE_OVER=yardr.dev/yardr/internal/cli", "FAKE_ALONE=91s", "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10"}, 1,
 			[]string{"test: yardr.dev/yardr/internal/cli took 136.8 s with -race, 91 s alone, over the 60 s budget (docs/testing.md R1)\n"}, nil, nil},
-		// internal/yards is allow-listed (yardr-c90p), so it is not re-run at
+		// internal/yards is allow-listed (yardr-8ern), so it is not re-run at
 		// any budget: its 151 s alone is named by the row, not judged.
 		{"an allow-listed package over any budget is not re-run", yardsLeg, nil,
 			[]string{"YARDR_R1_BUDGET=120", "FAKE_OVER=yardr.dev/yardr/internal/yards", "FAKE_ALONE=151s", "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10"}, 0,
