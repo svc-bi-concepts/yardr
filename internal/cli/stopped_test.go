@@ -127,3 +127,17 @@ func TestStoreUnstoppedHomeConnects(t *testing.T) {
 		t.Errorf("connect called %d times, want 1", calls)
 	}
 }
+
+// status starts no server, and on a stopped home it does not tell the
+// operator that a command would start one.
+func TestStatusOnAStoppedHomeSaysNoCommandStartsIt(t *testing.T) {
+	t.Parallel()
+	home, _, _ := stoppedHome(t)
+	out, _ := executeOut(&app{env: testEnv(t, home)}, "status")
+	if !strings.Contains(out, "the home has a STOPPED file, so no command starts it") {
+		t.Errorf("status on a stopped home:\n%s", out)
+	}
+	if strings.Contains(out, "any yardr command that needs the yard starts it") {
+		t.Errorf("status on a stopped home promises a start:\n%s", out)
+	}
+}
