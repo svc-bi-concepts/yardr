@@ -50,6 +50,9 @@ func (a *app) serverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if cfg.Stopped() && !server.Running(c.Context(), cfg) {
+				return errStopped{cfg: cfg}
+			}
 			if _, err := connect(c.Context(), cfg); err != nil {
 				return err
 			}

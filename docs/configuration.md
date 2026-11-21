@@ -1068,9 +1068,11 @@ yardr wrote for the yard, then a list of what it left on the machine
 A home with a file named `STOPPED` in it is a yard stopped by hand: a person
 puts the file there, and yardr neither writes nor removes it. While no server
 answers on such a home, no command starts one, so a command other than
-`yardr up` or `yardr server start` stops with one line that names the file,
-and reads and writes nothing of the yard. `yardr up` starts the server and
-leaves the file where it is. A server that already runs keeps answering until
+`yardr up` and `yardr down` stops with one line that names the file, and reads and writes
+nothing of the yard. `yardr up` starts the server and leaves the file where
+it is. `yardr down` starts none either: it stops the daemon, the web view, the
+BDP server and the telemetry export that run, skips the agents (it cannot ask
+the store for them) and leaves yard.db as it is. A server that already runs keeps answering until
 `yardr server stop`.
 
 **`yardr up`** takes the parts in this order:

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -139,5 +140,68 @@ func TestStatusOnAStoppedHomeSaysNoCommandStartsIt(t *testing.T) {
 	}
 	if strings.Contains(out, "any yardr command that needs the yard starts it") {
 		t.Errorf("status on a stopped home promises a start:\n%s", out)
+	}
+}
+
+// yardr server start is no way round the refusal: on a stopped home it starts
+// no server either.
+func TestServerStartOnAStoppedHomeIsRefused(t *testing.T) {
+	home, mtime, size := stoppedHome(t)
+	calls := noConnect(t)
+	a := &app{env: testEnv(t, home)}
+	_, err := run(t, a.rootCmd(), "server", "start")
+	if err == nil || !strings.Contains(err.Error(), "is stopped") {
+		t.Fatalf("server start on a stopped home: %v", err)
+	}
+	if *calls != 0 {
+		t.Errorf("connect called %d times, want none", *calls)
+	}
+	fi, err := os.Stat(filepath.Join(home, "yard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().UnixNano() != mtime || fi.Size() != size {
+		t.Errorf("yard.db changed")
+	}
+}
+
+// yardr down on a stopped home goes without the store: no server starts,
+// yard.db stays as it is, and the daemon, the other parts and the server are
+// reported, with no agents.
+func TestDownOnAStoppedHomeStartsNoServer(t *testing.T) {
+	home, mtime, size := stoppedHome(t)
+	calls := noConnect(t)
+	a := &app{env: testEnv(t, home)}
+	out, err := run(t, a.rootCmd(), "down", "--json")
+	if err != nil {
+		t.Fatalf("down on a stopped home: %v\n%s", err, out)
+	}
+	var rep struct {
+		Down   bool
+		Agents []any
+		Parts  []struct{ Part string }
+	}
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if !rep.Down || len(rep.Agents) != 0 {
+		t.Errorf("down report: %s", out)
+	}
+	parts := map[string]bool{}
+	for _, p := range rep.Parts {
+		parts[p.Part] = true
+	}
+	if !parts["daemon"] || !parts["server"] {
+		t.Errorf("parts of the report lack the daemon or the server: %s", out)
+	}
+	if *calls != 0 {
+		t.Errorf("connect called %d times, want none", *calls)
+	}
+	fi, err := os.Stat(filepath.Join(home, "yard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().UnixNano() != mtime || fi.Size() != size {
+		t.Errorf("yard.db changed")
 	}
 }
