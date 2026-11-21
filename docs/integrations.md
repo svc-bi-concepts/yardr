@@ -2709,9 +2709,9 @@ the credential — the names set and missing, and with a mint whether a
 mint command is set; it mints where the file sets the mint's names and
 makes the check call with the credential, and fails unless the service
 answers 2xx; where the check call names `answer.select` it prints each
-selected field the answer carries (a dotted path's top-level key once), one per line under the
-status line, and with `--json` carries the same object under `answer`;
-it says of every command the file names beside the check call —
+selected field the answer carries (a dotted path's top-level key once),
+one per line under the status line, and with `--json` carries the same
+object under `answer`; it says of every command the file names beside the check call —
 thread's, hook's, events', and each call's build and run — whether its
 program is there and can be run, and fails when one cannot, running
 none. A check call that names `run` is run, as it is the check: its
