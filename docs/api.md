@@ -1373,11 +1373,6 @@ POST /call/Settings
 
 The operator's words are what every session of an agent reads when it starts (`yardr prime`), so the socket tells them to whoever calls, and every other setting with them. Over the network a device is told these keys alone: the words and `hosted` to a device of an operator and to no other, and to none in a yard with no operator. A `setting_changed` in a device's stream has its `value` only for a key the device is told; for any other it has the `key` and no `value`.
 
-The local socket also returns `worktree_root_volume` when recorded: the mount
-path captured for [worktree placement](configuration.md#where-the-worktrees-go).
-It is derived metadata, not a key accepted by `SetSetting`, and is absent
-when `worktree_root` is unset.
-
 `hosted` is how a client down the link from the edge learns which yard it has reached: a hosted yard takes `GiveSecret` there for every secret, and any other yard for a harness login's code alone ([TLS is yours](#tls-is-yours-and-the-clients-rule)).
 
 ### `Users`

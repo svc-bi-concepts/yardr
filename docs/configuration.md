@@ -1488,6 +1488,10 @@ if the setting has since changed. After successful cleanup, the recorded
 location is cleared, so reopening the bead uses the current root. Moving
 existing worktrees is not done by yardr.
 
+The local socket's settings also return `worktree_root_volume` when recorded:
+the mount path captured for the root. It is derived metadata, not a key
+`SetSetting` accepts, and is absent when `worktree_root` is unset.
+
 ### Copies of the store
 
 Everything the yard knows is in one file, `yard.db` in its home. A yard
