@@ -1640,7 +1640,6 @@ summary() {
 # it, but delete it anyway.
 over60='
 contrib/isolated-yard yardr-n9ss TestYardShapes (the yard-shape matrix) walks three yards, 35-50 s beside one another, and runs only where YARDR_QUIET_RUN is set, which is the quiet run (docs/testing.md R6); the package is 18 s without it. No bead brings it under: it is an acceptance test, not a slow unit test
-internal/yards yardr-8ern 151 s alone under -race on the Hetzner runner (run 44838772035, 155 s in the run), 2.5x the 60 s budget and not load-bound: in the run and alone are equal, so no budget covers it, and YARDR_R1_BUDGET=120 would hide it. The cost is the decode of a peer file body (note 19285 of yardr-c90p): the wire-compatible decode change in 7ff59561 takes the posted leg from 17.3 s to 15.6 s under -race on the mini, which is not under 60 s on the runner; what is left needs a wire layout that a person decides (the note of yardr-8ern). While this row stands no race leg judges the time of this package, the quiet run on the mini included, so the quiet run stops judging yards; yardr-8ern deletes the row when the package is under 60 s on the runner
 '
 # machineload prints the machine's one-minute load average and core count,
 # as "load <avg> on <cores> cores", whatever they are: the flaky log line

@@ -125,3 +125,9 @@ jobs:
           # leaves headroom without hiding a doubling. Only this workflow sets it.
           YARDR_R1_BUDGET: "120"
         run: YARDR_LANDING=1 sh .yardr/test
+      # The two 32 MiB legs of TestMaxFileCrossesSealed sit in a !race file
+      # (yardr-8ern), so the race landing run above never runs them. This plain
+      # step runs them on the landed tree, for a pull request's head and for
+      # main alike (docs/testing.md R4).
+      - name: max peer file legs (no -race, yardr-8ern)
+        run: go test -count=1 -v -run TestMaxFileCrossesSealed ./internal/yards
