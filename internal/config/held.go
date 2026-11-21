@@ -181,6 +181,31 @@ func WatchOwner(ctx context.Context, every time.Duration, pid int, start uint64)
 	return gone
 }
 
+// WatchStopped looks every interval and sends once, on the channel it
+// returns, when the home has a STOPPED file (see Stopped); it ends with that,
+// or when ctx does. The server and the daemon watch it on their home-check
+// tick: a yard stopped by hand ends them there, as a home gone under them
+// does, so nothing keeps writing a yard that is meant to stay as it is.
+func (c *Config) WatchStopped(ctx context.Context, every time.Duration) <-chan struct{} {
+	stopped := make(chan struct{}, 1)
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if c.Stopped() {
+					stopped <- struct{}{}
+					return
+				}
+			}
+		}
+	}()
+	return stopped
+}
+
 // Watch looks every interval and sends what was lost, once, on the channel
 // it returns; it ends with that, or when ctx does.
 func (h *Held) Watch(ctx context.Context, every time.Duration) <-chan string {

@@ -285,7 +285,12 @@ func partAddr(cfg *config.Config, settings map[string]string, k *longRunning) st
 // kept it from looking at all (no yard in the home); what could not be
 // started is in the report. With login each part is installed as a login
 // service too, and a part that does not run is started by its service.
+// A home with a STOPPED file is refused before anything starts: stopped is
+// for a yard that is retired or moved, and `down` is the pause (see errStopped).
 func (a *app) up(ctx context.Context, cfg *config.Config, login bool) (*upReport, error) {
+	if cfg.Stopped() {
+		return nil, errStopped{cfg: cfg}
+	}
 	if a.st == nil {
 		if _, err := os.Stat(cfg.DBPath()); errors.Is(err, os.ErrNotExist) {
 			return nil, notInitialized{cfg.Home}
@@ -304,7 +309,7 @@ func (a *app) up(ctx context.Context, cfg *config.Config, login bool) (*upReport
 	// herdr session the yard's panes are in is a setting in its store.
 	srv := yardPart{Part: partServer}
 	was := serverRunning(ctx, cfg)
-	st, err := a.startStore(ctx)
+	st, err := a.store(ctx)
 	if err == nil {
 		var set bool
 		if set, err = a.initialized(ctx, cfg); err == nil && !set {

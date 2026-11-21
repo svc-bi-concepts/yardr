@@ -353,22 +353,12 @@ var connect = func(ctx context.Context, cfg *config.Config) (store.API, error) {
 // home (see errStopped) it starts none: a home with no server answering is
 // refused, and nothing of the yard is read or written.
 func (a *app) store(ctx context.Context) (store.API, error) {
-	return a.storeStarting(ctx, false)
-}
-
-// startStore is store for yardr up, the one command that starts the server of
-// a stopped home: `yardr up` is how a stopped yard is started again.
-func (a *app) startStore(ctx context.Context) (store.API, error) {
-	return a.storeStarting(ctx, true)
-}
-
-func (a *app) storeStarting(ctx context.Context, start bool) (store.API, error) {
 	if a.st == nil {
 		cfg, err := a.config()
 		if err != nil {
 			return nil, err
 		}
-		if !start && cfg.Stopped() && !server.Running(ctx, cfg) {
+		if cfg.Stopped() && !server.Running(ctx, cfg) {
 			return nil, errStopped{cfg: cfg}
 		}
 		st, err := connect(ctx, cfg)
@@ -389,15 +379,17 @@ func (a *app) storeStarting(ctx context.Context, start bool) (store.API, error) 
 }
 
 // errStopped refuses a command on a home with a STOPPED file and no server
-// answering. The file is put there by hand to keep a yard stopped (its move to
-// another host, say), and a command that started the server would write the
-// store of a yard that is meant to stay as it is. The refusal comes before any
-// connect, so nothing starts and yard.db is not opened.
+// answering, and `yardr up` on any home with one. The file is put there by
+// hand to retire or move a yard (see config.Stopped), and nothing may start or
+// write it: a command that started the server would write the store of a yard
+// that is meant to stay as it is. The refusal comes before any connect, so
+// nothing starts and yard.db is not opened. Removing the file by hand is the
+// one way back; no flag or variable bypasses it.
 type errStopped struct{ cfg *config.Config }
 
 func (e errStopped) Error() string {
-	return fmt.Sprintf("the yard at %s is stopped (%s exists), and no server runs for it: no command starts it, so nothing was read or written. `%s up` starts it.",
-		e.cfg.Home, e.cfg.StoppedFile(), yardrAt(e.cfg.Home))
+	return fmt.Sprintf("the yard at %s is stopped (%s exists): no command starts its server, and yardr up does not either, so nothing was read or written. Remove that file by hand to start the yard again.",
+		e.cfg.Home, e.cfg.StoppedFile())
 }
 
 // out prints v as JSON to w, or calls text for humans with the same w.

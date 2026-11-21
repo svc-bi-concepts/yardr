@@ -129,6 +129,13 @@ func (a *app) daemonCmd() *cobra.Command {
 				return err
 			}
 			defer release()
+			// A daemon of a stopped yard with no server starts nothing, and
+			// exits as the server does on its stop: 0, so that a login
+			// service does not start it again in a loop of failures.
+			if cfg.Stopped() && !server.Running(ctx, cfg) {
+				log.Info("the yard is stopped (STOPPED exists) and no server runs for it; the daemon stops", "home", cfg.Home)
+				return nil
+			}
 			st, err := a.store(ctx)
 			if err != nil {
 				return err
@@ -166,7 +173,7 @@ func (a *app) daemonCmd() *cobra.Command {
 						return nil
 					}
 					// A stopped home's server is not started here either: the
-					// daemon of a stopped yard starts nothing (see storeStarting).
+					// daemon of a stopped yard starts nothing (see errStopped).
 					if cfg.Stopped() {
 						return errStopped{cfg: cfg}
 					}

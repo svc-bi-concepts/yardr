@@ -178,3 +178,25 @@ func TestWatchSaysOnceWhatWasLost(t *testing.T) {
 		t.Fatal("a removed home was not noticed")
 	}
 }
+
+// A STOPPED file put in the home by hand is said once, on the watch's tick,
+// and nothing is said while the home has none.
+func TestWatchStoppedSaysOnceWhenTheFileIsThere(t *testing.T) {
+	c, _, _ := held(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopped := c.WatchStopped(ctx, 10*time.Millisecond)
+	select {
+	case <-stopped:
+		t.Fatal("stopped while the home has no STOPPED file")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := os.WriteFile(c.StoppedFile(), []byte("who and when\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a STOPPED file was not noticed")
+	}
+}
