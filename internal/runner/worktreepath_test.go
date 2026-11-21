@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"yardr.dev/yardr/internal/dispatch"
 	"yardr.dev/yardr/internal/store"
@@ -220,6 +221,67 @@ func TestWorktreeRecordedPathKept(t *testing.T) {
 	}
 	if _, err := os.Stat(wt); err == nil {
 		t.Errorf("the worktree at its recorded path was not removed")
+	}
+}
+
+// The worktree a bead's ended session left, kept by its cleanup because the
+// bead's cleanup=false, is still found after the session passes retention and
+// the root has moved: the prune keeps the record while the worktree stands, so
+// a later stage reopens it at its path and makes no second one under the new
+// root.
+func TestWorktreeRecordKeptThroughPrune(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := seedRepo(t)
+	depot := store.Depot{Name: "r", Path: repo, Base: "main"}
+	s := storetest.New(t)
+	if err := s.PutDepot(ctx, depot, "me"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateBead(ctx, store.NewBead{ID: "r-1", Title: "one", Depot: "r"}, "me"); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "calls")
+	old, root := t.TempDir(), t.TempDir()
+	h := &Herdr{Socket: fakeHerdrAPI(t, log), Bin: refusingWorktreeHerdr(t, log), WorktreeRoot: old, Store: &paneStore{API: s, t: t, calls: log}}
+	mustT(t, s.PutGroup(ctx, store.Group{Name: "g", Runner: "herdr", Limit: 9}, "me"))
+	start := func(sess, stageName string) map[string]any {
+		t.Helper()
+		handle, err := h.Start(ctx, dispatch.Job{Bead: store.Bead{ID: "r-1", Stage: stageName}, Group: store.Group{Name: "g"},
+			Depot: &depot, Session: store.Session{ID: sess}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return handle
+	}
+	claimed, err := s.Claim(ctx, "r-1", "g", "new", "me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := start(claimed.ID, "new")
+	mustT(t, s.SetHandle(ctx, claimed.ID, first))
+	wt := first["worktree"].(string)
+	mustT(t, s.SetSetting(ctx, store.WorktreeRootSetting, root+string(filepath.Separator), "me"))
+
+	// The session ends, its cleanup is kept (cleanup=false) and the record is
+	// marked cleaned; then it passes the retention.
+	mustT(t, s.EndSession(ctx, claimed.ID, "failed", "x"))
+	mustT(t, s.MarkStopped(ctx, claimed.ID))
+	mustT(t, s.MarkCleaned(ctx, claimed.ID))
+	// A one-nanosecond retention makes the session old enough to prune: the
+	// session ended before the prune's cutoff, so only the record keeps it.
+	if res, err := s.Prune(ctx, store.Retention{Events: time.Nanosecond}, "me"); err != nil || res.Sessions != 0 {
+		t.Fatalf("prune = %+v %v, want the session kept for its standing worktree", res, err)
+	}
+
+	// The next stage reopens the worktree where it stands, not under the
+	// moved root.
+	next := start(claimed.ID, "review")
+	if got, want := mustEval(t, next["worktree"].(string)), mustEval(t, wt); got != want {
+		t.Fatalf("later stage at %s, want the recorded %s", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(root, "r", "r-1")); err == nil {
+		t.Errorf("a second worktree of the bead was made under the new root")
 	}
 }
 

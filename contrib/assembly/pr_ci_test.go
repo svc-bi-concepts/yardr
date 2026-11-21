@@ -705,3 +705,47 @@ func TestPRCIBindsAsMergePRDoes(t *testing.T) {
 		t.Errorf("pr-ci's github_binding differs from merge-pr's: change both\nmerge-pr:\n%s\npr-ci:\n%s", want, got)
 	}
 }
+
+// A run of pr-ci clears the record of its own checkout and no other: a
+// checkout of another bead whose directory is gone (one on a volume that is
+// not mounted now) is still registered in the depot after the run, so the
+// bead gets its worktree back once the volume is mounted.
+func TestPRCIKeepsAnotherCheckoutsRecord(t *testing.T) {
+	c := newCIYard(t)
+	const num = 21
+	id := "r-k"
+	sha := c.pull(num, map[string]string{"feature.txt": "new\n"})
+	c.prBeadIn(id, prURLn(num), "ciwait", false)
+	c.reviewed(id, sha)
+	c.tests("ci.sh")
+
+	other := filepath.Join(c.home, "elsewhere", "r", "r-other-ci")
+	c.git(c.repo, "worktree", "add", "--detach", "-q", other, "main")
+	if err := os.RemoveAll(other); err != nil {
+		t.Fatal(err)
+	}
+
+	c.ci(id, mergeOpts{head: sha}, map[string]string{})
+	c.has(id, "green", "approved", false)
+	c.checkoutGone(id, "green")
+	if list := c.git(c.repo, "worktree", "list", "--porcelain"); !strings.Contains(list, other) {
+		t.Errorf("the run cleared the record of another checkout, %s:\n%s", other, list)
+	}
+}
+
+// A run whose checkout is locked and gone when pr-ci comes to remove it still
+// clears its own record: the test command locks the checkout it runs in and
+// removes its directory, so git worktree remove --force refuses it (a locked
+// one needs a second force) and only the record is left for pr-ci to clear.
+func TestPRCIClearsItsOwnRecordWhenTheDirectoryIsGone(t *testing.T) {
+	c := newCIYard(t)
+	const num = 22
+	id := "r-g"
+	sha := c.pull(num, map[string]string{"feature.txt": "new\n"})
+	c.prBeadIn(id, prURLn(num), "ciwait", false)
+	c.reviewed(id, sha)
+	c.tests(`cd / && git -C "${YARDR_DEPOT_PATH:?}" worktree lock "${OLDPWD:?}" && rm -rf "${OLDPWD:?}" && echo "test: gone: pass"`)
+
+	c.ci(id, mergeOpts{head: sha}, map[string]string{})
+	c.checkoutGone(id, "the directory removed by its own test command")
+}
