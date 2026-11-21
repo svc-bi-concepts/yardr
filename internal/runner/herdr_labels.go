@@ -15,9 +15,6 @@ var nameUnsafe = regexp.MustCompile(`[^a-z0-9_-]+`)
 // Branch is the git branch a bead is worked on (see store.Branch).
 func Branch(b store.Bead) string { return store.BranchOfBead(b) }
 
-// BaseOf is what the job's bead branches from and lands on: its train's
-// branch for a child of a train, the commit a linked yard named for a bead
-// that came from it (store.Family), else the depot's base.
 // trainBranchOf is the branch of the job's train: a child's Base, which the
 // train records (store.Family), and else the yard's name for the train.
 func trainBranchOf(job dispatch.Job) string {
@@ -27,6 +24,9 @@ func trainBranchOf(job dispatch.Job) string {
 	return store.Branch(job.Train)
 }
 
+// BaseOf is what the job's bead branches from and lands on: its train's
+// branch for a child of a train, the commit a linked yard named for a bead
+// that came from it (store.Family), else the depot's base.
 func BaseOf(job dispatch.Job) string {
 	if job.Base != "" || job.Depot == nil {
 		return job.Base
