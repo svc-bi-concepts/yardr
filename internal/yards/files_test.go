@@ -1078,8 +1078,11 @@ func TestMailWithABadNameArrivesNameless(t *testing.T) {
 // sealed, byte-identical, both posted and pulled; a file one byte past
 // the plaintext cap is refused too_large inside a lawful envelope, and a
 // wire body past the sealed bound is refused 413 before it is opened.
-// The four legs run beside one another, each on its own yards: in
-// sequence their unseals alone hold the package's race budget.
+// The three 32 MiB legs run one after another, not beside one another:
+// each holds a 32 MiB file through two yards under -race, and three at
+// once pass 3 GB, the footprint at which the mini's mem-watch stops the
+// gate. The 413 leg sends no file and stays parallel, so it runs last
+// and alone.
 func TestMaxFileCrossesSealed(t *testing.T) {
 	ctx := context.Background()
 	// A repeated block, copied as bytes are: a Go loop over 32 MiB costs
@@ -1101,7 +1104,6 @@ func TestMaxFileCrossesSealed(t *testing.T) {
 	}
 
 	t.Run("posted", func(t *testing.T) {
-		t.Parallel()
 		south, north, toNorth := fileYards(t, true, mailAndFile, mailAndFile)
 		setCaps(t, south)
 		setCaps(t, north)
@@ -1122,7 +1124,6 @@ func TestMaxFileCrossesSealed(t *testing.T) {
 	// Pulled: north cannot be called, so it asks south, and the file
 	// crosses in the sealed page.
 	t.Run("pulled", func(t *testing.T) {
-		t.Parallel()
 		south, north, _ := fileYards(t, false, mailAndFile, mailAndFile)
 		setCaps(t, south)
 		setCaps(t, north)
@@ -1151,7 +1152,6 @@ func TestMaxFileCrossesSealed(t *testing.T) {
 	})
 
 	t.Run("past the plaintext cap", func(t *testing.T) {
-		t.Parallel()
 		south, north, toNorth := fileYards(t, true, mailAndFile, mailAndFile)
 		setCaps(t, south)
 		setCaps(t, north)
