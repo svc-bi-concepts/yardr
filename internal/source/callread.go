@@ -54,7 +54,7 @@ func (r *reader) call(e entry, credential, inPath, address bool) Call {
 			for _, a := range r.entries(f.v, f.path, "select", "max") {
 				switch a.key {
 				case "select":
-					c.Answer.Select = r.strs(a.v, a.path)
+					c.Answer.Select = r.selects(a.v, a.path)
 				case "max":
 					if n, ok := r.count(a.v, a.path, AnswerLimit); ok {
 						c.Answer.Max = n
@@ -512,4 +512,37 @@ func (r *reader) body(c *Call, n *yaml.Node, key string, credential, address boo
 	}
 	r.errf(n, key, "want a value, a mapping or a list, got %s", describe(n))
 	return nil
+}
+
+// selects reads answer.select: a list of top-level keys, or dotted paths into
+// the answer's objects and lists. A segment must not be empty, and a path
+// must not stand inside another (profiles with profiles.uid), since the
+// parent already keeps every field named by the descendant. Dots separate
+// path segments, so a literal key containing a dot cannot be named.
+func (r *reader) selects(n *yaml.Node, key string) []string {
+	keys := r.strs(n, key)
+	if n.Kind != yaml.SequenceNode {
+		return keys
+	}
+	var paths [][]string
+	for _, c := range n.Content {
+		if c.Kind != yaml.ScalarNode {
+			continue
+		}
+		parts := strings.Split(c.Value, ".")
+		if slices.Contains(parts, "") {
+			r.errf(c, key, "%s has an empty segment: a dotted select names a path of keys, as profiles.uid, never a.b.", c.Value)
+			continue
+		}
+		paths = append(paths, parts)
+	}
+	for _, short := range paths {
+		for _, long := range paths {
+			if len(short) < len(long) && slices.Equal(short, long[:len(short)]) {
+				a, b := strings.Join(short, "."), strings.Join(long, ".")
+				r.errf(n, key, "%s and %s overlap: keep one, %s keeps all of %s", a, b, a, b)
+			}
+		}
+	}
+	return keys
 }
