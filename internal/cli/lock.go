@@ -91,8 +91,9 @@ func watchEvery(log *slog.Logger) time.Duration {
 
 // whileHomeStands returns a context that ends, with one line in the log,
 // when the daemon's home is gone or its lock file is no longer the one it
-// holds: the daemon then stops as on SIGTERM, with exit status 0, so that a
-// login service does not start it again in a home yardr would make anew.
+// holds, or when the home gets a STOPPED file: the daemon then stops as on
+// SIGTERM, with exit status 0, so that a login service does not start it
+// again in a home yardr would make anew.
 // Like the server (see config.Held), a daemon is started detached and
 // nothing else stops one whose home was removed under it. The lock must be
 // held already. release ends the watch.
@@ -110,6 +111,11 @@ func whileHomeStands(ctx context.Context, cfg *config.Config, every time.Duratio
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	gone := held.Watch(ctx, every)
+	// A STOPPED file ends the daemon as it ends the server (see
+	// config.WatchStopped). It is not a lost home, so the cause stays nil:
+	// the herdr sessions are left running, as on a SIGTERM, for whoever
+	// runs the yard next.
+	handStopped := cfg.WatchStopped(ctx, every)
 	owner, ownerStart, watched := config.TestOwner()
 	var ownerGone <-chan struct{}
 	if watched {
@@ -122,6 +128,9 @@ func whileHomeStands(ctx context.Context, cfg *config.Config, every time.Duratio
 		case why := <-gone:
 			log.Warn("the yardr daemon's home is no longer its own; stopping", "home", cfg.Home, "reason", why)
 			cancel(homeGone{reason: why})
+		case <-handStopped:
+			log.Info("the yard's home has a STOPPED file; stopping the yardr daemon", "home", cfg.Home, "file", cfg.StoppedFile())
+			cancel(nil)
 		case <-ownerGone:
 			log.Warn("the test that started the yardr daemon is gone; stopping", "owner", owner)
 			cancel(nil)

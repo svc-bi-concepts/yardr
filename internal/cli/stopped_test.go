@@ -65,8 +65,8 @@ func TestStoppedHomeRefusesWithoutStartingAServer(t *testing.T) {
 			t.Fatalf("yardr %s on a stopped home: no error", strings.Join(args, " "))
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, "is stopped") || !strings.Contains(msg, filepath.Join(home, "STOPPED")) || !strings.Contains(msg, "up` starts it") {
-			t.Errorf("yardr %s: %q does not say the home is stopped, naming its STOPPED file and yardr up", strings.Join(args, " "), msg)
+		if !strings.Contains(msg, "is stopped") || !strings.Contains(msg, filepath.Join(home, "STOPPED")) || !strings.Contains(msg, "Remove that file by hand") {
+			t.Errorf("yardr %s: %q does not say the home is stopped, naming its STOPPED file and how to start it", strings.Join(args, " "), msg)
 		}
 	}
 
@@ -83,24 +83,54 @@ func TestStoppedHomeRefusesWithoutStartingAServer(t *testing.T) {
 	}
 }
 
-// yardr up is the start a stopped home takes: its store comes from a server
-// that is started for it, where every other command is refused.
-func TestStartStoreStartsAStoppedHome(t *testing.T) {
-	home, _, _ := stoppedHome(t)
-	calls := 0
-	old := connect
-	connect = func(context.Context, *config.Config) (store.API, error) {
-		calls++
-		return storetest.NewIn(t, t.TempDir()), nil
-	}
-	t.Cleanup(func() { connect = old })
+// yardr up is refused on a stopped home, as every command is: a STOPPED file
+// is for a yard that is retired or moved, and up does not bring it back. The
+// refusal comes before any connect, so no server starts and yard.db stays as
+// it is; removing the file by hand is the one way back.
+func TestUpOnAStoppedHomeIsRefused(t *testing.T) {
+	home, mtime, size := stoppedHome(t)
+	calls := noConnect(t)
 
 	a := &app{env: testEnv(t, home)}
-	if _, err := a.startStore(context.Background()); err != nil {
-		t.Fatalf("startStore on a stopped home: %v", err)
+	out, err := run(t, a.rootCmd(), "up")
+	if err == nil || !strings.Contains(err.Error(), "is stopped") || !strings.Contains(err.Error(), "Remove that file by hand") {
+		t.Fatalf("up on a stopped home: %v\n%s", err, out)
 	}
-	if calls != 1 {
-		t.Errorf("connect called %d times by startStore, want 1", calls)
+	if *calls != 0 {
+		t.Errorf("connect called %d times by up, want none", *calls)
+	}
+	fi, err := os.Stat(filepath.Join(home, "yard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().UnixNano() != mtime || fi.Size() != size {
+		t.Errorf("yard.db changed on a stopped home")
+	}
+	if _, err := os.Stat(filepath.Join(home, "STOPPED")); err != nil {
+		t.Errorf("up removed the STOPPED file: %v", err)
+	}
+}
+
+// The daemon of a stopped yard with no server starts nothing and exits 0, as
+// the server does on its stop: a login service that restarts a failing daemon
+// would otherwise loop on it. No connect is made and yard.db stays as it is.
+func TestDaemonOnAStoppedHomeExitsCleanly(t *testing.T) {
+	home, mtime, size := stoppedHome(t)
+	calls := noConnect(t)
+
+	a := &app{env: testEnv(t, home)}
+	if _, err := run(t, a.rootCmd(), "daemon"); err != nil {
+		t.Fatalf("daemon on a stopped home: %v, want a clean exit", err)
+	}
+	if *calls != 0 {
+		t.Errorf("connect called %d times by the daemon, want none", *calls)
+	}
+	fi, err := os.Stat(filepath.Join(home, "yard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().UnixNano() != mtime || fi.Size() != size {
+		t.Errorf("yard.db changed on a stopped home")
 	}
 }
 

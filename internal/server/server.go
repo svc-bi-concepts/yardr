@@ -130,6 +130,11 @@ func (r *runner) run(ctx context.Context) error {
 // never a stop.
 func (r *runner) serve(ctx context.Context) (string, bool, error) {
 	c, log := r.c, r.log
+	// A STOPPED home is one nothing may start or write (see config.Stopped):
+	// the store is not opened for a server that would stop on its next tick.
+	if c.Stopped() {
+		return "", false, fmt.Errorf("the yard at %s is stopped (%s exists): no server runs for it; remove that file by hand to start the yard again", c.Home, c.StoppedFile())
+	}
 	st, err := store.Open(c.DBPath())
 	if errors.Is(err, store.ErrLocked) {
 		return "", false, fmt.Errorf("another yardr server owns %s", c.DBPath())
@@ -310,6 +315,10 @@ func (r *runner) serve(ctx context.Context) (string, bool, error) {
 	watch, stopHomeWatch := context.WithCancel(ctx)
 	defer stopHomeWatch()
 	gone := held.Watch(watch, r.homeCheck)
+	// A STOPPED file put in the home by hand ends the server on the same
+	// tick. It is the normal stop, not a lost home: the socket and the
+	// pidfiles go, as on a stop, so the next `yardr up` finds none to take.
+	handStopped := c.WatchStopped(watch, r.homeCheck)
 	// A test names its process to the server it starts (YARDR_TEST_OWNER),
 	// which stops when the owner is gone: a test binary killed by its
 	// timeout runs no cleanup, and the home it leaves intact gives the home
@@ -349,6 +358,9 @@ wait:
 			break wait
 		case <-ownerGone:
 			log.Warn("the test that started the yardr server is gone; stopping", "owner", owner)
+			break wait
+		case <-handStopped:
+			log.Info("the yard's home has a STOPPED file; stopping the yardr server", "home", c.Home, "file", c.StoppedFile())
 			break wait
 		case serveErr = <-served:
 			stopped = true

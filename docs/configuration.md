@@ -1047,9 +1047,9 @@ commands are the same.
 
 #### Starting and stopping a yard
 
-`yardr up` starts everything a yard needs that is not running, and
-`yardr down` stops the yard. Both are safe to repeat, both print one line a
-part, and both take `--json`.
+`yardr up` starts everything a yard needs that is not running (not on a
+stopped home, see below), and `yardr down` stops the yard. Both are safe to
+repeat, both print one line a part, and both take `--json`.
 
 ```sh
 yardr up       # herdr's server, the yard's server, the daemon
@@ -1065,16 +1065,25 @@ and `yardr down --login` removes them ([below](#yardr-up---login)).
 yardr wrote for the yard, then a list of what it left on the machine
 ([install.md](install.md#removing-yardr)).
 
-A home with a file named `STOPPED` in it is a yard stopped by hand: a person
-puts the file there, and yardr neither writes nor removes it. While no server
-answers on such a home, no command starts one, so a command other than
-`yardr up` and `yardr down` stops with one line that names the file, and
-reads and writes nothing of the yard (`yardr status` and `yardr doctor` keep
-working, and `yardr server start` stops the same way). `yardr up` starts the
-server and leaves the file where it is. `yardr down` starts none either: it
-stops the daemon, the web view, the BDP server and the telemetry export that
-run, skips the agents (it cannot ask the store for them) and leaves yard.db as
-it is. A server that already runs keeps answering until `yardr server stop`.
+A home with a file named `STOPPED` in it is a yard that is retired or moved:
+nothing may start or write it. A person puts the file there by hand, and
+yardr neither writes nor removes it. `yardr down` is not that: it is a pause,
+after which `yardr up` starts the yard again. `yardr up` on a home with the
+file refuses with one line that names it, as every command does, and removing
+the file by hand is the one way back; no flag or variable bypasses it.
+
+While no server answers on such a home, no command starts one. So every
+command except `yardr status`, `yardr doctor` and `yardr down` stops with that
+line, and reads and writes nothing of the yard (`yardr server start` stops the
+same way). `yardr down` starts none either: it stops the daemon, the web view,
+the BDP server and the telemetry export that run, skips the agents (it cannot
+ask the store for them) and leaves yard.db as it is.
+
+A server or a daemon that runs when the file appears stops on its next home
+check, within a minute, as it does when its home is removed under it. The
+server stops the normal way, so its socket and pidfiles go and yard.db is
+closed; the daemon stops as on a SIGTERM, leaving its herdr sessions running
+for whoever runs the yard next.
 
 **`yardr up`** takes the parts in this order:
 
