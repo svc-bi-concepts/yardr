@@ -37,7 +37,7 @@ import (
 //	model      agent model (passed as --model); a bead's metadata.model
 //	           overrides it for that bead
 //	keep       true to leave the tab open after the session ends
-//	worktrees  root for bead worktrees (default Herdr.WorktreeRoot)
+//	worktrees  root for bead worktrees (default: the worktree_root setting, else Herdr.WorktreeRoot)
 //	env_file   KEY=VALUE file (mode 0600 or stricter) whose entries go into
 //	           the agent's pane environment: outbound credentials, which
 //	           never belong in the store (see store.ReadEnvFile) nor on a
@@ -201,11 +201,16 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 	}
 
 	// First stage creates the worktree; later stages reopen it.
-	root := str(job.Group.Config, "worktrees", h.WorktreeRoot)
+	// Where the worktree is: its recorded path, else under the root (see
+	// worktreePath). A root that is not there refuses the session here.
+	path, err := worktreePath(ctx, h.Store, h.WorktreeRoot, job, depot.Name)
+	if err != nil {
+		return nil, err
+	}
 	createArgs := []string{"worktree", "create", "--cwd", depot.Path, "--branch", branch,
 		"--base", BaseOf(job), "--label", label}
-	if root != "" {
-		createArgs = append(createArgs, "--path", filepath.Join(root, depot.Name, job.Bead.ID))
+	if path != "" {
+		createArgs = append(createArgs, "--path", path)
 	}
 	raw, err := h.run(ctx, createArgs...)
 	reopened := false
@@ -217,10 +222,12 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 		}
 		createErr := err
 		raw, err = h.run(ctx, "worktree", "open", "--cwd", depot.Path, "--branch", branch, "--label", label)
-		if err != nil && root != "" {
+		if err != nil && path != "" {
 			// A branch lookup can miss a detached worktree or one cleaned up
 			// after the bead closed; recover it before opening by path.
-			path := filepath.Join(root, depot.Name, job.Bead.ID)
+			// The worktree of a bead that tracks a pull request is on no
+			// branch (see pullHead), so herdr does not find it by one: where
+			// it still is, it is opened by its path as it stands.
 			if job.Pull == nil {
 				recovered, recoverErr := recoverDetachedWorktree(ctx, depot.Path, path, branch)
 				if recoverErr != nil {
@@ -259,6 +266,7 @@ func (h *Herdr) Start(ctx context.Context, job dispatch.Job) (map[string]any, er
 		_, _ = h.run(ctx, "workspace", "rename", wt.Workspace.ID, label)
 	}
 	handle["workspace"], handle["worktree"] = wt.Workspace.ID, wt.Worktree.Path
+	worktreeVolume(handle)
 	if job.Pull != nil {
 		head, err := h.pullHead(ctx, wt.Worktree.Path, job.Pull.Number)
 		if err != nil {
@@ -515,21 +523,6 @@ func (h *Herdr) findDirWorkspace(ctx context.Context, depot *store.Depot, bead s
 		}
 	}
 	return "", nil
-}
-
-// sameDir reports whether a and b name the same directory, symlinks
-// resolved where they can be.
-func sameDir(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	real := func(p string) string {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			return r
-		}
-		return filepath.Clean(p)
-	}
-	return real(a) == real(b)
 }
 
 // FetchTimeout bounds the fetch of a depot's base before a bead branches
@@ -859,25 +852,6 @@ func gitOutRaw(ctx context.Context, dir string, args ...string) (string, error) 
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
-}
-
-// workspaceAt reports whether herdr workspace ws is the checkout at path.
-func (h *Herdr) workspaceAt(ctx context.Context, ws, path string) bool {
-	raw, err := h.run(ctx, "workspace", "get", ws)
-	if err != nil {
-		return false
-	}
-	var r struct {
-		Workspace struct {
-			Worktree *struct {
-				CheckoutPath string `json:"checkout_path"`
-			} `json:"worktree"`
-		} `json:"workspace"`
-	}
-	if json.Unmarshal(raw, &r) != nil || r.Workspace.Worktree == nil {
-		return false
-	}
-	return filepath.Clean(r.Workspace.Worktree.CheckoutPath) == filepath.Clean(path)
 }
 
 // AgentArgs are the agent's own arguments: what its kind's file says every
