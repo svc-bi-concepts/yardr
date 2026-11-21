@@ -282,7 +282,8 @@ Its beads change in three ways, and a private depot is unchanged:
   trailers. A harness's own trailers are still dropped, as everywhere.
 - A bead made in the depot records its branch: `fix/<slug>` for a bug and
   `feat/<slug>` for anything else, the slug being its title's words in lower
-  case. A title already taken gets `-2`, `-3` and so on. The name is recorded
+  case. A name already taken, by another bead or by a branch the depot's git
+  has (local, or on `origin`), gets `-2`, `-3` and so on. The name is recorded
   once, at creation, so a later title edit leaves it. A bead made before the
   depot became public keeps `yard/<id>`: renaming existing branches is not
   done.
