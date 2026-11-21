@@ -67,7 +67,7 @@ The budget is 60 s on the mini. A host with slower cores may set
 does: the mirror on the Hetzner runners sets 120 (`.github/workflows/mirror.yml`),
 because its run 44838772035 on main 7e6b5d70 measured cli 91.8 s, store 73.4 s and
 server 65.4 s alone, 1.1 to 1.5 times the mini's budget, and yards at 151.5 s, which
-is not load-bound and so has an allow-list row (yardr-8ern) instead of a budget.
+is not load-bound, so its two 32 MiB legs run outside `-race` (R4, yardr-8ern) instead of taking a budget.
 The gate refuses a budget under 60 s, one that is not a whole number, and one set
 with `YARDR_QUIET_RUN` or `YARDR_R1_STRICT`: the quiet run (R6) stays at 60 s,
 strict, and remains R1's authority. Every race leg with a budget other than 60
@@ -276,7 +276,12 @@ notes: of 170 passing test lines, 66% of the gate's wall time (129k of
 193k s) was queued on that lock, and 107 runs waited over half their run;
 no bead or note among 1370 reports `WARNING: DATA RACE`. The detector still
 stands in front of `main`: a race fails the landing without a rerun, and the
-bead comes back to its builder. A builder who changes concurrent code and
+bead comes back to its builder. The one exception is the two 32 MiB legs of
+`TestMaxFileCrossesSealed` in `internal/yards` (the `posted` and `pulled`
+subtests of `TestMaxFileCrossesSealedPostedAndPulled`, in a `!race` file): they
+run without `-race` in mirror.yml's plain step on every landed tree, because
+their race cost is the detector's and not the product's (yardr-8ern). A
+builder who changes concurrent code and
 wants the detector sooner runs `YARDR_LANDING=1 sh .yardr/test`, which
 queues on the lock as a landing does.
 A builder or review stage runs the plain suite once per sha. A stage whose
