@@ -951,7 +951,7 @@ func (s *Store) settleSent(ctx context.Context, uuid string) error {
 		case g == nil:
 		case rec.Fetched != nil:
 			note = append(note, fmt.Sprintf("The yard %s returned its branch %s at %s, which is %s here now. The work on it is that yard's, and so is any test line in its notes: this yard has not tested it.",
-				name, g.Branch, short(g.Commit), Branch(row.ID)))
+				name, g.Branch, short(g.Commit), BranchOfBead(row.Bead)))
 		default:
 			note = append(note, fmt.Sprintf("The yard %s returned a branch (%s at %s) that this yard did not take: %s. What came back is the outcome and the notes.",
 				name, g.Branch, short(g.Commit), strings.TrimSuffix(rec.NotTaken, ".")))
@@ -1086,7 +1086,7 @@ func (s *Store) PeerFetches(ctx context.Context) ([]PeerFetch, error) {
 			if rec.GaveUp != nil && row.Hold {
 				return nil
 			}
-			f := PeerFetch{Bead: h.of(rec.Bead), Message: rec.Message, Peer: rec.Was, Into: Branch(row.ID), Git: *rec.Git,
+			f := PeerFetch{Bead: h.of(rec.Bead), Message: rec.Message, Peer: rec.Was, Into: BranchOfBead(row.Bead), Git: *rec.Git,
 				Attempts: rec.Attempts, Error: rec.Error, RetryAt: rec.RetryAt, Remote: PeerRemote, Tries: PeerBeadTries}
 			if rec.GaveUp != nil {
 				// Released since: a round of its own.
@@ -1152,7 +1152,7 @@ func (s *Store) PeerFetched(ctx context.Context, bead, message, notTaken string)
 			kind, data["reason"] = "peer_bead_not_fetched", notTaken
 		} else {
 			rec.Fetched = &at
-			data["into"] = Branch(row.ID)
+			data["into"] = BranchOfBead(row.Bead)
 		}
 		rec.Error, rec.RetryAt, rec.GaveUp = "", nil, nil
 		if err := put(w.Tx, bPeerSent, rec.Bead, rec); err != nil {

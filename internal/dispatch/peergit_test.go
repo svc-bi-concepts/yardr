@@ -147,8 +147,8 @@ func TestPeerCodeComesBack(t *testing.T) {
 	fam, err := b.api.Family(context.Background(), theirs.ID)
 	must(t, err)
 	if g := theirs.Peer.Git; g == nil || g.Base != "main" || g.BaseCommit != base || fam.Base != base ||
-		!strings.Contains(theirs.Peer.CodeLine(theirs.ID), "its work starts from main at "+base[:12]) {
-		t.Fatalf("b's bead starts from %+v, family %+v, %q", theirs.Peer.Git, fam, theirs.Peer.CodeLine(theirs.ID))
+		!strings.Contains(theirs.Peer.CodeLine(store.Bead{ID: theirs.ID}), "its work starts from main at "+base[:12]) {
+		t.Fatalf("b's bead starts from %+v, family %+v, %q", theirs.Peer.Git, fam, theirs.Peer.CodeLine(store.Bead{ID: theirs.ID}))
 	}
 	if arrived := b.beadEvents(t, theirs.ID, "peer_bead_arrived"); len(arrived) != 1 || arrived[0].Data["base_commit"] != base {
 		t.Fatalf("b's peer_bead_arrived = %+v", arrived)
@@ -180,7 +180,7 @@ func TestPeerCodeComesBack(t *testing.T) {
 		t.Fatalf("a's peer_bead_fetched = %+v, advanced = %+v", fetched, adv)
 	}
 	away := got.Away()
-	line := away.CodeLine(mine.ID)
+	line := away.CodeLine(store.Bead{ID: mine.ID})
 	if away.FetchedAt == nil || away.Git.Commit != commit ||
 		!strings.HasPrefix(line, "branch "+store.Branch(mine.ID)+" came from b: its "+store.Branch(theirs.ID)+" at "+commit[:12]+", fetched ") ||
 		!strings.HasSuffix(line, "This yard has not tested it") {
@@ -269,8 +269,8 @@ func TestPeerCodeRemoteDown(t *testing.T) {
 	got := a.get(t, mine.ID)
 	away := got.Away()
 	if got.Stage != "build" || got.Hold || away.Outcome != "done" || away.FetchTries != 1 || away.FetchRetryAt == nil || away.FetchedAt != nil ||
-		!strings.Contains(away.CodeLine(mine.ID), "is not fetched yet, and its outcome done waits for it: 1 try so far, the next at ") {
-		t.Fatalf("a's bead after the first fetch failed = %+v, %+v, %q", got, away, away.CodeLine(mine.ID))
+		!strings.Contains(away.CodeLine(store.Bead{ID: mine.ID}), "is not fetched yet, and its outcome done waits for it: 1 try so far, the next at ") {
+		t.Fatalf("a's bead after the first fetch failed = %+v, %+v, %q", got, away, away.CodeLine(store.Bead{ID: mine.ID}))
 	}
 	// Not before its wait is over.
 	a.pass(t)
@@ -282,7 +282,7 @@ func TestPeerCodeRemoteDown(t *testing.T) {
 	got = a.get(t, mine.ID)
 	away = got.Away()
 	if got.Stage != "build" || !got.Hold || got.HeldBy != "yard" || away.FetchGaveUp == nil || away.FetchTries != 2 || len(a.live(t)) != 1 ||
-		!strings.Contains(away.CodeLine(mine.ID), "given up after 2 tries") || !strings.Contains(away.CodeLine(mine.ID), "yardr bead unhold "+mine.ID+" tries again") {
+		!strings.Contains(away.CodeLine(store.Bead{ID: mine.ID}), "given up after 2 tries") || !strings.Contains(away.CodeLine(store.Bead{ID: mine.ID}), "yardr bead unhold "+mine.ID+" tries again") {
 		t.Fatalf("a's bead after its tries = %+v, %+v, sessions %+v", got, away, a.live(t))
 	}
 	ns := a.notes(t, mine.ID)
@@ -508,7 +508,7 @@ func TestPeerCodeNotTaken(t *testing.T) {
 			got := a.settled(t, mine.ID, "review")
 			away := got.Away()
 			if got.Hold || away.FetchedAt != nil || !strings.Contains(away.NotTaken, tc.want) ||
-				!strings.Contains(away.CodeLine(mine.ID), "was not taken: ") {
+				!strings.Contains(away.CodeLine(store.Bead{ID: mine.ID}), "was not taken: ") {
 				t.Fatalf("a's bead = %+v, %+v", got, away)
 			}
 			if ns := a.notes(t, mine.ID); len(ns) != 1 || !strings.Contains(ns[0].Text, "that this yard did not take: ") || !strings.Contains(ns[0].Text, tc.want) {

@@ -549,7 +549,7 @@ Correct the rewrite command, then unhold."
 # are lowered once for the train, not by each wagon (integrate-train), and a
 # branch with no commit past the base has no head that is its own to amend.
 ONTRAIN=
-if [ "${YARDR_TYPE:-}" = wagon ] && [ -n "${YARDR_TRAIN:-}" ] && [ "$BASE" = "yard/$YARDR_TRAIN" ]; then
+if [ "${YARDR_TYPE:-}" = wagon ] && [ -n "${YARDR_TRAIN:-}" ] && [ "$BASE" = "${YARDR_TRAIN_BRANCH:-yard/$YARDR_TRAIN}" ]; then
   ONTRAIN=1
 elif [ "$(git -C "$REPO" rev-list --count "refs/heads/$BASE..refs/heads/$BR")" != 0 ]; then
   lowerrows amend

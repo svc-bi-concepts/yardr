@@ -22,6 +22,9 @@ import (
 // receiver records deliveries.
 type Store interface {
 	GetHook(ctx context.Context, name string) (*store.Hook, error)
+	// BeadOfBranch is the handle of the bead that records a branch name, or
+	// "" when none does (store.BeadOfBranch).
+	BeadOfBranch(ctx context.Context, name string) (string, error)
 	GetSource(ctx context.Context, name string) (*store.Source, error)
 	Users(ctx context.Context) ([]store.User, error)
 	// PeerIdentities are the crew members of linked yards that senders
@@ -173,7 +176,7 @@ func (rc *Receiver) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	env.Delivery = delivery
-	deriveTrain(env)
+	rc.deriveTrain(r.Context(), env)
 	// Speaker is a core-derived field, so a normalize command cannot
 	// claim who an event came from. The identity-hearing path below
 	// stamps it only after matching the sender to a yard user or to a
@@ -313,14 +316,20 @@ func (rc *Receiver) serve(w http.ResponseWriter, r *http.Request) {
 // deriveTrain fills the envelope's train field from its head_branch when
 // the branch is a yardr train branch and the envelope carries no train:
 // the yard/<train> branch is yardr's convention, not the service's, so a
-// normalize script must not restate it. An envelope whose script said the
-// train keeps what it said.
-func deriveTrain(env *Envelope) {
+// normalize script must not restate it. A branch with another name is a
+// train's when a bead records it (a public depot's train, see
+// store.BeadOfBranch); the record, not the name, says so. An envelope whose
+// script said the train keeps what it said.
+func (rc *Receiver) deriveTrain(ctx context.Context, env *Envelope) {
 	if env == nil || len(env.Fields["train"]) > 0 {
 		return
 	}
 	for _, branch := range env.Fields["head_branch"] {
 		if train := trainOf(branch); train != "" {
+			env.Fields["train"] = []string{train}
+			return
+		}
+		if train, err := rc.st.BeadOfBranch(ctx, branch); err == nil && train != "" {
 			env.Fields["train"] = []string{train}
 			return
 		}
