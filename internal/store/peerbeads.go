@@ -1442,7 +1442,11 @@ func (w *wtx) arriveBead(p *Peer, m PeerMessage, a *arrival, way string) error {
 	if err != nil {
 		return err
 	}
-	row := &beadRow{Bead: Bead{Title: b.Title, Body: b.Body, Type: b.Type, Stage: a.stage, Status: "open", Priority: b.Priority,
+	branch, err := w.publicBranchFor(in.Depot, b.Type, b.Title)
+	if err != nil {
+		return err
+	}
+	row := &beadRow{Bead: Bead{Title: b.Title, Body: b.Body, Type: b.Type, Stage: a.stage, Status: "open", Priority: b.Priority, Branch: branch,
 		Depot: &in.Depot, Labels: []string{"from-" + p.Name}, Metadata: map[string]any{"flow": in.Flow},
 		CreatedAt: now(), CreatedBy: &actor, Originator: operator}}
 	row.StayStart, row.Visited = row.CreatedAt, []string{a.stage}
