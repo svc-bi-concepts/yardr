@@ -185,6 +185,18 @@ func (c *Config) DBPath() string  { return filepath.Join(c.Home, "yard.db") }
 func (c *Config) Socket() string  { return filepath.Join(c.Home, "yard.sock") }
 func (c *Config) PIDFile() string { return filepath.Join(c.Home, "server.pid") }
 
+// Stopped reports whether the home has a STOPPED file: its yard was stopped by
+// hand, and no command may start the server it would start (see cli's store).
+// Only the file's presence counts; its line, who stopped the yard and when, is
+// for people, as integrations/bin/yardlib.py's yard_stopped reads it too.
+func (c *Config) Stopped() bool {
+	_, err := os.Lstat(c.StoppedFile())
+	return err == nil
+}
+
+// StoppedFile is the STOPPED file of the home (see Stopped).
+func (c *Config) StoppedFile() string { return filepath.Join(c.Home, "STOPPED") }
+
 // PIDStart is the file beside the pidfile holding the start time of the
 // process it names, by which a stop tells the server from a later process
 // with its pid (see server.Stop). Compared for equality only, never read

@@ -1,0 +1,129 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"yardr.dev/yardr/internal/config"
+	"yardr.dev/yardr/internal/store"
+	"yardr.dev/yardr/internal/storetest"
+)
+
+// stoppedHome is a yard with a store and a STOPPED file in its home, as a
+// person leaves one to keep the yard stopped. It returns the home, and the
+// store file's modification time and size before any command runs.
+func stoppedHome(t *testing.T) (home string, mtime int64, size int64) {
+	t.Helper()
+	home = newHomeDir(t)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	storetest.NewIn(t, home)
+	if err := os.WriteFile(filepath.Join(home, "STOPPED"), []byte("who and when\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(home, "yard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return home, fi.ModTime().UnixNano(), fi.Size()
+}
+
+// noConnect replaces connect for the test: a command on a stopped home that
+// reaches it has started or dialled a server, which is what the test refuses.
+// It counts the calls, so a test can say how many there were.
+func noConnect(t *testing.T) *int {
+	t.Helper()
+	calls := new(int)
+	old := connect
+	connect = func(context.Context, *config.Config) (store.API, error) {
+		*calls++
+		return nil, errors.New("test: connect called on a stopped home")
+	}
+	t.Cleanup(func() { connect = old })
+	return calls
+}
+
+// A stopped home starts no server for a read or a write, and yard.db is not
+// written: the command is refused with a line that names the STOPPED file.
+func TestStoppedHomeRefusesWithoutStartingAServer(t *testing.T) {
+	home, mtime, size := stoppedHome(t)
+	calls := noConnect(t)
+
+	for _, args := range [][]string{
+		{"bead", "list"},
+		{"dep", "add", "a", "b"},
+	} {
+		a := &app{env: testEnv(t, home)}
+		_, err := run(t, a.rootCmd(), args...)
+		if err == nil {
+			t.Fatalf("yardr %s on a stopped home: no error", strings.Join(args, " "))
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "is stopped") || !strings.Contains(msg, filepath.Join(home, "STOPPED")) || !strings.Contains(msg, "up` starts it") {
+			t.Errorf("yardr %s: %q does not say the home is stopped, naming its STOPPED file and yardr up", strings.Join(args, " "), msg)
+		}
+	}
+
+	if *calls != 0 {
+		t.Errorf("connect was called %d times on a stopped home, want none: a server would have started", *calls)
+	}
+	fi, err := os.Stat(filepath.Join(home, "yard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().UnixNano() != mtime || fi.Size() != size {
+		t.Errorf("yard.db changed on a stopped home: mtime %v -> %v, size %d -> %d",
+			mtime, fi.ModTime(), size, fi.Size())
+	}
+}
+
+// yardr up is the start a stopped home takes: its store comes from a server
+// that is started for it, where every other command is refused.
+func TestStartStoreStartsAStoppedHome(t *testing.T) {
+	home, _, _ := stoppedHome(t)
+	calls := 0
+	old := connect
+	connect = func(context.Context, *config.Config) (store.API, error) {
+		calls++
+		return storetest.NewIn(t, t.TempDir()), nil
+	}
+	t.Cleanup(func() { connect = old })
+
+	a := &app{env: testEnv(t, home)}
+	if _, err := a.startStore(context.Background()); err != nil {
+		t.Fatalf("startStore on a stopped home: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("connect called %d times by startStore, want 1", calls)
+	}
+}
+
+// A home with no STOPPED file is as before: the store connects, and no
+// refusal is made.
+func TestStoreUnstoppedHomeConnects(t *testing.T) {
+	home := newHomeDir(t)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	storetest.NewIn(t, home)
+	calls := 0
+	old := connect
+	connect = func(context.Context, *config.Config) (store.API, error) {
+		calls++
+		return storetest.NewIn(t, t.TempDir()), nil
+	}
+	t.Cleanup(func() { connect = old })
+
+	a := &app{env: testEnv(t, home)}
+	if _, err := a.store(context.Background()); err != nil {
+		t.Fatalf("store on an unstopped home: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("connect called %d times, want 1", calls)
+	}
+}

@@ -162,6 +162,11 @@ func (a *app) daemonCmd() *cobra.Command {
 					if server.Running(ctx, cfg) {
 						return nil
 					}
+					// A stopped home's server is not started here either: the
+					// daemon of a stopped yard starts nothing (see storeStarting).
+					if cfg.Stopped() {
+						return errStopped{cfg: cfg}
+					}
 					log.Warn("the yardr server is gone; starting it")
 					if _, err := server.Connect(ctx, cfg); err != nil {
 						return err

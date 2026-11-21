@@ -304,7 +304,7 @@ func (a *app) up(ctx context.Context, cfg *config.Config, login bool) (*upReport
 	// herdr session the yard's panes are in is a setting in its store.
 	srv := yardPart{Part: partServer}
 	was := serverRunning(ctx, cfg)
-	st, err := a.store(ctx)
+	st, err := a.startStore(ctx)
 	if err == nil {
 		var set bool
 		if set, err = a.initialized(ctx, cfg); err == nil && !set {
