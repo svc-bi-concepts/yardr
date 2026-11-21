@@ -381,33 +381,6 @@ func (p BeadPeer) RefusedBefore() string {
 	}))
 }
 
-// CodeLine is how yardr bead show says what code crossed with the bead
-// whose handle is bead, "" when none did: for one that came from a yard,
-// where its work starts; for one sent out, whose branch its branch is, or
-// why the branch that came back is not here.
-func (p BeadPeer) CodeLine(bead string) string {
-	g := p.Git
-	switch {
-	case g == nil:
-		return ""
-	case p.Direction != "out":
-		return fmt.Sprintf("its work starts from %s at %s (%s), as %s said", or(g.Base, "the commit"), short(g.BaseCommit), g.Remote, p.Yard())
-	case p.FetchedAt != nil:
-		return fmt.Sprintf("branch %s came from %s: its %s at %s, fetched %s from %s. This yard has not tested it",
-			Branch(bead), p.Yard(), g.Branch, short(g.Commit), stamp(*p.FetchedAt), g.Remote)
-	case p.NotTaken != "":
-		return fmt.Sprintf("the branch %s returned (%s at %s) was not taken: %s", p.Yard(), g.Branch, short(g.Commit), p.NotTaken)
-	}
-	line := fmt.Sprintf("the branch %s returned (%s at %s) is not fetched yet, and its outcome %s waits for it", p.Yard(), g.Branch, short(g.Commit), p.Outcome)
-	switch {
-	case p.FetchGaveUp != nil:
-		line += fmt.Sprintf(": given up after %s (%s); yardr bead unhold %s tries again", tries(p.FetchTries), p.FetchError, bead)
-	case p.FetchTries > 0 && p.FetchRetryAt != nil:
-		line += fmt.Sprintf(": %s so far, the next at %s (%s)", tries(p.FetchTries), p.FetchRetryAt.Local().Format("15:04:05"), p.FetchError)
-	}
-	return line
-}
-
 // From is the yard the bead came from, nil for a bead of this yard's own.
 func (b *Bead) From() *BeadPeer {
 	if b.Peer != nil && b.Peer.Direction == "in" {
@@ -1442,7 +1415,11 @@ func (w *wtx) arriveBead(p *Peer, m PeerMessage, a *arrival, way string) error {
 	if err != nil {
 		return err
 	}
-	row := &beadRow{Bead: Bead{Title: b.Title, Body: b.Body, Type: b.Type, Stage: a.stage, Status: "open", Priority: b.Priority,
+	branch, err := w.publicBranchFor(in.Depot, b.Type, b.Title)
+	if err != nil {
+		return err
+	}
+	row := &beadRow{Bead: Bead{Title: b.Title, Body: b.Body, Type: b.Type, Stage: a.stage, Status: "open", Priority: b.Priority, Branch: branch,
 		Depot: &in.Depot, Labels: []string{"from-" + p.Name}, Metadata: map[string]any{"flow": in.Flow},
 		CreatedAt: now(), CreatedBy: &actor, Originator: operator}}
 	row.StayStart, row.Visited = row.CreatedAt, []string{a.stage}

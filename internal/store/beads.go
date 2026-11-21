@@ -32,6 +32,7 @@ type Bead struct {
 	Status      string         `json:"status"`
 	Priority    int            `json:"priority"`
 	Depot       *string        `json:"depot,omitempty"`
+	Branch      string         `json:"branch,omitempty"` // see BranchOfBead
 	Labels      []string       `json:"labels"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	Hold        bool           `json:"hold,omitempty"`
@@ -527,10 +528,14 @@ func (w *wtx) createBead(ctx context.Context, nb NewBead, actor string, reads *b
 			return nil, err
 		}
 	}
+	branch, err := w.publicBranchFor(nb.Depot, typ, nb.Title)
+	if err != nil {
+		return nil, err
+	}
 	row := &beadRow{Bead: Bead{
 		Title: nb.Title, Body: nb.Body, Type: typ, Stage: stage,
 		Status: "open", Priority: nb.Priority, Labels: dedupe(nb.Labels), CreatedAt: now(), CreatedBy: &actor,
-		Metadata: nb.Metadata, Originator: originator,
+		Metadata: nb.Metadata, Originator: originator, Branch: branch,
 	}}
 	row.Depot = depot
 	row.StayStart, row.Visited = row.CreatedAt, []string{stage}

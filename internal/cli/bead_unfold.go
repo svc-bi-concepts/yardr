@@ -68,7 +68,7 @@ it came out of.`,
 				Carrier string `json:"carrier"`
 			}{out, carrier.ID}, func(w io.Writer) {
 				fmt.Fprintf(w, "%s reopened in %s, out of %s; revert its commit on %s\n",
-					out.ID, out.Stage, carrier.ID, store.Branch(carrier.ID))
+					out.ID, out.Stage, carrier.ID, store.BranchOfBead(*carrier))
 			})
 		},
 	}

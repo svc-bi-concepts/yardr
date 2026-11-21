@@ -173,7 +173,7 @@ func (s *Store) checkDoneSafe(ctx context.Context, id, outcome string) *safeChec
 		return &safeCheck{err: err}
 	}
 	c := &safeCheck{base: or(fam.Base, "origin/main")}
-	c.files, c.err = securityTouched(ctx, *d, c.base, Branch(b.ID), specs)
+	c.files, c.err = securityTouched(ctx, *d, c.base, BranchOfBead(*b), specs)
 	if len(c.files) == 0 && c.err == nil {
 		return nil
 	}

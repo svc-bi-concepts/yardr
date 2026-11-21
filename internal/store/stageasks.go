@@ -269,7 +269,7 @@ func (t *AskTemplate) framed(row *beadRow, notes []Note) *AskTemplate {
 	card := *t
 	title := OneLine(row.Title)
 	card.Question = fmt.Sprintf("%s — %s: %s", t.Question, row.ID, title)
-	card.Context = []string{fmt.Sprintf("Bead: %s — %s (branch %s)", row.ID, title, Branch(row.ID))}
+	card.Context = []string{fmt.Sprintf("Bead: %s — %s (branch %s)", row.ID, title, BranchOfBead(row.Bead))}
 	if line := finishLine(notes); line != "" {
 		card.Context = append(card.Context, line)
 	}
