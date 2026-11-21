@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,4 +59,38 @@ func recoverDetachedWorktree(ctx context.Context, repo, path, branch string) (bo
 		return false, fmt.Errorf("checkout %s: %w", branch, err)
 	}
 	return true, nil
+}
+
+// sameDir reports whether a and b name the same directory, symlinks
+// resolved where they can be.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	real := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return filepath.Clean(p)
+	}
+	return real(a) == real(b)
+}
+
+// workspaceAt reports whether herdr workspace ws is the checkout at path.
+func (h *Herdr) workspaceAt(ctx context.Context, ws, path string) bool {
+	raw, err := h.run(ctx, "workspace", "get", ws)
+	if err != nil {
+		return false
+	}
+	var r struct {
+		Workspace struct {
+			Worktree *struct {
+				CheckoutPath string `json:"checkout_path"`
+			} `json:"worktree"`
+		} `json:"workspace"`
+	}
+	if json.Unmarshal(raw, &r) != nil || r.Workspace.Worktree == nil {
+		return false
+	}
+	return filepath.Clean(r.Workspace.Worktree.CheckoutPath) == filepath.Clean(path)
 }
