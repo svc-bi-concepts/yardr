@@ -311,6 +311,12 @@ func TestReceiverPost(t *testing.T) {
 			t.Errorf("%s = %v", name, got)
 		}
 	}
+	// What a body says of its build is kept only when it reads as one; the
+	// message beside it is taken all the same, as it was before the body
+	// was read once for both.
+	if got := answer(signed(a, b, "POST", yards.Path, []byte(`{"id":"says1","kind":"ping","body":{},"says":"not a statement"}`)), http.StatusOK); got["taken"] != true {
+		t.Fatalf("a message whose says reads as nothing = %v", got)
+	}
 	// A body at the limit is taken. A request past it is read, since a's
 	// key is a peer's and it may be a file, and is no message; past what
 	// any file takes it is not read, nor is one past a message's limit
