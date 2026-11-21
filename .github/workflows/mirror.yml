@@ -129,5 +129,11 @@ jobs:
       # (yardr-8ern), so the race landing run above never runs them. This plain
       # step runs them on the landed tree, for a pull request's head and for
       # main alike (docs/testing.md R4).
+      # go test passes when -run matches nothing, so the step also asks for the
+      # two legs' PASS lines: a rename of the test cannot drop them unseen.
       - name: max peer file legs (no -race, yardr-8ern)
-        run: go test -count=1 -v -run TestMaxFileCrossesSealed ./internal/yards
+        run: |
+          set -eo pipefail
+          go test -count=1 -v -run TestMaxFileCrossesSealed ./internal/yards | tee "$RUNNER_TEMP/max-legs.log"
+          grep -q -e '--- PASS: TestMaxFileCrossesSealedPostedAndPulled/posted ' "$RUNNER_TEMP/max-legs.log"
+          grep -q -e '--- PASS: TestMaxFileCrossesSealedPostedAndPulled/pulled ' "$RUNNER_TEMP/max-legs.log"

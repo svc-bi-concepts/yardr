@@ -276,7 +276,12 @@ notes: of 170 passing test lines, 66% of the gate's wall time (129k of
 193k s) was queued on that lock, and 107 runs waited over half their run;
 no bead or note among 1370 reports `WARNING: DATA RACE`. The detector still
 stands in front of `main`: a race fails the landing without a rerun, and the
-bead comes back to its builder. The one exception is the two 32 MiB legs of `TestMaxFileCrossesSealed` in `internal/yards` (its `posted` and `pulled` subtests, in a `!race` file), which run without `-race` in mirror.yml's plain step on every landed tree, because their race cost is the detector's and not the product's (yardr-8ern). A builder who changes concurrent code and
+bead comes back to its builder. The one exception is the two 32 MiB legs of
+`TestMaxFileCrossesSealed` in `internal/yards` (the `posted` and `pulled`
+subtests of `TestMaxFileCrossesSealedPostedAndPulled`, in a `!race` file): they
+run without `-race` in mirror.yml's plain step on every landed tree, because
+their race cost is the detector's and not the product's (yardr-8ern). A
+builder who changes concurrent code and
 wants the detector sooner runs `YARDR_LANDING=1 sh .yardr/test`, which
 queues on the lock as a landing does.
 A builder or review stage runs the plain suite once per sha. A stage whose
