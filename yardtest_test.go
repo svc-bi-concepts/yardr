@@ -336,7 +336,7 @@ func scriptEnvFrom(environ []string) []string {
 		if strings.HasPrefix(k, "YARD_GATE_") {
 			return true
 		}
-		return slices.Contains([]string{"YARDR_BASE", "YARDR_LANDING", "YARDR_TEST_PLAN", "YARDR_TEST_RPC", "GOOS", "GOFLAGS", "YARDR_RACE_HELD", "YARDR_R1_STRICT", "YARDR_QUIET_RUN", "YARDR_CONFORMANCE", "YARDR_TEST_LOAD", "YARDR_TEST_BEADS", "YARDR_HOME", "YARDR_BEAD", "YARDR_DEPOT", "YARDR_ACTOR", "YARDR_SESSION", "GITHUB_ACTIONS", "TMPDIR", "GOTMPDIR"}, k)
+		return slices.Contains([]string{"YARDR_BASE", "YARDR_LANDING", "YARDR_TEST_PLAN", "YARDR_TEST_RPC", "GOOS", "GOFLAGS", "YARDR_RACE_HELD", "YARDR_R1_STRICT", "YARDR_R1_BUDGET", "YARDR_QUIET_RUN", "YARDR_CONFORMANCE", "YARDR_TEST_LOAD", "YARDR_TEST_BEADS", "YARDR_HOME", "YARDR_BEAD", "YARDR_DEPOT", "YARDR_ACTOR", "YARDR_SESSION", "GITHUB_ACTIONS", "TMPDIR", "GOTMPDIR"}, k)
 	})
 	return append(env, "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10", "YARDR_TEST_FLOOR_GIB=0", "YARDR_HOME="+noYardHome, "YARD_GATE_SLOT_HELD=1")
 }
@@ -4795,17 +4795,20 @@ func TestYardTestBudgetRerunSharesTheRaceHold(t *testing.T) {
 		// YARDR_TEST_LOAD the caller started the script with, "" for none; and
 		// the factor the race leg is given with the load its line names.
 		avg, given, factor, says, par string
+		// The YARDR_R1_BUDGET the caller started the script with, "" for none.
+		// With one, the race leg names it and a package under it is not re-run.
+		budget string
 	}{
-		{"under alone passes", "12.3s", true, underAlone, "", "", "1.0", quietSays, ""},
+		{"under alone passes", "12.3s", true, underAlone, "", "", "1.0", quietSays, "", ""},
 		{"over alone fails naming both", "1m6.6s", false,
 			"test: yardr.dev/yardr/internal/dispatch took 61.2 s with -race, 66.6 s alone, over the 60 s budget (docs/testing.md R1)",
-			"", "", "1.0", quietSays, ""},
+			"", "", "1.0", quietSays, "", ""},
 		{"sub-second alone passes", "750ms", true,
 			"test: R1: yardr.dev/yardr/internal/dispatch took 61.2 s in the run, 0.75 s alone: under budget, loaded run",
-			"", "", "1.0", quietSays, ""},
+			"", "", "1.0", quietSays, "", ""},
 		{"microsecond alone passes", "750µs", true,
 			"test: R1: yardr.dev/yardr/internal/dispatch took 61.2 s in the run, 0.00075 s alone: under budget, loaded run",
-			"", "", "1.0", quietSays, ""},
+			"", "", "1.0", quietSays, "", ""},
 		// The arithmetic at its edges (the cap, an unreadable load) is the
 		// probe's, in TestYardTestBudgets; a row is a whole script run, and
 		// the package has no time to spare (docs/testing.md R1), so these
@@ -4813,9 +4816,13 @@ func TestYardTestBudgetRerunSharesTheRaceHold(t *testing.T) {
 		// -p its alone re-run), and a factor the caller had does not reach
 		// anything.
 		{"a loaded machine sizes the leg's waits and its -p by its load over its cores", "12.3s", true, underAlone,
-			"25.3", "", "2.5", "load 25.3 on 10 cores", "-p=3"},
+			"25.3", "", "2.5", "load 25.3 on 10 cores", "-p=3", ""},
 		{"a factor the caller had is not passed on", "12.3s", true, underAlone,
-			"", "7", "1.0", quietSays, ""},
+			"", "7", "1.0", quietSays, "", ""},
+		// The mirror's budget reaches the race leg from its worker: the leg
+		// names it, and a package under 120 s in the run is not re-run.
+		{"a 120 s budget is named by the race leg and skips the re-run", "12.3s", true, "test: R1 budget 120 s (YARDR_R1_BUDGET)",
+			"", "", "1.0", quietSays, "", "120"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -4865,6 +4872,9 @@ exec "$@"
 			if c.given != "" {
 				cmd.Env = append(cmd.Env, "YARDR_TEST_LOAD="+c.given)
 			}
+			if c.budget != "" {
+				cmd.Env = append(cmd.Env, "YARDR_R1_BUDGET="+c.budget)
+			}
 			out, code := runCmd(t, cmd)
 			if (code == 0) != c.ok {
 				t.Errorf("exit %d, want ok %v", code, c.ok)
@@ -4881,8 +4891,11 @@ exec "$@"
 			}
 			wantCalls := "vet ./... held=unset lock=unset load=unset\n" +
 				"linux vet ./... held=unset lock=unset load=unset\n" +
-				race + " ./... held=1 lock=1 load=" + c.factor + "\n" +
-				race + " -count=1 yardr.dev/yardr/internal/dispatch held=1 lock=1 load=unset"
+				race + " ./... held=1 lock=1 load=" + c.factor
+			// A budget of 120 s takes the 61.2 s package under it: no re-run.
+			if c.budget == "" {
+				wantCalls += "\n" + race + " -count=1 yardr.dev/yardr/internal/dispatch held=1 lock=1 load=unset"
+			}
 			if got := fakeLog(fake, "calls"); got != wantCalls {
 				t.Errorf("go was run as:\n%s\nwant:\n%s", got, wantCalls)
 			}
@@ -5804,6 +5817,7 @@ func yardTestProbe(t *testing.T) (probe string, overDirs []string, sleepSites in
 	eitherfn := cut("\nloadedeither() {\n", "\n}\n")
 	gatefn := cut("\ngatepar() {\n", "\n}\n")
 	legfn := cut("\nlegflag() {\n", "\n}\n")
+	budgetfn := cut("\nr1budget() {\n", "\n}\n")
 	pkgfn := cut("\npackagebudget() {\n", "\n}\n")
 	long := cut("\nlongsleeps='\n", "\n'\n")
 	sleepfn := cut("\nsleepbudget() {\n", "\n}\n")
@@ -5814,7 +5828,7 @@ func yardTestProbe(t *testing.T) (probe string, overDirs []string, sleepSites in
 	warnfn := cut("\nfilesizewarnings() {\n", "\n}\n")
 	markfn := cut("\nnomarkers() {\n", "\n}\n")
 	shellfn := cut("\nshellchecked() {\n", "\n}\n")
-	if !strings.Contains(pkgfn, "60 s budget") || !strings.Contains(sleepfn, "500 ms budget") || !strings.Contains(filesizefn, "1000 lines allow-listed") || !strings.Contains(sizelinefn, "wc -l") || !strings.Contains(viewfn, "no row, fails over") || !strings.Contains(warnfn, "filesizeview warn") || !strings.Contains(markfn, "redaction marker scan") || !strings.Contains(shellfn, "| xargs shellcheck") || !strings.Contains(machinefn, "load $avg on $cores cores") || !strings.Contains(loadfn, "machineload") || !strings.Contains(sizefn, "YARDR_TEST_LOAD=") || !strings.Contains(eitherfn, `echo "$1"`) || !strings.Contains(gatefn, "awk") || !strings.Contains(legfn, "gatepar") {
+	if !strings.Contains(budgetfn, "YARDR_R1_BUDGET") || !strings.Contains(pkgfn, "$budget s budget") || !strings.Contains(sleepfn, "500 ms budget") || !strings.Contains(filesizefn, "1000 lines allow-listed") || !strings.Contains(sizelinefn, "wc -l") || !strings.Contains(viewfn, "no row, fails over") || !strings.Contains(warnfn, "filesizeview warn") || !strings.Contains(markfn, "redaction marker scan") || !strings.Contains(shellfn, "| xargs shellcheck") || !strings.Contains(machinefn, "load $avg on $cores cores") || !strings.Contains(loadfn, "machineload") || !strings.Contains(sizefn, "YARDR_TEST_LOAD=") || !strings.Contains(eitherfn, `echo "$1"`) || !strings.Contains(gatefn, "awk") || !strings.Contains(legfn, "gatepar") {
 		t.Fatal("the probe missed the budget functions: move it with .yardr/test")
 	}
 	for _, line := range strings.Split(over, "\n") {
@@ -5862,7 +5876,7 @@ func yardTestProbe(t *testing.T) (probe string, overDirs []string, sleepSites in
 	for _, n := range keys {
 		sites += n
 	}
-	return took + runlogfn + over + machinefn + loadfn + sizefn + eitherfn + gatefn + legfn + pkgfn + long + sleepfn + sizes + sizelinefn + viewfn + warnfn + filesizefn + markfn + shellfn + "\n\"$@\"\n", overDirs, sites, sizeRows
+	return took + runlogfn + over + machinefn + loadfn + sizefn + eitherfn + gatefn + legfn + budgetfn + pkgfn + long + sleepfn + sizes + sizelinefn + viewfn + warnfn + filesizefn + markfn + shellfn + "\n\"$@\"\n", overDirs, sites, sizeRows
 }
 
 // The race lock is released when the race-leg command and its R1 checks end,
@@ -6193,13 +6207,49 @@ if [ -n "$FAKE_CACHED" ]; then
   exit 0
 fi
 case " $FAKE_OVER " in
- *" $pkg "*) secs=1m6.6s ;;
+ *" $pkg "*) secs=${FAKE_ALONE:-1m6.6s} ;;
  *) secs=12.3s ;;
 esac
 printf 'ok  \t%s\t%s\n' "$pkg" "$secs"
 `
 	writeBins(t, fake, map[string]string{"go": goFake})
 	return fake, []string{pathWith(fake), "FAKE=" + fake, "YARDR_RACE_HELD=1"}
+}
+
+// The mirror's R1 budget is refused by the gate before it starts anything when it
+// is one the gate cannot judge by: not a whole number of seconds, under the mini's
+// 60 s, over 999999 s, or set with the quiet run's marks, which hold R1 at 60 s
+// (docs/testing.md R1). Each row is a whole run of the script in its box, so a
+// refusal that ran go or left a temp file would fail the row.
+func TestR1BudgetRefused(t *testing.T) {
+	t.Parallel()
+	m := newModGate(t)
+	const quiet = "with YARDR_QUIET_RUN or YARDR_R1_STRICT, which hold R1 at 60 s"
+	for _, c := range []struct {
+		name string
+		env  []string
+		want string // the refusal's reason, after "test: cannot run: "
+	}{
+		{"a budget under 60 s", []string{"YARDR_R1_BUDGET=59"}, "YARDR_R1_BUDGET (59) is under the 60 s budget of R1"},
+		{"a budget that is not a whole number", []string{"YARDR_R1_BUDGET=60.5"}, "YARDR_R1_BUDGET (60.5) is not a whole number of seconds"},
+		{"a budget of words", []string{"YARDR_R1_BUDGET=two-minutes"}, "YARDR_R1_BUDGET (two-minutes) is not a whole number of seconds"},
+		{"a budget over 999999 s", []string{"YARDR_R1_BUDGET=1000000"}, "YARDR_R1_BUDGET (1000000) is over 999999 s"},
+		{"a budget with the quiet run", []string{"YARDR_R1_BUDGET=120", "YARDR_QUIET_RUN=1"}, "YARDR_R1_BUDGET is refused " + quiet},
+		{"a budget with the strict run", []string{"YARDR_R1_BUDGET=120", "YARDR_R1_STRICT=1"}, "YARDR_R1_BUDGET is refused " + quiet},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			b := m.box(t, map[string]string{"go": "#!/bin/sh\necho \"$*\" >>\"$FAKE/calls\"\n"})
+			out, code := b.run(t, c.env...)
+			if want := "test: cannot run: " + c.want + "\n"; code != 2 || out != want {
+				t.Errorf("exit %d, output %q, want exit 2 and %q", code, out, want)
+			}
+			if calls := fakeLog(b.fake, "calls"); calls != "" {
+				t.Errorf("go ran:\n%s", calls)
+			}
+			wantEmpty(t, b.tmp)
+		})
+	}
 }
 
 // The budgets .yardr/test enforces (docs/testing.md R1 and R2), through the
@@ -6779,6 +6829,10 @@ func TestYardTestBudgets(t *testing.T) {
 		overAlone    = "test: yardr.dev/yardr/internal/dispatch took 61.2 s with -race, 66.6 s alone, over the 60 s budget (docs/testing.md R1)"
 		reRunFailed  = "test: yardr.dev/yardr/internal/dispatch took 61.2 s with -race, over the 60 s budget (docs/testing.md R1), and its re-run alone failed"
 		over         = "FAKE_OVER=yardr.dev/yardr/internal/dispatch"
+		// cli as the mirror's run measured it: over 120 s in the run, 91.8 s alone.
+		cliSlow  = "ok  \tyardr.dev/yardr/internal/cli\t136.8s\n"
+		cliCall  = "test -race -count=1 yardr.dev/yardr/internal/cli held=1"
+		yardsLeg = "ok  \tyardr.dev/yardr/internal/yards\t151.5s\n"
 	)
 	for _, c := range []struct {
 		name   string
@@ -6806,6 +6860,24 @@ func TestYardTestBudgets(t *testing.T) {
 		{"a package over budget alone on a loaded CI runner passes as on any loaded machine", dispatchLeg, nil,
 			[]string{over, "YARDR_TEST_LOADAVG=72.4", "YARDR_TEST_CORES=10", "GITHUB_ACTIONS=true"}, 0,
 			[]string{loaded72 + "\n"}, []string{"over the 60 s budget"}, []string{dispatchCall}},
+		// The mirror's budget (YARDR_R1_BUDGET=120, docs/testing.md R1): cli takes
+		// 136.8 s in the run, over 120 s, so it is re-run alone; alone it is 91 s,
+		// under the budget and passed, and 121 s, over it and failed. The load is
+		// pinned quiet where the run fails.
+		{"a 120 s budget passes a package that takes 91 s alone", cliSlow, nil,
+			[]string{"YARDR_R1_BUDGET=120", "FAKE_OVER=yardr.dev/yardr/internal/cli", "FAKE_ALONE=91s"}, 0,
+			[]string{"test: R1: yardr.dev/yardr/internal/cli took 136.8 s in the run, 91 s alone: under budget, loaded run\n"}, []string{"over the"}, []string{cliCall}},
+		{"a 120 s budget fails a package that takes 121 s alone", cliSlow, nil,
+			[]string{"YARDR_R1_BUDGET=120", "FAKE_OVER=yardr.dev/yardr/internal/cli", "FAKE_ALONE=121s", "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10"}, 1,
+			[]string{"test: yardr.dev/yardr/internal/cli took 136.8 s with -race, 121 s alone, over the 120 s budget (docs/testing.md R1)\n"}, nil, nil},
+		{"the 60 s budget still fails a package that takes 91 s alone", cliSlow, nil,
+			[]string{"FAKE_OVER=yardr.dev/yardr/internal/cli", "FAKE_ALONE=91s", "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10"}, 1,
+			[]string{"test: yardr.dev/yardr/internal/cli took 136.8 s with -race, 91 s alone, over the 60 s budget (docs/testing.md R1)\n"}, nil, nil},
+		// internal/yards is allow-listed (yardr-c90p), so it is not re-run at
+		// any budget: its 151 s alone is named by the row, not judged.
+		{"an allow-listed package over any budget is not re-run", yardsLeg, nil,
+			[]string{"YARDR_R1_BUDGET=120", "FAKE_OVER=yardr.dev/yardr/internal/yards", "FAKE_ALONE=151s", "YARDR_TEST_LOADAVG=1.5", "YARDR_TEST_CORES=10"}, 0,
+			nil, []string{"over the", "R1:"}, []string{}},
 		{"an unreadable load fails the run", dispatchLeg, nil,
 			[]string{over, "YARDR_TEST_LOADAVG=bogus", "YARDR_TEST_CORES=10"}, 1, []string{overAlone + "\n"}, nil, nil},
 		{"a load at the core count fails the run", dispatchLeg, nil,

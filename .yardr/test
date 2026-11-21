@@ -1625,7 +1625,7 @@ summary() {
   if [ "$1" = 0 ]; then res=pass; else res=fail; fi
   echo "test: sh .yardr/test @ $(git rev-parse --short HEAD): $res, $pkgs_ok packages ok, $pkgs_failed failed, $(($(date +%s) - started)) s, waited $waited_total s"
 }
-# The packages over the 60 s budget (docs/testing.md R1): a directory, the
+# The packages over the $budget s budget (docs/testing.md R1): a directory, the
 # bead that brings it under, and why it is over. No measured row is left;
 # the remaining row is the quiet run's yard-shape matrix, an acceptance
 # test that runs only where YARDR_QUIET_RUN is set.
@@ -1640,6 +1640,7 @@ summary() {
 # it, but delete it anyway.
 over60='
 contrib/isolated-yard yardr-n9ss TestYardShapes (the yard-shape matrix) walks three yards, 35-50 s beside one another, and runs only where YARDR_QUIET_RUN is set, which is the quiet run (docs/testing.md R6); the package is 18 s without it. No bead brings it under: it is an acceptance test, not a slow unit test
+internal/yards yardr-c90p 151 s alone under -race on the Hetzner runner (run 44838772035, 155 s in the run), 2.5x the 60 s budget and not load-bound: in the run and alone are equal, so no budget covers it, and YARDR_R1_BUDGET=120 would hide it. Why it is slow is for yardr-c90p to find, and it brings the package under 60 s. While this row stands no race leg judges the time of this package, the quiet run on the mini included, so the quiet run stops judging yards; yardr-c90p deletes the row with the fix
 '
 # machineload prints the machine's one-minute load average and core count,
 # as "load <avg> on <cores> cores", whatever they are: the flaky log line
@@ -1775,6 +1776,16 @@ legflag() {
   echo "test: go test -p=$legn ($legload)"
   legpar=-p=$legn
 }
+# r1budget prints the R1 budget in seconds (docs/testing.md R1): 60 on the mini,
+# and the one number a host with slower cores may set through its workflow, the
+# mirror's runner (mirror.yml, YARDR_R1_BUDGET). The budget is a number of
+# seconds and not a speed factor: the testload factor already scales the waits,
+# and a second multiplier in the same place would be read as that one. It is
+# defined ahead of the race leg's re-entry branch (YARDR_TEST_RACE_LEG), which
+# runs before the script's later functions are defined, so the worker has it.
+r1budget() {
+  printf '%s\n' "${YARDR_R1_BUDGET:-60}"
+}
 # packagebudget judges the 60 s budget (docs/testing.md R1) on a go test
 # -race leg's output ($1): only the ok lines carry judged durations, a
 # package whose tests failed being already red without it. Cached packages
@@ -1810,11 +1821,14 @@ legflag() {
 packagebudget() {
   legout=$1
   shift
+  # The budget is r1budget's: 60 s, or the mirror's YARDR_R1_BUDGET. The allow-list
+  # rows are the same whatever it is.
+  budget=$(r1budget)
   allow=$(mktemp)
   printf '%s\n' "$over60" >"$allow"
   over=$(mktemp)
   unsorted=$(mktemp)
-  awk '
+  awk -v budget="$budget" '
     function seconds(s, total, n) {
       if (s == "") return -1
       total = 0
@@ -1841,7 +1855,7 @@ packagebudget() {
       if (pkg == "yardr.dev/yardr") dir = "."
       else if (pkg ~ /^yardr\.dev\/yardr\//) { dir = pkg; sub(/^yardr\.dev\/yardr\//, "", dir) }
       else next
-      if (secs > 60 && !(dir in over) && !(dir in bad)) {
+      if (secs > budget && !(dir in over) && !(dir in bad)) {
         bad[dir] = 1
         printf "%s %.9g\n", pkg, secs
       }
@@ -1951,23 +1965,23 @@ packagebudget() {
       /^ok[ \t]/ { s = seconds($3); if (s >= 0) { printf "%.9g\n", s; exit } }
     ' "$run")
     if [ "$rrc" = 0 ] && [ -n "$alone" ]; then
-      if awk -v s="$alone" 'BEGIN { exit !(s + 0 > 60) }'; then
+      if awk -v s="$alone" -v budget="$budget" 'BEGIN { exit !(s + 0 > budget + 0) }'; then
         if load=$(loadedeither "$load_start" "$load_end"); then
           if [ -n "$YARDR_R1_STRICT" ]; then
-            echo "test: $pkg took $secs s with -race, $alone s alone, over the 60 s budget (docs/testing.md R1), loaded machine ($load)"
+            echo "test: $pkg took $secs s with -race, $alone s alone, over the $budget s budget (docs/testing.md R1), loaded machine ($load)"
             st=1
           else
             echo "test: R1: $pkg took $secs s in the run, $alone s alone: over budget, loaded machine ($load), not failed"
           fi
         else
-          echo "test: $pkg took $secs s with -race, $alone s alone, over the 60 s budget (docs/testing.md R1)"
+          echo "test: $pkg took $secs s with -race, $alone s alone, over the $budget s budget (docs/testing.md R1)"
           st=1
         fi
       else
         echo "test: R1: $pkg took $secs s in the run, $alone s alone: under budget, loaded run"
       fi
     else
-      echo "test: $pkg took $secs s with -race, over the 60 s budget (docs/testing.md R1), and its re-run alone failed"
+      echo "test: $pkg took $secs s with -race, over the $budget s budget (docs/testing.md R1), and its re-run alone failed"
       st=1
     fi
   done <"$jobs"
@@ -2498,6 +2512,9 @@ whole() {
     socket=$!
   fi
   first=0
+  # A race leg names a budget other than the mini's 60 s, so its log says which
+  # one it judged by (docs/testing.md R1).
+  [ "$(r1budget)" = 60 ] || echo "test: R1 budget $(r1budget) s (YARDR_R1_BUDGET)"
   # A loaded machine's race leg takes the cores the load leaves it, a CI
   # runner's runs go's default (legflag). Unquoted, an empty legpar is no word
   # at all.
@@ -2634,6 +2651,31 @@ diskfloor() {
   exit 2
 }
 diskfloor
+# r1budgetcheck refuses a YARDR_R1_BUDGET the gate cannot judge by, before it
+# selects anything: a whole number of seconds, never under the 60 s the mini's R1
+# verdict is measured against, and not with the quiet run's marks. The quiet run
+# (R6) holds R1 at 60 s, strict, and is R1's authority, so a budget there would
+# judge the same packages two ways. Exit 2, as the disk floor's refusal does: the
+# run could not start, and no test line is printed.
+r1budgetcheck() {
+  [ -n "$YARDR_R1_BUDGET" ] || return 0
+  case $YARDR_R1_BUDGET in
+    *[!0-9]* | "") echo "test: cannot run: YARDR_R1_BUDGET ($YARDR_R1_BUDGET) is not a whole number of seconds" >&2; exit 2 ;;
+  esac
+  if [ "${#YARDR_R1_BUDGET}" -gt 6 ]; then
+    echo "test: cannot run: YARDR_R1_BUDGET ($YARDR_R1_BUDGET) is over 999999 s" >&2
+    exit 2
+  fi
+  if [ "$YARDR_R1_BUDGET" -lt 60 ]; then
+    echo "test: cannot run: YARDR_R1_BUDGET ($YARDR_R1_BUDGET) is under the 60 s budget of R1" >&2
+    exit 2
+  fi
+  if [ -n "$YARDR_QUIET_RUN" ] || [ -n "$YARDR_R1_STRICT" ]; then
+    echo "test: cannot run: YARDR_R1_BUDGET is refused with YARDR_QUIET_RUN or YARDR_R1_STRICT, which hold R1 at 60 s" >&2
+    exit 2
+  fi
+}
+r1budgetcheck
 # The mark that lets conformance/bdp's test run its script (the header says
 # when) is the run's to give and never the caller's: one the run was started
 # with would run the script in every whole suite. So it starts empty, ahead of

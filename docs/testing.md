@@ -62,6 +62,19 @@ load, rounded down (at least 2, at most the cores), and logs one `test: go test
 -p=N (load A on C cores)` line; a quiet or unknown load runs go's default and
 logs nothing (yardr-y6js).
 
+The budget is 60 s on the mini. A host with slower cores may set
+`YARDR_R1_BUDGET` to a larger whole number of seconds, and only its workflow
+does: the mirror on the Hetzner runners sets 120 (`.github/workflows/mirror.yml`),
+because its run 44838772035 on main 7e6b5d70 measured cli 91.8 s, store 73.4 s and
+server 65.4 s alone, 1.1 to 1.5 times the mini's budget, and yards at 151.5 s, which
+is not load-bound and so has an allow-list row (yardr-c90p) instead of a budget.
+The gate refuses a budget under 60 s, one that is not a whole number, and one set
+with `YARDR_QUIET_RUN` or `YARDR_R1_STRICT`: the quiet run (R6) stays at 60 s,
+strict, and remains R1's authority. Every race leg with a budget other than 60
+names it in a `test: R1 budget N s` line. Raising the budget is a rule change, for
+a decide bead, not a builder's edit; a package over the budget on the runner that
+the budget still cannot hold gets its own bead, not a higher number.
+
 R2. A test sleeps no more than 500 ms at a site, and a poll loop polls a
 condition with a deadline. Exactly 500 ms complies; over fails unless
 allow-listed. A test that waits on time takes a clock it sets: the fake

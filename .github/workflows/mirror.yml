@@ -104,4 +104,9 @@ jobs:
       - name: depot tests (.yardr/test, as for a landing)
         env:
           YARDR_BASE: no-base-on-the-mirror
+          # The runners are slower per package than the mini, whose 60 s R1 is
+          # measured against (docs/testing.md R1). Run 44838772035 on main
+          # 7e6b5d70 ran cli 91.8 s, store 73.4 s and server 65.4 s alone; 120 s
+          # leaves headroom without hiding a doubling. Only this workflow sets it.
+          YARDR_R1_BUDGET: "120"
         run: YARDR_LANDING=1 sh .yardr/test
