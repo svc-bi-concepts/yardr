@@ -59,7 +59,8 @@ calls:
       path: /conversations.list
       query: { types: public_channel, exclude_archived: "true", limit: "1000" }
     # Slack answers a refusal as 200 with ok false and its reason under error, so both are kept.
-    answer: { select: [ok, error, channels, response_metadata] }   # the first page of up to 1000; response_metadata's next_cursor says there is more, which no call reads
+    # Each channel is projected to its id, name and is_member: the topic, purpose and creator Slack sends with it are no call's input, and the pack keeps what the bot needs to decide a join. This is the first page of up to 1000; response_metadata's next_cursor, which would say there is more, is not kept, since no call reads it.
+    answer: { select: [ok, error, channels.id, channels.name, channels.is_member] }
   join:
     kind: update
     about: Joins one public channel (conversations.join), so the bot hears what is said in it; the channels call names the ones to join

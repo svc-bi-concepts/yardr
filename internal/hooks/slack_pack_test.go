@@ -112,6 +112,9 @@ func TestSlackPackDeclaration(t *testing.T) {
 	if !ok || channels.Kind != source.Read || channels.Request.Line() != "GET /conversations.list" || len(channels.Params) != 0 {
 		t.Fatalf("channels call = %+v", channels)
 	}
+	if !reflect.DeepEqual(channels.Answer.Select, []string{"ok", "error", "channels.id", "channels.name", "channels.is_member"}) {
+		t.Fatalf("channels select = %q", channels.Answer.Select)
+	}
 	join, ok := d.Call("join")
 	if !ok || join.Kind != source.Update || join.Request.Line() != "POST /conversations.join" || len(join.Params) != 1 {
 		t.Fatalf("join call = %+v", join)
@@ -901,7 +904,7 @@ func TestSlackPackChannelCalls(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/conversations.list":
-			_, _ = io.WriteString(w, `{"ok":true,"channels":[{"id":"C012AB3CD","name":"general","is_member":true},{"id":"C098MN456","name":"ops","is_member":false}],"response_metadata":{"next_cursor":""}}`)
+			_, _ = io.WriteString(w, `{"ok":true,"channels":[{"id":"C012AB3CD","name":"general","is_member":true,"topic":{"value":"hi"},"purpose":{"value":"all"},"creator":"U012AB3CD"},{"id":"C098MN456","name":"ops","is_member":false,"topic":{"value":""},"purpose":{"value":"ops"},"creator":"U098MN456"}],"response_metadata":{"next_cursor":""}}`)
 		case "/conversations.join":
 			if strings.Contains(string(raw), "CARCHIVED") {
 				_, _ = io.WriteString(w, `{"ok":false,"error":"is_archived"}`)
@@ -933,6 +936,14 @@ func TestSlackPackChannelCalls(t *testing.T) {
 	}
 	if err := json.Unmarshal(res.Answer, &list); err != nil || !list.OK || len(list.Channels) != 2 || list.Channels[1].ID != "C098MN456" || list.Channels[1].IsMember {
 		t.Fatalf("channels answer = %s, %v", res.Answer, err)
+	}
+	// The select keeps each channel's id, name and is_member and drops the
+	// topic, purpose and creator Slack sends with it, and the paging key.
+	if strings.Contains(string(res.Answer), "topic") || strings.Contains(string(res.Answer), "creator") || strings.Contains(string(res.Answer), "response_metadata") {
+		t.Fatalf("channels answer keeps fields the select drops: %s", res.Answer)
+	}
+	if want := `{"channels":[{"id":"C012AB3CD","is_member":true,"name":"general"},{"id":"C098MN456","is_member":false,"name":"ops"}],"ok":true}`; string(res.Answer) != want {
+		t.Fatalf("channels answer = %s, want %s", res.Answer, want)
 	}
 	if len(got) != 1 || got[0].method != http.MethodGet || got[0].auth != "Bearer xoxb-test" {
 		t.Fatalf("channels sent %+v", got)
