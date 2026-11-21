@@ -158,7 +158,25 @@ scratch_gone() {
   [ -n "${WT:-}" ] || return 0
   git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1
   rm -rf "${WT:?}"
-  git -C "$REPO" worktree prune >/dev/null 2>&1
+  scratch_record_gone
+  return 0
+}
+# scratch_record_gone removes the registration of the head's checkout when
+# worktree remove leaves it, as it does for a locked checkout whose directory
+# is gone. Only that record goes: a repository-wide worktree prune would clear the record of another
+# bead's checkout too, one on a volume that is not mounted now, whose record
+# must stay until the volume is back. The record is the one whose gitdir names
+# a worktree of this name in this checkout's parent directory.
+scratch_record_gone() {
+  gitcommon=$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || return 0
+  wtparent=$(cd "$(dirname "$WT")" 2>/dev/null && pwd -P) || return 0
+  for adm in "$gitcommon"/worktrees/*; do
+    [ -f "$adm/gitdir" ] || continue
+    recwt=$(dirname "$(cat "$adm/gitdir")")
+    [ "$(basename "$recwt")" = "$(basename "$WT")" ] || continue
+    [ "$(cd "$(dirname "$recwt")" 2>/dev/null && pwd -P)" = "$wtparent" ] || continue
+    rm -rf "${adm:?}"
+  done
   return 0
 }
 # stoprun stops the command the script started, and every process below it,
