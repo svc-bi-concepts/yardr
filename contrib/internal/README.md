@@ -109,6 +109,6 @@ usage and the short commit.
 
 The gate does not run the workflow's sign step: it runs only on GitHub
 Actions. `actionlint` checks the workflow, and the sign and publish steps'
-scripts were run with stubs for `curl`, `gh` and OpenBao, against a throwaway
+scripts were run with stubs for `curl` and OpenBao, against a throwaway
 key, to check each branch: no variables (unsigned), some variables (fail), all
 five (signed, verified with the key's public half, its key removed afterwards).
