@@ -498,6 +498,9 @@ func (r *statusReport) parts() []statusPart {
 
 	var srv []string
 	switch s := r.Server; {
+	case !s.Running && (&config.Config{Home: r.Home}).Stopped():
+		// A stopped home's server is started by yardr up alone (see errStopped).
+		srv = []string{fmt.Sprintf("not running: the home has a STOPPED file, so no command starts it, %s up does", yardr)}
 	case !s.Running:
 		srv = []string{fmt.Sprintf("not running: any yardr command that needs the yard starts it (%s ready), or %s server start", yardr, yardr)}
 	case s.Error != "":

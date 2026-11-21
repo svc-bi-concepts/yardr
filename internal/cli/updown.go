@@ -304,7 +304,7 @@ func (a *app) up(ctx context.Context, cfg *config.Config, login bool) (*upReport
 	// herdr session the yard's panes are in is a setting in its store.
 	srv := yardPart{Part: partServer}
 	was := serverRunning(ctx, cfg)
-	st, err := a.store(ctx)
+	st, err := a.startStore(ctx)
 	if err == nil {
 		var set bool
 		if set, err = a.initialized(ctx, cfg); err == nil && !set {
@@ -782,6 +782,9 @@ func (a *app) down(w, warn io.Writer, ctx context.Context, cfg *config.Config, y
 	rep := &downReport{Home: cfg.Home, Agents: []yardAgent{}}
 	yardr := yardrAt(cfg.Home)
 	serverWas := serverRunning(ctx, cfg)
+	if first == nil && a.st == nil && !serverWas && cfg.Stopped() {
+		return a.downStopped(ctx, cfg, login)
+	}
 	// The agents are in the store, so a server that was stopped is started
 	// to ask it: agents can outlive it, and one that runs starts it again.
 	st, err := a.store(ctx)
@@ -920,23 +923,7 @@ func (a *app) down(w, warn io.Writer, ctx context.Context, cfg *config.Config, y
 	if err != nil {
 		return nil, err
 	}
-	var stopped []yardPart
-	for _, k := range longRunnings[1:] {
-		p := yardPart{Part: k.Name}
-		run, err := k.stop(cfg, stopWait)
-		switch {
-		case err != nil:
-			p.Running, p.Error, p.Do = true, err.Error(), fmt.Sprintf("%s %s stop", yardr, k.Name)
-		case len(run) > 0:
-			p.Stopped, p.PID = true, run[0].PID
-			if partAddr(cfg, settings, k) == "" {
-				// up starts a part by the setting or the service file
-				// that names its address.
-				p.Detail = fmt.Sprintf("yardr up does not start it again: %s %s start", yardr, k.Name)
-			}
-		}
-		stopped = append(stopped, p)
-	}
+	stopped := stopOthers(cfg, settings, yardr)
 
 	// The services go once nothing of theirs runs, and before the server
 	// does: the herdr session whose server one of them starts is the yard's
