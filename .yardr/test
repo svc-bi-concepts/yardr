@@ -1776,6 +1776,16 @@ legflag() {
   echo "test: go test -p=$legn ($legload)"
   legpar=-p=$legn
 }
+# r1budget prints the R1 budget in seconds (docs/testing.md R1): 60 on the mini,
+# and the one number a host with slower cores may set through its workflow, the
+# mirror's runner (mirror.yml, YARDR_R1_BUDGET). The budget is a number of
+# seconds and not a speed factor: the testload factor already scales the waits,
+# and a second multiplier in the same place would be read as that one. It is
+# defined ahead of the race leg's re-entry branch (YARDR_TEST_RACE_LEG), which
+# runs before the script's later functions are defined, so the worker has it.
+r1budget() {
+  printf '%s\n' "${YARDR_R1_BUDGET:-60}"
+}
 # packagebudget judges the 60 s budget (docs/testing.md R1) on a go test
 # -race leg's output ($1): only the ok lines carry judged durations, a
 # package whose tests failed being already red without it. Cached packages
@@ -2641,14 +2651,6 @@ diskfloor() {
   exit 2
 }
 diskfloor
-# r1budget prints the R1 budget in seconds (docs/testing.md R1): 60 on the mini,
-# and the one number a host with slower cores may set through its workflow, the
-# mirror's runner (mirror.yml, YARDR_R1_BUDGET). The budget is a number of
-# seconds and not a speed factor: the testload factor already scales the waits,
-# and a second multiplier in the same place would be read as that one.
-r1budget() {
-  printf '%s\n' "${YARDR_R1_BUDGET:-60}"
-}
 # r1budgetcheck refuses a YARDR_R1_BUDGET the gate cannot judge by, before it
 # selects anything: a whole number of seconds, never under the 60 s the mini's R1
 # verdict is measured against, and not with the quiet run's marks. The quiet run
