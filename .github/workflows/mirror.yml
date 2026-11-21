@@ -97,6 +97,21 @@ jobs:
           echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $dir/shellcheck.tar.xz" | sha256sum -c -
           tar -xJf "$dir/shellcheck.tar.xz" -C "$dir"
           echo "$dir/shellcheck-v0.11.0" >> "$GITHUB_PATH"
+      # contrib/internal's TestInstallInternal* tests sign with the real
+      # minisign and fail without one on PATH; the gate does not skip them,
+      # since a skip would hide a missing signer from the landing gate. The
+      # runners have no apt or sudo, so minisign 0.12 is fetched at the same
+      # upstream tarball and sha256 internal.yml pins, as shellcheck is above.
+      - name: minisign (pinned 0.12)
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/minisign"
+          mkdir -p "$dir"
+          curl -sSfL -o "$dir/minisign.tar.gz" \
+            "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz"
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $dir/minisign.tar.gz" | sha256sum -c -
+          tar -xzf "$dir/minisign.tar.gz" -C "$dir" minisign-linux/x86_64/minisign
+          echo "$dir/minisign-linux/x86_64" >> "$GITHUB_PATH"
       # There is no base on the mirror: the checkout has no origin/main to
       # compare with, or on main it has one equal to HEAD, which would select
       # nothing. YARDR_BASE names a ref that is never there, so the gate's
