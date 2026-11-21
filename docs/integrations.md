@@ -2711,9 +2711,9 @@ makes the check call with the credential, and fails unless the service
 answers 2xx; where the check call names `answer.select` it prints each
 selected field the answer carries (a dotted path's top-level key once),
 one per line under the status line, and with `--json` carries the same
-object under `answer`; it says of every command the file names beside the check call —
-thread's, hook's, events', and each call's build and run — whether its
-program is there and can be run, and fails when one cannot, running
+object under `answer`; it says of every command the file names beside the
+check call — thread's, hook's, events', and each call's build and run —
+whether its program is there and can be run, and fails when one cannot, running
 none. A check call that names `run` is run, as it is the check: its
 command is run from the copy under `~/.yardr/sources/<name>/`, with the
 credential in its environment as any `run` call is, and the line says
