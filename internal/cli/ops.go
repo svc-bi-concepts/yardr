@@ -173,7 +173,7 @@ func (a *app) daemonCmd() *cobra.Command {
 						return nil
 					}
 					// A stopped home's server is not started here either: the
-					// daemon of a stopped yard starts nothing (see storeStarting).
+					// daemon of a stopped yard starts nothing (see errStopped).
 					if cfg.Stopped() {
 						return errStopped{cfg: cfg}
 					}
