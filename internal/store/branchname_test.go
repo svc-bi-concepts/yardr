@@ -77,4 +77,41 @@ func TestPublicDepotBeadRecordsItsBranch(t *testing.T) {
 	}
 }
 
+// A name the depot's own git already has is not offered to a new bead: a
+// branch of that name, local or only on origin, gets the next number, since a
+// worktree on it would attach to the old branch or collide with it.
+func TestPublicBranchSkipsNamesTheDepotGitHas(t *testing.T) {
+	t.Parallel()
+	const title = "Login fails on Safari!"
+	const slug = "fix/login-fails-on-safari"
+
+	// Each case has a yard of its own: a bead's recorded branch counts too,
+	// so one yard's first bead would make the second case's -3.
+	for _, tc := range []struct {
+		name string
+		refs func(t *testing.T, repo string)
+	}{
+		{"local", func(t *testing.T, repo string) { runGit(t, repo, "branch", slug) }},
+		{"origin", func(t *testing.T, repo string) { runGit(t, repo, "update-ref", "refs/remotes/origin/"+slug, "main") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api, _ := operatorYard(t)
+			ctx := context.Background()
+			repo := gitRepo(t, map[string]string{"README": tc.name + "\n"})
+			tc.refs(t, repo)
+			if err := api.PutDepot(ctx, store.Depot{Name: "web", Path: repo, Base: "main", Visibility: store.DepotPublic}, "jo"); err != nil {
+				t.Fatal(err)
+			}
+			b, err := api.CreateBead(ctx, store.NewBead{Title: title, Type: "bug", Depot: "web"}, "jo")
+			if err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			if want := slug + "-2"; b.Branch != want {
+				t.Errorf("a bug in a depot with %s %s = %q, want %q", slug, tc.name, b.Branch, want)
+			}
+		})
+	}
+}
+
 func strPtr(s string) *string { return &s }

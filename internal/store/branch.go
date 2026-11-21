@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	bolt "go.etcd.io/bbolt"
@@ -147,5 +148,34 @@ func (w *wtx) publicBranchFor(depot, typ, title string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return publicBranch(typ, title, func(name string) bool { return taken[name] }), nil
+	// A name the depot's git already has is taken too: a worktree created on
+	// it would attach to that branch, or collide with it, and the lander and
+	// the peer push would act on the old one.
+	inGit := depotBranchNames(d.Path)
+	return publicBranch(typ, title, func(name string) bool { return taken[name] || inGit[name] }), nil
+}
+
+// depotBranchNames is the branch names the depot's git has, local and on
+// origin, origin's without its remote, so a name here is one a worktree would
+// find already. A depot that is not a repository has none: worktree creation
+// fails on its own, and a bead is still made in it. A git that cannot be asked
+// is read the same way, for the same reason.
+func depotBranchNames(path string) map[string]bool {
+	names := map[string]bool{}
+	if path == "" {
+		return names
+	}
+	out, err := exec.Command("git", "-C", path, "for-each-ref", "--format=%(refname)",
+		"refs/heads", "refs/remotes/origin").Output()
+	if err != nil {
+		return names
+	}
+	for _, ref := range strings.Fields(string(out)) {
+		if name, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+			names[name] = true
+		} else if name, ok := strings.CutPrefix(ref, "refs/remotes/origin/"); ok {
+			names[name] = true
+		}
+	}
+	return names
 }
