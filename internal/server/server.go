@@ -133,7 +133,8 @@ func (r *runner) serve(ctx context.Context) (string, bool, error) {
 	// A STOPPED home is one nothing may start or write (see config.Stopped):
 	// the store is not opened for a server that would stop on its next tick.
 	if c.Stopped() {
-		return "", false, fmt.Errorf("the yard at %s is stopped (%s exists): no server runs for it; remove that file by hand to start the yard again", c.Home, c.StoppedFile())
+		log.Info("the yard's home has a STOPPED file; not starting the yardr server", "home", c.Home, "file", c.StoppedFile())
+		return "", false, nil
 	}
 	st, err := store.Open(c.DBPath())
 	if errors.Is(err, store.ErrLocked) {

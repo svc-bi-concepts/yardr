@@ -14,7 +14,7 @@ import (
 // A STOPPED file put in the home of a running server ends it on the next
 // tick, the normal way: the socket and the pidfiles go, and yard.db is
 // closed and not written after that. The server is the writer that a yard
-// stopped by hand has to lose (yard-999p).
+// stopped by hand has to lose.
 func TestServerStopsWhenItsYardIsStopped(t *testing.T) {
 	c := home(t)
 	logged := &lockedBuffer{}
@@ -64,16 +64,21 @@ func TestServerStopsWhenItsYardIsStopped(t *testing.T) {
 }
 
 // A server does not open a stopped home's store at all: a server that would
-// stop on its first tick must not write yard.db on the way.
-func TestServerRefusesAStoppedHome(t *testing.T) {
+// stop on its first tick must not write yard.db on the way. It exits cleanly,
+// as the daemon does, so a supervisor that restarts failures does not loop.
+func TestServerExitsCleanlyOnAStoppedHome(t *testing.T) {
 	c := home(t)
 	if err := os.WriteFile(c.StoppedFile(), []byte("who and when\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := &runner{c: c, rev: "r", log: quiet}
+	logged := &lockedBuffer{}
+	r := &runner{c: c, rev: "r", log: slog.New(slog.NewTextHandler(logged, nil))}
 	_, replacing, err := r.serve(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "is stopped") || !strings.Contains(err.Error(), c.StoppedFile()) {
-		t.Fatalf("serve on a stopped home: %v, want a refusal naming the STOPPED file", err)
+	if err != nil {
+		t.Fatalf("serve on a stopped home: %v, want a clean exit", err)
+	}
+	if !strings.Contains(logged.String(), c.StoppedFile()) {
+		t.Fatalf("the log does not name the STOPPED file:\n%s", logged.String())
 	}
 	if replacing {
 		t.Fatal("a refused serve asked to replace")
