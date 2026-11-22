@@ -556,3 +556,9 @@ func Witness(e Event) string {
 // HomeDir is the yard's home, for a test that names a file the yard owns
 // (HookSecretFile).
 func (s *Store) HomeDir() string { return s.home }
+
+// BaseOf is the git part of a bead sent from depot whose branch starts from
+// base (baseOf), so a test can see what a sent record carries.
+func BaseOf(ctx context.Context, depot Depot, base string) *PeerGit {
+	return baseOf(ctx, depot, base)
+}
