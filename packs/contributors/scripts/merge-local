@@ -53,8 +53,8 @@
 # signal ends it again. A depot with no test command lands untested, and the
 # note says so. It never forces and never pushes anything but a fast-forward.
 # Before the rebase, the branch must contain the commit the reviewer approved
-# (the newest "Reviewed <sha>" or "approved <sha>" note of the bead, as
-# infra-land.sh reads it): a branch on another line of commits is refused back
+# (the sha the newest review note of the bead approves, read as infra-land.sh
+# reads it; approved_from_json): a branch on another line of commits is refused back
 # to its builders, with both shas and the commits it has past the approved
 # one. A bead with no approval lands as before, and the log says so.
 #
@@ -278,26 +278,53 @@ fi
 [ "$(git -C "$WT" symbolic-ref -q HEAD)" = "refs/heads/$BR" ] || hold "$WT is not on $BR"
 [ -z "$(git -C "$WT" status --porcelain)" ] || hold "worktree $WT has uncommitted changes"
 
-# The commit the reviewer approved, from the bead's notes: the newest note whose
-# text says "Reviewed <sha>" or "approved <sha>", the rule infra-land.sh reads
-# (yard-hxkm), so that both landers agree. The notes come from bead show as
-# JSON, one "text" line per note, oldest first, with the newlines of a note
-# escaped as \n: each note is read from its own line, the escapes become
-# spaces, and the sha must be a whole word of 7 to 40 hex digits. Prints it,
-# or nothing for a bead with no such note.
+# The commit the reviewer approved, from the bead's notes, read as infra-land.sh
+# reads them, so that both landers agree. Only a review session's note counts:
+# its author is <name>-review or <name>-review@<peer>, so a yardmaster's note
+# does not. In a note, the first "Reviewed" or "Approved" (any case, optionally
+# followed by "head") and a sha of 7 to 40 lowercase hex digits with a digit in
+# it counts, unless the word is preceded by "not". Across notes the newest note
+# with such a sha wins. The notes come from bead show as JSON, each with its
+# "author" line above its "text" line, and the newlines of a note escaped as
+# \n, which become spaces. Prints the sha, or nothing for a bead with no such
+# note.
 approved_from_json() {
-  sed -n 's/^ *"text": *"\(.*\)",\{0,1\}$/\1/p' | sed 's/\\n/ /g' |
-    awk '{
-      s = " " $0; found = ""
-      while (match(s, /[ \t]([Rr]eviewed|approved)[ :]+[0-9a-f]+/)) {
-        m = substr(s, RSTART, RLENGTH)
-        s = substr(s, RSTART + RLENGTH)
-        sub(/^.*[ :]/, "", m)
-        if (length(m) >= 7 && length(m) <= 40 && substr(s, 1, 1) !~ /[0-9A-Za-z]/) { found = m; break }
+  awk '
+    # sha_in returns the first sha that the text of a note approves. The text
+    # gets a leading space, so a keyword at its start has the whitespace before
+    # it that the rule asks for; the keyword is matched in lower case, but the
+    # sha is read as written, so an upper-case hex run is not one.
+    function sha_in(t,   s, l, pos, i, kw_end, r, sha) {
+      s = " " t; l = tolower(s); pos = 1
+      while (match(substr(l, pos), /[ \t](reviewed|approved)/)) {
+        i = pos + RSTART - 1
+        kw_end = i + RLENGTH - 1
+        pos = i + 1
+        if (substr(l, 1, i) ~ /(^|[^a-z0-9_])not[ \t]$/) continue
+        r = substr(s, kw_end + 1)
+        if (r ~ /^[ \t]+head[ :]+/) sub(/^[ \t]+head[ :]+/, "", r)
+        else if (r ~ /^[ :]+/) sub(/^[ :]+/, "", r)
+        else continue
+        if (!match(r, /^[0-9a-f]+/)) continue
+        sha = substr(r, 1, RLENGTH)
+        if (length(sha) < 7 || length(sha) > 40 || sha !~ /[0-9]/) continue
+        if (substr(r, RLENGTH + 1, 1) ~ /[0-9A-Za-z]/) continue
+        return sha
       }
-      if (found != "") last = found
+      return ""
     }
-    END { print last }'
+    /^ *"author": *"/ { a = $0; sub(/^ *"author": *"/, "", a); sub(/",?$/, "", a); author = a; next }
+    /^ *\{$/ { author = ""; next }
+    /^ *"text": *"/ {
+      t = $0; sub(/^ *"text": *"/, "", t); sub(/",?$/, "", t); gsub(/\\n/, " ", t)
+      if (author ~ /^[A-Za-z0-9_.-]+-review(@[A-Za-z0-9_.-]+)?$/) {
+        sha = sha_in(t)
+        if (sha != "") found = sha
+      }
+      next
+    }
+    END { print found }
+  '
 }
 # Before the rebase, which gives every commit of the branch a new sha: the
 # reviewer approved one commit, and the branch must contain it. A branch on
