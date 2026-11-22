@@ -286,7 +286,8 @@ fi
 # it counts, unless the word is preceded by "not". Across notes the newest note
 # with such a sha wins. The notes come from bead show as JSON, each with its
 # "author" line above its "text" line, and the newlines of a note escaped as
-# \n, which become spaces. Prints the sha, or nothing for a bead with no such
+# \n, which become tabs: whitespace before a keyword, but not the space or colon
+# that must stand between a keyword and its sha, as infra-land.sh's. Prints the sha, or nothing for a bead with no such
 # note.
 approved_from_json() {
   awk '
@@ -316,7 +317,7 @@ approved_from_json() {
     /^ *"author": *"/ { a = $0; sub(/^ *"author": *"/, "", a); sub(/",?$/, "", a); author = a; next }
     /^ *\{$/ { author = ""; next }
     /^ *"text": *"/ {
-      t = $0; sub(/^ *"text": *"/, "", t); sub(/",?$/, "", t); gsub(/\\n/, " ", t)
+      t = $0; sub(/^ *"text": *"/, "", t); sub(/",?$/, "", t); gsub(/\\n/, "\t", t)
       if (author ~ /^[A-Za-z0-9_.-]+-review(@[A-Za-z0-9_.-]+)?$/) {
         sha = sha_in(t)
         if (sha != "") found = sha
