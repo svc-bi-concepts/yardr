@@ -30,8 +30,10 @@ worked); user docs live in `docs/` and are not repeated here.
 - `harnesses/`: one `<kind>.yaml` per agent harness kind, embedded and read
   by `internal/agents`.
 - `contrib/`: operator and developer tools, each with its own README
-  (assembly, bench, burn, deploy, github-mint, isolated-yard,
-  peer, release, server-yard, shot). google-mint is no longer here: each
+  (assembly, bench, burn, deploy, github-mint, internal, isolated-yard,
+  peer, release, server-yard, shot). `internal` installs an internal build
+  (CI's prerelease) against the committed BI Concepts key, beside `install.sh`,
+  which it does not change. google-mint is no longer here: each
   google pack under `packs/` carries it as its declarations' mint command.
   `contrib/server-yard/managers` installs the stand-in service managers
   that the server-yard suite and the yard-shape matrix
@@ -203,7 +205,7 @@ it lists every exported name with its comment, faster than grepping.
   (`YARDR_TEST_START_WAIT`).
 - A wait in a contrib suite (a fuse against a hang, the deadline of a poll)
   is written for an idle box and goes through `testload.Scale`: the factor
-  is the machine's load over its cores, 1 to 4, the larger of the one the
+  is the machine's load over its cores, 1 to 8, the larger of the one the
   gate gives the race leg (`YARDR_TEST_LOAD`) and the machine's own as the
   wait is armed, so no wait is raised by hand after it flakes in a landing.
   What a test measures, and what it gives the program under test as a

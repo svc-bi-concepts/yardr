@@ -187,7 +187,7 @@ func TestStoreTakesProviderOnHerdr(t *testing.T) {
 	for want, err := range map[string]error{
 		`group o: unknown config key "provider": nothing reads it. A group of the exec runner takes: cleanup, cmd, dir, env_file, grace, idle, keep, log, max_age, nice, stall, still, timeout, worktrees`: put("exec", map[string]any{"cmd": "true", "provider": "zai"}),
 		`group o: unknown config key "provider": nothing reads it. A group of the manual runner takes: cleanup, fold, fold_after, fold_max, grace, idle, keep, max_age, notify, stall, still, wait`:        put("manual", map[string]any{"provider": "zai"}),
-		`group o: unknown config key "provider": nothing reads it. A group of the peer runner takes: cleanup, grace, idle, keep, max_age, peer, remote, stall, still, tries`:                               put("peer", map[string]any{"peer": "north", "provider": "zai"}),
+		`group o: unknown config key "provider": nothing reads it. A group of the peer runner takes: after, cleanup, grace, idle, keep, max_age, peer, remote, stall, still, tries`:                        put("peer", map[string]any{"peer": "north", "provider": "zai"}),
 		`group o: herdr runner needs config.provider as a string, got the JSON boolean true; write --set 'provider="true"'`:                                                                                put("herdr", map[string]any{"provider": true}),
 	} {
 		if err == nil || !strings.Contains(err.Error(), want) {
@@ -288,7 +288,7 @@ func TestStoreChecksSettings(t *testing.T) {
 	// Sequential: process environment.
 	s, ctx := storetest.New(t), context.Background()
 	for want, kv := range map[string][2]string{
-		`no setting "hook_adr"; there is: backup_dir, backup_every, backup_keep, bdp_addr, blob_max_bytes, codesign_identity, default_kind, default_pack, disk_keep_gb, edge, files_max, hearer, herdr_session, hook_addr, hook_public_url, hosted, max_sessions, name, operator, operator_note, operator_style, peer_file_max_bytes, permissions_preset, preview_idle, provider_terms, quiet_landings, router_addr, telemetry, timer_limit, timer_min_every, upgrade_from, upgrade_restore, web_addr, web_as, web_jwt_audience, web_jwt_header, web_jwt_issuer, web_jwt_jwks, web_jwt_privileged_session_max_age, web_jwt_users, web_pages_addr, web_pages_host, yardmaster`: {"hook_adr", "4"},
+		`no setting "hook_adr"; there is: backup_dir, backup_every, backup_keep, bdp_addr, blob_max_bytes, codesign_identity, default_kind, default_pack, disk_keep_gb, edge, files_max, hearer, herdr_session, hook_addr, hook_public_url, hosted, max_sessions, name, operator, operator_note, operator_style, peer_file_max_bytes, permissions_preset, preview_idle, provider_terms, quiet_landings, router_addr, telemetry, timer_limit, timer_min_every, upgrade_from, upgrade_restore, web_addr, web_as, web_jwt_audience, web_jwt_header, web_jwt_issuer, web_jwt_jwks, web_jwt_privileged_session_max_age, web_jwt_users, web_pages_addr, web_pages_host, worktree_root, yardmaster`: {"hook_adr", "4"},
 		`default_kind "nope": herdr starts`:                                                                                 {"default_kind", "nope"},
 		`operator_style "loud": there is guide, show, work, report`:                                                         {"operator_style", "loud"},
 		`hook address "8790": want host:port`:                                                                               {"hook_addr", "8790"},

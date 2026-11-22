@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -184,9 +185,7 @@ func execPathOverlay(t *testing.T) (dir, log string) {
 	os.Remove(filepath.Join(dir, "git"))
 	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %s\nexec %s \"$@\"\n",
 		shellQuote(log), shellQuote(realGit))
-	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(dir, "git"), script)
 	return dir, log
 }
 
@@ -489,7 +488,19 @@ func BenchmarkPassthroughFiring(b *testing.B) {
 // writeRepoHook writes one executable hook into dir.
 func writeRepoHook(t *testing.T, dir, name, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+	writeExecutable(t, filepath.Join(dir, name), body)
+}
+
+// writeExecutable writes an executable fixture, holding syscall.ForkLock
+// for reading from the open to the close so concurrent forks cannot inherit
+// its write descriptor. See scripttest's writeLauncher for the Linux exec
+// constraint this protects against.
+func writeExecutable(t *testing.T, path, body string) {
+	t.Helper()
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(path, []byte(body), 0o755)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -804,9 +815,7 @@ func TestSessionCommitRunsRepoHook(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".git", "hooks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".git", "hooks", "commit-msg"), []byte(hook), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(repo, ".git", "hooks", "commit-msg"), hook)
 	job := sessionJob("web-3", "builders", "codex", "luna")
 	env := sessionTestEnv(t, home, job, "web-3-new")
 	sessionGitT(t, repo, env, "commit", "-q", "--allow-empty",
@@ -825,9 +834,7 @@ func TestSessionCommitRunsRepoHook(t *testing.T) {
 	}
 
 	refusing := "#!/bin/sh\necho refused >&2\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(repo, ".git", "hooks", "commit-msg"), []byte(refusing), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(repo, ".git", "hooks", "commit-msg"), refusing)
 	if out, err := sessionGit(t, repo, env, "commit", "--allow-empty", "-m", "web-3: refused"); err == nil {
 		t.Fatalf("a refusing repo hook committed:\n%s", out)
 	}
@@ -846,9 +853,7 @@ func TestSessionCommitChainsConfiguredHooksPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := "#!/bin/sh\necho ran > " + ran + "\n"
-	if err := os.WriteFile(filepath.Join(custom, "commit-msg"), []byte(hook), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(custom, "commit-msg"), hook)
 	gitT(t, repo, "config", "core.hooksPath", "myhooks")
 	job := sessionJob("web-3", "builders", "claude", "opus")
 	env := sessionTestEnv(t, home, job, "web-3-new")
@@ -895,9 +900,7 @@ func TestCommitOutsideSessionLeavesMessage(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".git", "hooks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".git", "hooks", "commit-msg"), []byte(hook), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(repo, ".git", "hooks", "commit-msg"), hook)
 	env := testHookEnv(t, home)
 	msg := "a change\n\nCo-Authored-By: Someone <s@example.com>\n"
 	sessionGitT(t, repo, env, "commit", "-q", "--allow-empty", "-m", msg)
@@ -925,7 +928,7 @@ func TestExecSessionCommitNamesExec(t *testing.T) {
 	hookEnv := testHookEnv(t, home)
 	var env []string
 	env = append(env, Env(job, job.Group.Name)...)
-	env = append(env, e.env(job, hookEnv)...)
+	env = append(env, execEnvT(t, e, job, hookEnv)...)
 	for _, want := range []string{"YARDR_KIND=exec", "YARDR_MODEL=omni", "GIT_CONFIG_COUNT=1", "YARDR_GIT_SYSTEM_CLEAN=1"} {
 		found := false
 		for _, kv := range env {
@@ -941,7 +944,7 @@ func TestExecSessionCommitNamesExec(t *testing.T) {
 		t.Fatalf("exec commit:\n%s", body)
 	}
 	job.Bead.Metadata = nil
-	env = append(Env(job, job.Group.Name), e.env(job, hookEnv)...)
+	env = append(Env(job, job.Group.Name), execEnvT(t, e, job, hookEnv)...)
 	sessionGitT(t, repo, env, "commit", "-q", "--allow-empty", "-m", "yd-7: again")
 	if body := sessionLog(t, repo, env); strings.Count(body, "Yardr-Agent: assembly (exec)") != 1 {
 		t.Fatalf("exec commit with no model:\n%s", body)
@@ -957,9 +960,7 @@ func TestEditorCommitCarriesYardrTrailers(t *testing.T) {
 	job := sessionJob("web-3", "builders", "muse", "spark")
 	env := sessionTestEnv(t, home, job, "web-3-new")
 	editor := filepath.Join(t.TempDir(), "editor")
-	if err := os.WriteFile(editor, []byte("#!/bin/sh\nprintf 'web-3: through the editor\\n' > \"$1\"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, editor, "#!/bin/sh\nprintf 'web-3: through the editor\\n' > \"$1\"\n")
 	env = append(env, "GIT_EDITOR="+editor)
 	sessionGitT(t, repo, env, "commit", "-q", "--allow-empty")
 	body := sessionLog(t, repo, env)
@@ -2403,5 +2404,55 @@ func TestCommitHookEnvVouchesSystem(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("hook env has %d of %q, want 1: %v", n, want, env)
+	}
+}
+
+// A public depot's commits name no yard id: neither of the yard's trailers
+// goes on, one an older message carried comes off, and the harness trailers
+// still do. A message with no trailer is left as written. A private depot
+// keeps both of the yard's trailers, as it always has.
+func TestSessionCommitPublicDepotNamesNoYardID(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, visibility string
+		yardIDs          bool
+	}{
+		{"public", store.DepotPublic, false},
+		{"private", store.DepotPrivate, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := sessionRepo(t)
+			job := sessionJob("web-3", "builders", "claude", "opus")
+			job.Depot = &store.Depot{Name: "web", Visibility: tc.visibility}
+			env := sessionTestEnv(t, t.TempDir(), job, "web-3-new")
+
+			sessionGitT(t, repo, env, "commit", "-q", "--allow-empty", "-m",
+				"web-3: name no id\n\nA body naming no trailers.\n\n"+
+					"Co-Authored-By: Claude <c@example.com>\n"+
+					"Yardr-Bead: old-bead\nYardr-Agent: old-agent\n")
+			body := sessionLog(t, repo, env)
+			if strings.Contains(strings.ToLower(body), "co-authored-by") {
+				t.Errorf("harness trailer survived:\n%s", body)
+			}
+			if tc.yardIDs {
+				for _, want := range []string{"Yardr-Bead: web-3", "Yardr-Agent: builders (claude opus)"} {
+					if n := strings.Count(body, want); n != 1 {
+						t.Errorf("%q %d times, want once:\n%s", want, n, body)
+					}
+				}
+				if strings.Contains(body, "old-bead") || strings.Contains(body, "old-agent") {
+					t.Errorf("an older yard trailer survived:\n%s", body)
+				}
+			} else if strings.Contains(body, "Yardr-") {
+				t.Errorf("a public commit names a yard id:\n%s", body)
+			}
+
+			plain := "web-3: plain\n\nA body.\n"
+			sessionGitT(t, repo, env, "commit", "-q", "--allow-empty", "-m", plain)
+			if got := sessionLog(t, repo, env); tc.yardIDs == (strings.TrimSpace(got) == strings.TrimSpace(plain)) {
+				t.Errorf("message without trailers, yard ids %v, got:\n%s", tc.yardIDs, got)
+			}
+		})
 	}
 }

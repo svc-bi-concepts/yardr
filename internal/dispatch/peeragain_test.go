@@ -2,8 +2,10 @@ package dispatch_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"yardr.dev/yardr/internal/store"
 )
@@ -99,10 +101,10 @@ func TestPeerBeadSentAgain(t *testing.T) {
 }
 
 // With commits of this yard's own on the bead's branch since the other yard
-// returned it, the bead is not sent again: that yard does not have them.
-// The stage ends as refused, by the yard, with a note that says so, and
-// nothing is queued. With the branch back where the return left it the bead
-// is sent, from there, though the sending between ended without code.
+// returned it, the branch is pushed to the remote the other yard fetches
+// from, and the bead is sent again from it: that yard starts where this
+// yard's branch stands. While the push fails the bead is not sent, and each
+// failure is an event on the bead; once the push works, the bead goes.
 func TestPeerBeadSentAgainWithTheBranchMovedOn(t *testing.T) {
 	t.Parallel()
 	clock := newClock()
@@ -117,7 +119,7 @@ func TestPeerBeadSentAgainWithTheBranchMovedOn(t *testing.T) {
 	mine := a.bead(t, "Add the export")
 	a.pass(t)
 	first := b.from(t, "a")
-	one := b.builds(t, bRepo, first)
+	b.builds(t, bRepo, first)
 	b.done(t, first.ID)
 	b.pass(t)
 	a.pass(t)
@@ -127,63 +129,39 @@ func TestPeerBeadSentAgainWithTheBranchMovedOn(t *testing.T) {
 	own := commitIn(t, aRepo, "review.txt", "a's own\n")
 	gitIn(t, aRepo, "checkout", "-q", "main")
 
+	// The remote is not there while the first push is made: it fails.
+	origin := gitIn(t, aRepo, "remote", "get-url", "origin")
+	gitIn(t, aRepo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
 	a.again(t, mine.ID)
 	queued := len(a.events(t, "peer_message_queued"))
-	for i := 0; i < 2; i++ {
+	a.pass(t)
+	if failed := a.beadEvents(t, mine.ID, "peer_bead_push_failed"); len(failed) == 0 || failed[0].Actor != "yard" || failed[0].Data["branch"] != branch {
+		t.Fatalf("a's push failure = %+v", failed)
+	}
+	if len(a.events(t, "peer_message_queued")) != queued || len(a.beadEvents(t, mine.ID, "peer_bead_sent")) != 1 {
+		t.Fatal("a sent a bead whose branch did not push")
+	}
+
+	gitIn(t, aRepo, "remote", "set-url", "origin", origin)
+	// A start's failure is read on one pass and its retry claimed on a later
+	// one, once the daemon's backoff has passed on the test's clock.
+	for i := 0; i < 10 && len(a.beadEvents(t, mine.ID, "peer_bead_sent")) < 2; i++ {
+		clock.now = clock.now.Add(time.Minute)
 		a.pass(t)
-		b.pass(t)
 	}
-	got := a.get(t, mine.ID)
-	if got.Stage != "decide" || got.Hold || len(a.live(t)) != 0 {
-		t.Fatalf("a's bead with its branch moved on = %+v", got)
+	b.pass(t)
+	sent := a.beadEvents(t, mine.ID, "peer_bead_sent")
+	if len(sent) != 2 || sent[1].Data["base_commit"] != own || sent[1].Data["base"] != branch {
+		t.Fatalf("a's second peer_bead_sent = %+v, want it to start at %s", sent, own)
 	}
-	if len(a.beadEvents(t, mine.ID, "peer_bead_sent")) != 1 || len(a.events(t, "peer_message_queued")) != queued {
-		t.Fatalf("a queued a message for a bead it could not send: %+v", a.events(t, "peer_message_queued"))
+	if at := gitIn(t, remote, "rev-parse", "--verify", "refs/heads/"+branch); at != own {
+		t.Fatalf("the remote has %s at %s, want %s", branch, at, own)
 	}
-	if bs, err := b.api.ListBeads(context.Background(), store.BeadFilter{All: true}); err != nil || len(bs) != 1 {
-		t.Fatalf("b has %d beads, want the first alone (%v)", len(bs), err)
-	}
-	ref := a.beadEvents(t, mine.ID, "peer_bead_refused")
-	if len(ref) != 1 || ref[0].Actor != "yard" || !strings.Contains(ref[0].Data["reason"].(string), "its branch "+branch+" is at "+own[:12]+" here") ||
-		!strings.Contains(ref[0].Data["reason"].(string), one[:12]) || ref[0].Data["sent"] != false {
-		t.Fatalf("a's peer_bead_refused = %+v", ref)
-	}
-	adv := a.beadEvents(t, mine.ID, "advanced")
-	if last := adv[len(adv)-1]; last.Actor != "yard" || last.Data["outcome"] != "refused" {
-		t.Fatalf("a's last advanced = %+v", last)
-	}
-	ns := a.notes(t, mine.ID)
-	if last := ns[len(ns)-1]; last.Author != "yard" || !strings.HasPrefix(last.Text, "This yard did not send this bead to b: its branch "+branch) || !strings.Contains(last.Text, "does not have them") {
-		t.Fatalf("a's note of it = %+v", last)
-	}
-	// The words say it was not sent, not that it was at b and refused
-	// there, and its row is still of the stay it had, with b's handle.
-	away := got.Away()
-	if line := away.Line(); !away.Unsent || !strings.HasPrefix(line, "not sent to b "+away.At.Local().Format("01-02 15:04")+": its branch "+branch) ||
-		strings.Contains(line, "was at") || strings.Contains(line, "refused") {
-		t.Fatalf("a's line of a bead not sent = %q", line)
-	}
-	rows := got.PeerLinks()
-	if len(rows) != 1 || rows[0].Kind != store.LinkWasAt || rows[0].URL != first.ID+"@b" || rows[0].Until == nil || rows[0].Until.After(away.At) {
-		t.Fatalf("a's rows of a bead not sent = %+v", rows)
-	}
-	if ls, err := a.api.IssueLinks(context.Background(), first.ID+"@b"); err != nil || len(ls) != 1 || ls[0].Bead != mine.ID {
-		t.Fatalf("a's bead by b's handle = %+v, %v", ls, err)
+	if second := b.from(t, "a"); second.Peer.Git == nil || second.Peer.Git.BaseCommit != own || second.Peer.Git.Base != branch {
+		t.Fatalf("b's second bead starts from %+v, want %s", second.Peer.Git, own)
 	}
 	if at := branchAt(t, aRepo, branch); at != own {
 		t.Fatalf("a's branch was moved to %s", at)
-	}
-
-	// Back where the return left it: sent, and from there.
-	gitIn(t, aRepo, "branch", "-f", branch, one)
-	a.again(t, mine.ID)
-	a.pass(t)
-	sent := a.beadEvents(t, mine.ID, "peer_bead_sent")
-	if len(sent) != 2 || sent[1].Data["base_commit"] != one {
-		t.Fatalf("a's peer_bead_sent with the branch back = %+v", sent)
-	}
-	if second := b.from(t, "a"); second.Peer.Git == nil || second.Peer.Git.BaseCommit != one {
-		t.Fatalf("b's second bead starts from %+v", second.Peer.Git)
 	}
 }
 

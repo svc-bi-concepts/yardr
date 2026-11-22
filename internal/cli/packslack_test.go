@@ -43,7 +43,7 @@ func TestPackApplySlackCarriesDeclarationAndScripts(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"\nsource slack is declared: 2 calls under https://slack.com/api (yardr source show slack)\n",
+		"\nsource slack is declared: 5 calls under https://slack.com/api (yardr source show slack)\n",
 		"source slack: SLACK_BOT_TOKEN is set in " + srcEnv + "\n",
 		"setup notes of pack slack, from SETUP.md (from the pack, not checked by yardr):",
 	} {
@@ -55,7 +55,7 @@ func TestPackApplySlackCarriesDeclarationAndScripts(t *testing.T) {
 		t.Fatalf("pack apply prints the credential:\n%s", out)
 	}
 	sources := filepath.Join(a.cfg.Home, "sources", "slack")
-	if want := "  its commands' files are under " + sources + ", each mode 0700: slack/thread, slack/normalize\n"; !strings.Contains(out, want) {
+	if want := "  its commands' files are under " + sources + ", each mode 0700: slack/thread, slack/normalize, slack/lookup\n"; !strings.Contains(out, want) {
 		t.Errorf("pack apply lacks %q:\n%s", want, out)
 	}
 	src, err := a.st.GetSource(ctx, "slack")
@@ -137,7 +137,7 @@ func TestSourceCheckSlackPrintsSelectedFields(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"user_id":"U999BOT99","team_id":"T012AB3CD","bot_id":"B012AB3CD","user":"yardr","team":"hooli"}`))
+		_, _ = w.Write([]byte(`{"ok":true,"user_id":"U999BOT99","team_id":"T012AB3CD","bot_id":"B012AB3CD","user":"fixturebot","team":"hooli"}`))
 	}))
 	defer srv.Close()
 	a := openApp(t)
@@ -188,7 +188,7 @@ func TestSourceCheckSlackPrintsSelectedFields(t *testing.T) {
 			t.Errorf("source check lacks %q:\n%s", want, out)
 		}
 	}
-	for _, not := range []string{token, "hooli", "yardr", "slack: ok: "} {
+	for _, not := range []string{token, "hooli", "fixturebot", "slack: ok: "} {
 		if strings.Contains(out, not) {
 			t.Errorf("source check shows %q:\n%s", not, out)
 		}

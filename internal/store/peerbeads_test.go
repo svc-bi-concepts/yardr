@@ -1293,3 +1293,31 @@ func TestPeerRefusalOfBeads(t *testing.T) {
 		t.Errorf("PeerRefusal(mail, too_large) = %q", got)
 	}
 }
+
+// A bead that arrives in a public depot records a slug branch with no bead
+// id, as one made there does, and its record finds it; the same bead in a
+// private depot records none and keeps the yard's name.
+func TestPeerBeadArrivesWithPublicBranch(t *testing.T) {
+	t.Parallel()
+	y := newBeadYard(t)
+	if err := y.api.PutDepot(y.ctx, store.Depot{Name: "web", Base: "origin/main", Visibility: store.DepotPublic}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	if got := y.take(t, beadMsg("p1", "web-k3f9", func(b map[string]any) { b["type"] = "bug"; b["title"] = "Export drops rows!" })); got[0].Refused != "" {
+		t.Fatalf("arrival = %+v", got)
+	}
+	b := y.arrived(t)
+	const want = "fix/export-drops-rows"
+	if b.Branch != want || store.BranchOfBead(*b) != want || strings.Contains(b.Branch, b.ID) {
+		t.Fatalf("arrived bead's branch = %q (BranchOfBead %q); want %q with no bead id", b.Branch, store.BranchOfBead(*b), want)
+	}
+	if got, err := y.own.BeadOfBranch(y.ctx, want); err != nil || got != b.ID {
+		t.Fatalf("BeadOfBranch(%s) = %q, %v; want %s", want, got, err, b.ID)
+	}
+
+	p := newBeadYard(t)
+	p.take(t, beadMsg("p1", "web-k3f9", nil))
+	if pb := p.arrived(t); pb.Branch != "" || store.BranchOfBead(*pb) != "yard/"+pb.ID {
+		t.Fatalf("private arrival records %q (BranchOfBead %q); want none and yard/%s", pb.Branch, store.BranchOfBead(*pb), pb.ID)
+	}
+}

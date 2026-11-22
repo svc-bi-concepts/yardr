@@ -687,6 +687,9 @@ Each part lists its unread, oldest first, then the latest read, the newest
 of them first, marked `(read)`; `-n` bounds how many in each. `--mail` and
 `--notifications` show one part.
 
+For the operator, the mail is followed by the
+[held identity cards](integrations.md#what-the-service-sends-in).
+
 **Only the user reads their inbox**, and only they acknowledge it: anyone
 else's read or ack is refused, naming the user. An operator reads and
 acknowledges any user's. So `yardr user list` shows another user's unread

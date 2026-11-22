@@ -1074,87 +1074,44 @@ func TestMailWithABadNameArrivesNameless(t *testing.T) {
 	}
 }
 
-// A file of the largest size the setting can allow (32 MiB) crosses
-// sealed, byte-identical, both posted and pulled; a file one byte past
-// the plaintext cap is refused too_large inside a lawful envelope, and a
-// wire body past the sealed bound is refused 413 before it is opened.
-// The four legs run beside one another, each on its own yards: in
-// sequence their unseals alone hold the package's race budget.
-func TestMaxFileCrossesSealed(t *testing.T) {
-	ctx := context.Background()
-	// A repeated block, copied as bytes are: a Go loop over 32 MiB costs
-	// seconds under -race for no more byte-identical proof.
+// maxFile is the largest file the setting can allow, and its hash. A
+// repeated block, copied as bytes are: a Go loop over 32 MiB costs seconds
+// under -race for no more byte-identical proof.
+func maxFile() ([]byte, string) {
 	block := make([]byte, 4096)
 	for i := range block {
 		block[i] = byte(i*31 + 7)
 	}
 	data := bytes.Repeat(block, store.MaxPeerFile/len(block)+1)[:store.MaxPeerFile]
-	hash := hashOf(data)
-	setCaps := func(t *testing.T, y *yard) {
-		t.Helper()
-		if err := y.api.SetSetting(ctx, store.BlobMaxSetting, "33554432", "jo"); err != nil {
-			t.Fatal(err)
-		}
-		if err := y.api.SetSetting(ctx, store.PeerFileMaxSetting, "33554432", "jo"); err != nil {
-			t.Fatal(err)
-		}
+	return data, hashOf(data)
+}
+
+// setMaxCaps lifts the blob and peer-file settings to 32 MiB on a yard, so a
+// file of the largest size is one the yard allows.
+func setMaxCaps(t *testing.T, y *yard) {
+	t.Helper()
+	ctx := context.Background()
+	if err := y.api.SetSetting(ctx, store.BlobMaxSetting, "33554432", "jo"); err != nil {
+		t.Fatal(err)
 	}
+	if err := y.api.SetSetting(ctx, store.PeerFileMaxSetting, "33554432", "jo"); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	t.Run("posted", func(t *testing.T) {
-		t.Parallel()
-		south, north, toNorth := fileYards(t, true, mailAndFile, mailAndFile)
-		setCaps(t, south)
-		setCaps(t, north)
-		ref, err := south.api.PutBlob(ctx, data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := south.api.MailPeer(ctx, "yardmaster", "north", "the big shed", "jo", store.BlobFile{Hash: ref.Hash, Name: "big.bin"}); err != nil {
-			t.Fatal(err)
-		}
-		south.post(t, toNorth)
-		got, err := os.ReadFile(north.own.BlobPath(hash))
-		if err != nil || !bytes.Equal(got, data) {
-			t.Fatalf("posted: north's blob = %d bytes, %v; want the 32 MiB file byte-identical", len(got), err)
-		}
-	})
-
-	// Pulled: north cannot be called, so it asks south, and the file
-	// crosses in the sealed page.
-	t.Run("pulled", func(t *testing.T) {
-		t.Parallel()
-		south, north, _ := fileYards(t, false, mailAndFile, mailAndFile)
-		setCaps(t, south)
-		setCaps(t, north)
-		ref, err := south.api.PutBlob(ctx, data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := south.api.MailPeer(ctx, "yardmaster", "north", "pulled", "jo", store.BlobFile{Hash: ref.Hash, Name: "big.bin"}); err != nil {
-			t.Fatal(err)
-		}
-		toSouth, err := north.api.GetPeer(ctx, "south")
-		if err != nil {
-			t.Fatal(err)
-		}
-		batch, err := north.caller().Pull(ctx, *toSouth, 0, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := north.api.PeerPulled(ctx, "south", batch); err != nil {
-			t.Fatal(err)
-		}
-		got, err := os.ReadFile(north.own.BlobPath(hash))
-		if err != nil || !bytes.Equal(got, data) {
-			t.Fatalf("pulled: north's blob = %d bytes, %v; want the 32 MiB file byte-identical", len(got), err)
-		}
-	})
-
+// A file one byte past the plaintext cap is refused too_large inside a
+// lawful envelope, and a wire body past the sealed bound is refused 413
+// before it is opened. The 32 MiB crossings, posted and pulled, are in
+// files_max_test.go, which only a build without -race compiles: under the
+// detector they are the race cost that put this package over its budget
+// (yardr-8ern). The 413 leg sends no file and stays parallel, so it runs
+// last and alone.
+func TestMaxFileCrossesSealed(t *testing.T) {
+	ctx := context.Background()
 	t.Run("past the plaintext cap", func(t *testing.T) {
-		t.Parallel()
 		south, north, toNorth := fileYards(t, true, mailAndFile, mailAndFile)
-		setCaps(t, south)
-		setCaps(t, north)
+		setMaxCaps(t, south)
+		setMaxCaps(t, north)
 		// Written as JSON text with a repeated base64 field, not by
 		// encoding 33 MiB: the body is the same length, and takeFile
 		// refuses it for its decoded size before it checks the hash.
@@ -1170,8 +1127,8 @@ func TestMaxFileCrossesSealed(t *testing.T) {
 	t.Run("past the sealed bound", func(t *testing.T) {
 		t.Parallel()
 		south, north, _ := fileYards(t, true, mailAndFile, mailAndFile)
-		setCaps(t, south)
-		setCaps(t, north)
+		setMaxCaps(t, south)
+		setMaxCaps(t, north)
 		// Sent as raw signed bytes past that bound, not as a sealed
 		// envelope larger still: the size is refused after the header
 		// signature, before any opening.

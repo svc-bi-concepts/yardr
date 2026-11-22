@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	bolt "go.etcd.io/bbolt"
@@ -279,6 +280,10 @@ type StageWork struct {
 	// group has claimed the bead in: which of them takes it is chosen when
 	// it is claimed, by the quota then. They all start agents.
 	Else []string `json:"else,omitempty"`
+	// Peer is the route's peer group, which takes a bead its full groups are
+	// passed over for, once the bead has waited its after setting; nil when
+	// the route has none. It is not in Else.
+	Peer *StagePeer `json:"peer,omitempty"`
 	// Members are who may move a bead out of the stage, of a group people
 	// work; none, and anyone may. Wait is that group's wait setting, "" for
 	// a group that tells nobody of a bead that waits.
@@ -310,8 +315,33 @@ func stageWork(tx *bolt.Tx, sorted []Route, b Bead, stage string) (StageWork, er
 		return groupWork(nil, stage), err
 	}
 	w := groupWork(g, stage)
-	w.Else = r.Further()
+	w.Else = nil
+	for _, name := range r.Further() {
+		var o Group
+		if ok, err := get(tx, bGroups, name, &o); err != nil {
+			return w, err
+		} else if ok && o.Runner == PeerRunner {
+			w.Peer = &StagePeer{Group: name, Yard: o.AtPeer(), After: o.PeerAfter()}
+			continue
+		}
+		w.Else = append(w.Else, name)
+	}
 	return w, nil
+}
+
+// samePeer is whether two stages' peer groups are the same, both none included.
+func samePeer(a, b *StagePeer) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// StagePeer is a route's peer group as a stage's work reads it.
+type StagePeer struct {
+	Group string        `json:"group"`
+	Yard  string        `json:"yard"`
+	After time.Duration `json:"after,omitempty"`
 }
 
 // groupWork is the work of stage as the group g does it; of no group, nobody's.
@@ -333,7 +363,7 @@ func groupWork(g *Group, stage string) StageWork {
 }
 
 func (w StageWork) same(o StageWork) bool {
-	return w.Stage == o.Stage && w.Who == o.Who && w.Group == o.Group && w.Wait == o.Wait && w.Yard == o.Yard && slices.Equal(w.Members, o.Members) && slices.Equal(w.Else, o.Else)
+	return w.Stage == o.Stage && w.Who == o.Who && w.Group == o.Group && w.Wait == o.Wait && w.Yard == o.Yard && slices.Equal(w.Members, o.Members) && slices.Equal(w.Else, o.Else) && samePeer(w.Peer, o.Peer)
 }
 
 // which names who works the stage, as the clause of a sentence about it.
@@ -343,14 +373,25 @@ func (w StageWork) which() string {
 		return "which people work"
 	case WhoAgents:
 		// Which of a route's groups takes a bead is chosen at the claim.
+		text := "which agents of the group " + w.Group + " work"
 		switch len(w.Else) {
 		case 0:
 		case 1:
-			return fmt.Sprintf("which agents of the group %s work, or of the group %s while the quota of %s is nearly used", w.Group, w.Else[0], w.Group)
+			text = fmt.Sprintf("which agents of the group %s work, or of the group %s while the quota of %s is nearly used", w.Group, w.Else[0], w.Group)
 		default:
-			return fmt.Sprintf("which agents of the group %s work, or of the groups %s, each while the quota of those before it is nearly used", w.Group, strings.Join(w.Else, ", then "))
+			text = fmt.Sprintf("which agents of the group %s work, or of the groups %s, each while the quota of those before it is nearly used", w.Group, strings.Join(w.Else, ", then "))
 		}
-		return "which agents of the group " + w.Group + " work"
+		// The peer group is the route's last: it takes what the full groups
+		// before it are passed over for, once the bead has waited its after
+		// setting in the stage.
+		if p := w.Peer; p != nil {
+			when := "at once"
+			if p.After > 0 {
+				when = "once it has waited " + Span(p.After) + " in the stage"
+			}
+			text += fmt.Sprintf(", and the yard %s (group %s) takes a bead the groups before it are full for, %s", p.Yard, p.Group, when)
+		}
+		return text
 	case WhoScript:
 		return "which the script of the group " + w.Group + " works"
 	case WhoPeer:

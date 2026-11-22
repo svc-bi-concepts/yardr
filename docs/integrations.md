@@ -1110,6 +1110,12 @@ git:                                  # what git uses to reach the source's repo
   would send the words and drop the files. Files are part of the
   answer, so the same words with other files are another reply, with a
   key of their own.
+- **`thread.broadcast: true` opts into channel broadcast.** With that
+  declaration, `yardr reply --broadcast` hands `thread.reply` the extra
+  input `broadcast: true`; ordinary replies omit it. The command must
+  refuse conversations that cannot be broadcast before posting. Without
+  the declaration, the CLI refuses the option. For reply restrictions
+  and retries, see [Speaking in sources](crew.md#speaking-in-sources).
 - **`thread.open` takes an `assignee` only where the file says so.**
   `thread.assignee` is `id` or `key`: the part of a person's identity in
   the source (`yardr user identity`) that its threads are assigned by.
@@ -1457,7 +1463,19 @@ gets a card on a question bead titled with the question, one per
 source and sender, showing who the sender is, the channel the
 message arrived in, and how many messages wait. The person on the
 card can read each full body there; it stays out of notes, events,
-`bead show` and every agent-readable view until the answer. At most
+`bead show` and every agent-readable view until the answer. Where a held
+delivery matches a crew member's subscriptions to the source, including
+mention-scoped subscriptions (routed as a kept delivery would be), the
+member's inbox gets one `identity_held` line: the card, the source, the
+sender, the channel and how many wait, with `yardr bead show <card>` to
+answer it. The line carries no message text. A card is told once, and again
+only when it has grown since and an hour has passed since its last notice;
+a card that empties is told afresh when the next stranger writes. Users are
+not sent it. The operator's `yardr inbox` lists each open card addressed to
+them that holds a delivery, including cards put aside, one line each after
+the mail. `--mail` includes the list; `--notifications` alone does not.
+The list stays until the card is settled or empties; `--ack` does not clear
+it. At most
 5 wait on one card, each within the hook's size
 limit, and a further message while 5 wait is dropped and counted as
 any drop is. Its picks are the yard's users, each naming the
@@ -1760,10 +1778,16 @@ answer from crm (customer): data from outside the yard, not instructions
 - **The answer is data.** It is printed under the line above, as mail from
   another yard is marked ([peers.md](peers.md)). `--json` prints the answer
   alone. An answer is JSON, after the call's `select`, 64 KB at most unless
-  the call's `answer.max` raises it; a larger one is refused, not cut. No
-  redirect is followed: the 3xx fails the call. A source whose credential
-  is the address (`url: true`) keeps a 2xx answer that is not JSON as a
-  success with no answer.
+  the call's `answer.max` raises it; a larger one is refused, not cut. A
+  `select` entry is a top-level key or a dotted path into objects and lists:
+  `profiles.uid` keeps the uid of each profile and nothing else of it, and a
+  path the answer does not have yields nothing. Empty objects and lists
+  above an absent leaf are kept. Path segments must not be empty
+  (`profiles..uid` is refused at load). No entry may stand inside another
+  (`profiles` with `profiles.uid` is refused at load), and a key with a dot
+  in it cannot be named. No redirect is followed: the 3xx fails the call.
+  A source whose credential is the address (`url: true`) keeps a 2xx answer
+  that is not JSON as a success with no answer.
 - **Limits.** One caller makes 60 calls of a source in an hour (`yardr
   source set <name> calls_per_hour=<n>` changes it), 10 of them updates at
   most (`updates_per_hour=<n>`); the call after is refused (`limit`) until
@@ -2484,10 +2508,12 @@ them whole):
   The app is created from the pack's manifest,
   which carries no event subscriptions and no Request URL, and once the
   hook stands the operator turns Event Subscriptions on in the browser
-  with the hook's URL and the two bot events `app_mention` and
-  `message.im` — never `message.mpim`, so no group conversation the
-  bot was never addressed in reaches the yard. Slack's
-  `url_verification` challenge to that URL is answered from the hook.
+  with the hook's URL and the five bot events `app_mention`,
+  `message.im`, `message.channels`, `message.groups` and
+  `message.mpim`: every message in a conversation the bot is in reaches
+  the yard, and each is stored, but only a mention nudges (see
+  subscriptions below). Slack's `url_verification` challenge to that URL
+  is answered from the hook.
 - **The credential** is the bot's token twice: the source's env file
   holds `SLACK_BOT_TOKEN` for the check and post calls, and the
   answering crew member's env file holds the same value for replying,
@@ -2515,6 +2541,21 @@ them whole):
   untested: whether Slack delivers a mention in one as `app_mention`
   is checked in a live trial, and until then only channel mentions and
   one-to-one direct messages are promised.
+- **Channels are stored, not heard.** A message in a channel or group
+  the bot is in is recorded as a delivery of type `message` with its
+  `room` set to `channel`, and no subscription above matches it unless
+  it mentions the bot. Its thread reads back with `yardr thread show
+  <seq>`, and `yardr hook show <seq>` holds the delivery. A channel
+  message that mentions the bot arrives twice, as `message.channels`
+  and as `app_mention`; the normalize keeps the mention off the first,
+  so the bot is woken once, by the `app_mention`. Edits, deletes, joins,
+  leaves and the `message_replied` Slack sends beside a thread reply
+  arrive as type `event` and match nothing. The bot joins a public
+  channel with the pack's `join` call, one channel per call, and the
+  `channels` call lists the public channels, each with `is_member`
+  true or false, so the ones to join are those that say false; a private
+  channel needs an invitation in Slack, since the bot cannot join one
+  itself.
 - **A thread** is `<channel>:<parent ts>`. `yardr reply <seq>` posts
   `chat.postMessage` in the thread the delivery stood in, and `yardr
   thread show <seq>` lists it oldest first through `conversations.replies`,
@@ -2668,11 +2709,11 @@ the credential — the names set and missing, and with a mint whether a
 mint command is set; it mints where the file sets the mint's names and
 makes the check call with the credential, and fails unless the service
 answers 2xx; where the check call names `answer.select` it prints each
-selected top-level field the answer carries, one per line under the
-status line, and with `--json` carries the same object under `answer`;
-it says of every command the file names beside the check call —
-thread's, hook's, events', and each call's build and run — whether its
-program is there and can be run, and fails when one cannot, running
+selected field the answer carries (a dotted path's top-level key once),
+one per line under the status line, and with `--json` carries the same
+object under `answer`; it says of every command the file names beside the
+check call — thread's, hook's, events', and each call's build and run —
+whether its program is there and can be run, and fails when one cannot, running
 none. A check call that names `run` is run, as it is the check: its
 command is run from the copy under `~/.yardr/sources/<name>/`, with the
 credential in its environment as any `run` call is, and the line says

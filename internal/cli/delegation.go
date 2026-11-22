@@ -179,9 +179,10 @@ func (a *app) presetWords(c *cobra.Command, path []string, args []string) ([]str
 	return append([]string{args[0]}, out...), nil
 }
 
-// depotFieldCmds are depot test and depot base: a depot's test command or
-// base changed alone, as the cards of the same words change them, for the
-// operator at a terminal and for the yardmaster's delegated run.
+// depotFieldCmds are depot test, depot base and depot visibility: a depot's
+// test command, base or visibility changed alone. Test and base are the
+// yardmaster's to run for an operator as well (delegable); visibility is the
+// operator's alone, so it is not delegated.
 func (a *app) depotFieldCmds() []*cobra.Command {
 	set := func(c *cobra.Command, name string, change func(*store.Depot)) error {
 		st, err := a.store(c.Context())
@@ -225,7 +226,22 @@ depot add with the depot whole.`,
 			return set(c, args[0], func(d *store.Depot) { d.Base = args[1] })
 		},
 	}
-	return []*cobra.Command{test, base}
+	visibility := &cobra.Command{
+		Use:   "visibility <depot> <public|private>",
+		Short: "Change a depot's visibility: whether its repository is public on its host",
+		Long: `Sets whether the depot's repository is public on its host. The yard's daily
+check compares this with the host's and says so when they differ; it never
+changes it. Only the operator sets it.`,
+		Example: `  yardr depot visibility web public`,
+		Args:    cobra.ExactArgs(2),
+		RunE: func(c *cobra.Command, args []string) error {
+			if args[1] != store.DepotPublic && args[1] != store.DepotPrivate {
+				return fmt.Errorf("depot visibility %s: give %s or %s", args[0], store.DepotPublic, store.DepotPrivate)
+			}
+			return set(c, args[0], func(d *store.Depot) { d.Visibility = args[1] })
+		},
+	}
+	return []*cobra.Command{test, base, visibility}
 }
 
 // delegationCmd is yardr delegation: the records of delegated runs, an

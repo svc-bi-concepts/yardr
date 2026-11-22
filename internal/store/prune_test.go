@@ -447,6 +447,83 @@ func TestPruneRemovesEndedSessions(t *testing.T) {
 	}
 }
 
+// A cleaned session keeps its worktree record while the worktree stands on
+// disk or its volume is not mounted, since the record is how a bead's worktree
+// is found when worktree_root has moved. Once the worktree is gone from a
+// mounted volume, the session goes.
+func TestPruneKeepsTheRecordOfAStandingWorktree(t *testing.T) {
+	t.Parallel()
+	s, own := storetest.NewOwned(t)
+	ctx := context.Background()
+	if err := s.PutGroup(ctx, store.Group{Name: "g", Runner: "fake", Limit: 10}, "me"); err != nil {
+		t.Fatal(err)
+	}
+	long := time.Now().Add(-100 * 24 * time.Hour)
+	// ended is a session of a bead of its own that ended, stopped and cleaned
+	// with handle as its record, backdated past the retention.
+	ended := func(id string, handle map[string]any) *store.Session {
+		b, err := s.CreateBead(ctx, store.NewBead{ID: id, Title: id, Stage: "new"}, "me")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sess, err := s.Claim(ctx, b.ID, "g", "new", "yard")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetHandle(ctx, sess.ID, handle); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.EndSession(ctx, sess.ID, "failed", "x"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkStopped(ctx, sess.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkCleaned(ctx, sess.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := own.BackdateSession(sess.ID, long); err != nil {
+			t.Fatal(err)
+		}
+		return sess
+	}
+	standing := t.TempDir()
+	kept := ended("r-1", map[string]any{"worktree": standing})
+	offline := ended("r-2", map[string]any{"worktree": "/Volumes/yardr-xrtw-unmounted/r-2", "worktree_volume": "/Volumes/yardr-xrtw-unmounted"})
+	gone := ended("r-3", map[string]any{"worktree": filepath.Join(t.TempDir(), "r-3")})
+
+	res, err := s.Prune(ctx, keep90, "me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sessions != 1 {
+		t.Fatalf("pruned %+v, want the one whose worktree is gone", res)
+	}
+	if _, err := s.GetSession(ctx, gone.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("session of a gone worktree after prune: %v", err)
+	}
+	for _, sess := range []*store.Session{kept, offline} {
+		if _, err := s.GetSession(ctx, sess.ID); err != nil {
+			t.Fatalf("session %s with its worktree record lost: %v", sess.ID, err)
+		}
+	}
+
+	// Once the standing worktree is removed, its record goes with the next
+	// prune; the one on the unmounted volume stays.
+	if err := os.RemoveAll(standing); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Prune(ctx, keep90, "me"); err != nil || res.Sessions != 1 {
+		t.Fatalf("prune after removal = %+v %v, want 1 session", res, err)
+	}
+	if _, err := s.GetSession(ctx, kept.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("session of a removed worktree after prune: %v", err)
+	}
+	if _, err := s.GetSession(ctx, offline.ID); err != nil {
+		t.Fatalf("session on an unmounted volume after prune: %v", err)
+	}
+}
+
 // Claim and the dispatcher's view of live sessions read the live index:
 // 10k ended sessions are not looked at.
 func TestClaimReadsOnlyLiveSessions(t *testing.T) {

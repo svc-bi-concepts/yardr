@@ -19,6 +19,7 @@ type API interface {
 	Advance(ctx context.Context, id, stage string, exp Expect, actor string) (*Bead, error)
 	AdvanceNote(ctx context.Context, id, stage, note string, exp Expect, actor string) (*Bead, error)
 	Done(ctx context.Context, id, outcome, note string, exp Expect, actor string) (*Bead, error)
+	RetryRefusedDone(ctx context.Context, id, session, actor string) (*RetriedMove, error)
 	CloseBead(ctx context.Context, id, reason string, exp Expect, actor string) (*Bead, error)
 	Reopen(ctx context.Context, id string, exp Expect, actor string) (*Bead, error)
 	SetHold(ctx context.Context, id string, hold bool, exp Expect, actor string) (*Bead, error)
@@ -94,6 +95,7 @@ type API interface {
 	ApproveSetup(ctx context.Context, id string, ask uint64, option int, values map[string]string, account, actor string, weighed bool) (*AskSetupApproved, error)
 
 	PutDepot(ctx context.Context, r Depot, actor string) error
+	TellDepotVisibility(ctx context.Context, depot, recorded, actual string) error
 	Depots(ctx context.Context) ([]Depot, error)
 	GetDepot(ctx context.Context, name string) (*Depot, error)
 	DeleteDepot(ctx context.Context, name, actor string) (*DepotRemoval, error)
@@ -192,7 +194,11 @@ type API interface {
 	RecordCrewUsage(ctx context.Context, name, user, agentSession string, usage map[string]any) error
 	Journal(ctx context.Context, name, kind, text, actor string) (bool, error)
 	Mail(ctx context.Context, to, text, actor string, files ...BlobFile) error
+	// MailFromPeer is mail of a linked yard's crew member or user written into this yard (mailfrom.go).
+	MailFromPeer(ctx context.Context, to, text, from, peerKey string, files ...BlobFile) error
 	MailReply(ctx context.Context, to, text, actor string, answered uint64) error
+	MailLocalReceipt(ctx context.Context, to, text, actor string, files ...BlobFile) (MailReceipt, error)
+	MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (MailReceipt, error)
 	React(ctx context.Context, seq uint64, emoji, actor string) error
 	PutBlob(ctx context.Context, data []byte) (*BlobRef, error)
 	Inbox(ctx context.Context, name string, limit int) (*InboxPage, error)
@@ -216,6 +222,7 @@ type API interface {
 	DevicePairCloseSelf(ctx context.Context, user string) (*DevicePairing, error)
 	DevicePairCodeSelf(ctx context.Context, user string) (*DevicePairingCode, error)
 	UserInbox(ctx context.Context, name string, limit int, actor string) (*Mailbox, error)
+	HeldCards(ctx context.Context, name, actor string) ([]HeldCard, error)
 	AckUserInbox(ctx context.Context, name string, through uint64, actor string) error
 	UserNotifications(ctx context.Context, name string, limit int, actor string) (*NotificationPage, error)
 	AckUserNotifications(ctx context.Context, name string, through uint64, actor string) error
@@ -242,6 +249,7 @@ type API interface {
 	UnfollowThread(ctx context.Context, name, source, thread, actor string) error
 	Threads(ctx context.Context, name string) ([]Participation, error)
 	Replying(ctx context.Context, name string, seq uint64, to, body, actor string, files ...BlobFile) (*Reply, error)
+	ReplyingBroadcast(ctx context.Context, name string, seq uint64, to, body, actor string, files ...BlobFile) (*Reply, error)
 	Replied(ctx context.Context, name string, rp Reply, actor string) error
 	Opening(ctx context.Context, name, source, in, title, body, actor string) (*Reply, error)
 	Opened(ctx context.Context, name string, rp Reply, actor string) error
@@ -293,6 +301,9 @@ type API interface {
 	RemovePeerIdentity(ctx context.Context, name, crew, source, actor string) (*Peer, error)
 	PeerSend(ctx context.Context, name, kind string, body json.RawMessage, actor string) (*PeerOut, error)
 	MailPeer(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (*PeerOut, error)
+	MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (MailReceipt, error)
+	MailPeerReply(ctx context.Context, answered uint64, text, actor string) (MailReceipt, error)
+	MailReceiptOf(ctx context.Context, seq uint64, actor string) (MailReceipt, error)
 	PeerOutbox(ctx context.Context, name string, limit int) ([]PeerOut, error)
 	PeerDelivered(ctx context.Context, name string, seq uint64) error
 	PeerSendFailed(ctx context.Context, name string, seq uint64, reason string, retryAt time.Time, final bool) error
@@ -312,6 +323,7 @@ type API interface {
 	PeerPostAnswered(ctx context.Context, name string, answer PeerAnswer) error
 	CheckPeer(ctx context.Context, p Peer) error
 	PairPeer(ctx context.Context, p Peer, actor string) (*Peer, error)
+	CommitPeerEnrollment(ctx context.Context, proof PeerEnrollmentProof, actor string) (*Peer, error)
 	PairRefused(ctx context.Context, reason, peer, actor string) error
 	PairOpen(ctx context.Context, o PairOffer, actor string) (*PairingCode, error)
 	GetPairing(ctx context.Context, id string) (*Pairing, error)

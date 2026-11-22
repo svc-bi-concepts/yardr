@@ -35,6 +35,36 @@ func stubMachine(t *testing.T, r reading) *reading {
 	return now
 }
 
+// TestMachineFactorCap pins the cap on the machine's own factor at maxFactor
+// (8), and the cap alone: a load under it widens a wait by exactly its ratio to
+// the cores, and a load past it widens the wait by 8, however far past. The
+// cases are the mini's own loads, 50 to 77 on 10 cores, which a cap of 4 cut to
+// 4 and so left a fuse of 60 s at 240 s (yardr-b2er).
+func TestMachineFactorCap(t *testing.T) {
+	if maxFactor != 8 {
+		t.Fatalf("maxFactor = %d, want 8", maxFactor)
+	}
+	now := stubMachine(t, reading{})
+	for _, c := range []struct {
+		name    string
+		machine reading
+		want    float64
+	}{
+		{"the mini at 50 on 10 cores", reading{50, 10, true}, 5},
+		{"the mini at 77 on 10 cores", reading{77, 10, true}, 7.7},
+		{"at the cap", reading{80, 10, true}, 8},
+		{"past the cap", reading{200, 10, true}, 8},
+		{"past the cap on fewer cores", reading{30, 2, true}, 8},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			*now = c.machine
+			if got := machineFactor(); got != c.want {
+				t.Errorf("machineFactor() with the machine reading %+v = %v, want %v", c.machine, got, c.want)
+			}
+		})
+	}
+}
+
 func TestScale(t *testing.T) {
 	const wait = 10 * time.Second
 	// check is the whole path of a factor for one wait: the gate's variable,
@@ -82,7 +112,7 @@ func TestScale(t *testing.T) {
 	}
 
 	// The machine's own load, with and without the gate's: the larger of the
-	// two, from 1 to 4 where it is the machine's, and nothing where it cannot
+	// two, from 1 to 8 where it is the machine's, and nothing where it cannot
 	// be read (yardr-hsvx).
 	for _, c := range []struct {
 		name    string
@@ -98,9 +128,11 @@ func TestScale(t *testing.T) {
 		{"a quiet machine does not shrink the variable", "2.5", reading{0.5, 10, true}, 25 * time.Second},
 		{"as much load as cores", "", reading{10, 10, true}, wait},
 		{"a tenth past the cores", "", reading{11, 10, true}, 11 * time.Second},
-		{"the machine's cap", "", reading{100, 10, true}, 40 * time.Second},
-		{"just past the cap", "", reading{41, 10, true}, 40 * time.Second},
-		{"the cap and the variable's", "4", reading{100, 10, true}, 40 * time.Second},
+		{"the machine's cap", "", reading{100, 10, true}, 80 * time.Second},
+		{"just past the cap", "", reading{81, 10, true}, 80 * time.Second},
+		{"the old cap, which is no cap now", "", reading{40, 10, true}, 40 * time.Second},
+		{"the mini's load of 77 on 10 cores", "", reading{77, 10, true}, 77 * time.Second},
+		{"the cap and the variable's", "8", reading{100, 10, true}, 80 * time.Second},
 		{"a load that cannot be read", "2.5", reading{}, 25 * time.Second},
 		{"a load that cannot be read and no variable", "", reading{}, wait},
 		{"numbers the machine did not give", "2", reading{50, 10, false}, 20 * time.Second},
@@ -115,7 +147,7 @@ func TestScale(t *testing.T) {
 	}
 
 	// The machine's factor on its own is the gate's rule, the load over the
-	// cores from 1 to 4. Scale cannot show the floor, since the gate's factor
+	// cores from 1 to 8. Scale cannot show the floor, since the gate's factor
 	// is never under 1 and wins over a lower one.
 	t.Run("the machine's own factor", func(t *testing.T) {
 		now := stubMachine(t, reading{})
@@ -128,7 +160,9 @@ func TestScale(t *testing.T) {
 			{reading{10, 10, true}, 1},
 			{reading{25, 10, true}, 2.5},
 			{reading{40, 10, true}, 4},
-			{reading{100, 10, true}, 4},
+			{reading{100, 10, true}, 8},
+			{reading{80, 10, true}, 8},
+			{reading{50, 10, true}, 5},
 		} {
 			*now = c.machine
 			if got := machineFactor(); got != c.want {

@@ -477,7 +477,7 @@ func (s *Store) claimIdentity(ctx context.Context, sourceName, sender, channel s
 				return err
 			}
 			stored = true
-			return nil
+			return w.heldNotice(card, sourceName, sender, channel, held.Envelope, len(waiting)+1)
 		}
 		var users []string
 		if err := each(w.Tx, bUsers, "", func(_ []byte, u *User) error {
@@ -549,6 +549,9 @@ func (s *Store) claimIdentity(ctx context.Context, sourceName, sender, channel s
 				return err
 			}
 			stored = true
+			if err := w.heldNotice(row.UUID, sourceName, sender, channel, held.Envelope, 1); err != nil {
+				return err
+			}
 		}
 		created = true
 		return nil

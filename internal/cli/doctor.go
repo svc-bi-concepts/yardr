@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,13 +21,10 @@ import (
 	"yardr.dev/yardr/internal/edgelink"
 	"yardr.dev/yardr/internal/hooks"
 	"yardr.dev/yardr/internal/limits"
-	"yardr.dev/yardr/internal/pack"
 	"yardr.dev/yardr/internal/rpc"
 	"yardr.dev/yardr/internal/server"
 	"yardr.dev/yardr/internal/source"
 	"yardr.dev/yardr/internal/store"
-	"yardr.dev/yardr/internal/version"
-	"yardr.dev/yardr/packs"
 )
 
 // doctorReport is what yardr doctor found, in its three parts: what the
@@ -69,10 +65,12 @@ const skippedWhy = "the server is not running"
 
 // storeChecks are the checks that read the store, as Skipped names them:
 // the lines of the yard's part, the setup steps, and the optional parts.
-var storeChecks = []string{"yardmaster", "crew", "held", "cycles", "mail", "names", "config", "codex", "steps", "hooks", "sources", "peers", "packs", "limits"}
+var storeChecks = []string{"yardmaster", "crew", "held", "worktrees", "cycles", "mail", "names", "config", "codex", "steps", "hooks", "sources", "peers", "packs", "limits"}
 
 // yardState is the second part: what of the yard runs.
 type yardState struct {
+	// Worktrees is where new bead worktrees are made (worktreesOf).
+	Worktrees *worktreesState `json:"worktrees,omitempty"`
 	// Server is "running", "not_running" (nothing else of the yard is read
 	// then but the daemon, which the home says) or "unreachable".
 	Server      string `json:"server"`
@@ -419,6 +417,11 @@ func readState(ctx context.Context, cfg *config.Config, st store.API, crew []sto
 	}
 	yardmaster := yardmasterOf(ctx, st)
 	def := defaultKind(ctx, st)
+	wt, err := worktreesOf(ctx, cfg, st)
+	if err != nil {
+		return nil, err
+	}
+	state.Worktrees = wt
 	state.Yardmaster = &yardmasterState{Name: yardmaster}
 	for _, r := range crew {
 		login := func(user string, cs store.CrewSession) {
@@ -867,7 +870,7 @@ func (s *yardState) lines(home string) []docLine {
 	}
 	if s.Server == serverStopped {
 		// The lines every report has, so that its shape stays the same.
-		for _, name := range []string{"yardmaster", "crew", "held"} {
+		for _, name := range []string{"yardmaster", "crew", "held", "worktrees"} {
 			out = append(out, docLine{tagNote, name, "skipped: " + skippedWhy})
 		}
 		return out
@@ -914,6 +917,9 @@ func (s *yardState) lines(home string) []docLine {
 		out = append(out, docLine{tagFault, "crew", fmt.Sprintf("%s is not logged in: run %s in another terminal and log in there; "+
 			"then answer the login in its pane or start it fresh (%s %s)",
 			name, store.Executable(l.Kind), yardr, restart)})
+	}
+	if s.Worktrees != nil {
+		out = append(out, s.Worktrees.line(yardr))
 	}
 	if len(s.Held) == 0 {
 		out = append(out, docLine{tagOK, "held", "no bead is held"})
@@ -1021,6 +1027,9 @@ func configNotes(ctx context.Context, st store.API, crew []store.CrewMember, gro
 	dispatch.SortRoutes(routes)
 	notes = append(notes, narrowedRouteNotes(routes, groups, operator, yardr)...)
 	for _, k := range sortedKeys(all) {
+		if k == store.WorktreeRootVolume {
+			continue
+		}
 		if _, ok := store.SettingOf(k); !ok {
 			notes = append(notes, fmt.Sprintf("setting %s is stored and nothing reads it (there is: %s). Remove it: %s settings set %s \"\"",
 				k, strings.Join(store.SettingKeys(), ", "), yardr, k))
@@ -1068,61 +1077,6 @@ func narrowedRouteNotes(routes []store.Route, groups []store.Group, operator, ya
 			r.ID, where, whose, runner, r.Worker(), r.Stage, yardr, restated, yardr, r.ID))
 	}
 	return notes
-}
-
-// stalePackNotes are the imports of embedded packs whose copied files
-// differ from what the running binary would copy, one line each with the
-// commands that bring them up to date. An embedded pack's roles, stage
-// files and scripts are copied at pack apply; installing a new yardr
-// leaves those copies as they were. The check reuses pack check's
-// per-file plan, and compares embedded sources alone: a directory, URL
-// or earlier record is not compared. Notes, not faults.
-func stalePackNotes(ctx context.Context, st store.API, cfg *config.Config) ([]string, error) {
-	recs, err := st.Packs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	yardr := yardrAt(cfg.Home)
-	var notes []string
-	for _, rec := range recs {
-		if !fromEmbedded(rec.Source) || !packs.Carries(rec.Pack) {
-			continue
-		}
-		sub, err := fs.Sub(packs.FS, rec.Pack)
-		if err != nil {
-			continue
-		}
-		p, err := pack.Load(sub, packs.Embedded+" in yardr "+version.Describe())
-		if err != nil {
-			continue
-		}
-		// The last import's flow, crew, groups and roles, as a check
-		// without flags repeats them: what differs is the binary's.
-		plan, err := pack.Build(ctx, st, p, pack.Options{Depot: rec.Depot, Home: cfg.Home})
-		if err != nil {
-			continue
-		}
-		var behind []string
-		for _, o := range plan.Objects {
-			if o.Kind == "file" && (o.Action == pack.Change || o.Action == pack.Create) {
-				behind = append(behind, o.Name)
-			}
-		}
-		if len(behind) == 0 {
-			continue
-		}
-		names := behind
-		if len(names) > 3 {
-			names = append(slices.Clone(names[:3]), "...")
-		}
-		depot := ""
-		if rec.Depot != "" {
-			depot = " --depot " + rec.Depot
-		}
-		notes = append(notes, fmt.Sprintf("pack %s in %s: %s behind yardr %s (%s): %s pack check %s%s, then %s pack apply %s%s",
-			rec.Pack, inDepot(rec.Depot), plural(len(behind), "file"), version.Describe(), strings.Join(names, ", "), yardr, rec.Pack, depot, yardr, rec.Pack, depot))
-	}
-	return notes, nil
 }
 
 // failed says how a crew member's starts fail.

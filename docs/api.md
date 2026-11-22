@@ -130,7 +130,7 @@ the build of yardr that serves, and `X-Yardr-Pid`, its process.
 | code | what it says |
 |---|---|
 | `not-found` | the yard has no such user, crew member, peer |
-| `taken`, `at-limit`, `conflict`, `ambiguous` | none of the calls below answers these today |
+| `taken`, `at-limit`, `conflict`, `ambiguous`, `no-peer-remote` | none of the calls below answers these today |
 | `replacing` | the server is about to start a newer build of itself, and did not run the call: see [Builds](#builds) |
 | `error` | anything else: an argument that cannot be read, a call the yard refuses |
 

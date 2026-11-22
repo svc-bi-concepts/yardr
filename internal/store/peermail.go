@@ -277,6 +277,23 @@ func mailTo(e Event) string {
 // member's pane the mail goes as that session's actor or that crew member,
 // whatever actor says; from anywhere else, as given (paneAuthor).
 func (s *Store) MailPeer(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (*PeerOut, error) {
+	return s.mailPeer(ctx, to, peer, text, actor, files, nil)
+}
+
+// MailPeerReceipt is MailPeer, and returns the receipt the mail was queued
+// under (MailReceipt): written in the same write as the message and its
+// event, so a receipt exists exactly when the mail was queued here.
+func (s *Store) MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...BlobFile) (MailReceipt, error) {
+	var got MailReceipt
+	if _, err := s.mailPeer(ctx, to, peer, text, actor, files, &got); err != nil {
+		return MailReceipt{}, err
+	}
+	return got, nil
+}
+
+// mailPeer is MailPeer's send: it sets got, when it is not nil, to the
+// receipt of the mail it queued.
+func (s *Store) mailPeer(ctx context.Context, to, peer, text, actor string, files []BlobFile, got *MailReceipt) (*PeerOut, error) {
 	switch {
 	case strings.TrimSpace(text) == "" && len(files) == 0 || len(text) > MaxPeerMailBytes:
 		return nil, fmt.Errorf("mail to another yard must be 1..%d bytes", MaxPeerMailBytes)
@@ -296,48 +313,163 @@ func (s *Store) MailPeer(ctx context.Context, to, peer, text, actor string, file
 			return err
 		}
 		actor = resolved
-		p, err := loadPeer(w.Tx, peer)
-		if err != nil {
-			return err
-		}
-		if err := w.may(ctx, actor, ActMailPeer, Object{Kind: KindPeer, Name: peer}); err != nil {
-			return err
-		}
-		body, err := json.Marshal(peerMail{To: to, From: actor, Text: text, Files: refs})
-		if err != nil {
-			return err
-		}
-		m := PeerMessage{ID: newPeerMessageID(), Kind: PeerMail, Body: body}
-		if err := m.check(); err != nil {
-			return err
-		}
-		// The files first, and only for mail that goes: the outbox keeps
-		// its order, so each is there when the mail that names it comes.
-		// The link is asked again in the write that queues them.
-		if len(carried) > 0 && p.carries(PeerMail, false) {
-			if err := p.SendsFiles(); err != nil {
-				return fmt.Errorf("mail to %s@%s: %w", to, peer, err)
-			}
-			for _, f := range carried {
-				if _, err := w.queuePeer(p, f, actor); err != nil {
-					return err
-				}
-			}
-		}
-		if out, err = w.queuePeer(p, m, actor); err != nil || out == nil {
-			return err
-		}
-		data := map[string]any{"to": to, "to_peer": peer, "text": text, "id": m.ID}
-		if len(refs) > 0 {
-			data["files"] = refs
-		}
-		return w.event("", "mail", actor, data)
+		o, err := w.queuePeerMail(ctx, peer, peerMail{To: to, From: actor, Text: text, Files: refs}, "", carried, got)
+		out = o
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	if out == nil {
 		return nil, fmt.Errorf("peer %s: the link does not carry mail out: the operator allows it with yardr peer allow %s --send mail", peer, peer)
+	}
+	return out, nil
+}
+
+// MailPeerReply answers the mail of another yard that the event answered
+// holds in this yard's log, as mail to its sender over the link it came
+// by, carrying its wire id as Re when present, so the origin can check
+// the reply against its own receipt (answeredMail). Nothing is taken from
+// the caller but the seq, the text and the actor: the sender, the link and
+// the wire id are what the event durably records as the mail came, so no
+// caller can name another destination, reference or mail. The mail must
+// be to actor, from a link still up with an encryption pin; for mail received
+// over the link, actor must be exposed on it. It returns the receipt, written in the
+// same write as the mail.
+func (s *Store) MailPeerReply(ctx context.Context, answered uint64, text, actor string) (MailReceipt, error) {
+	if strings.TrimSpace(text) == "" || len(text) > MaxPeerMailBytes {
+		return MailReceipt{}, fmt.Errorf("mail to another yard must be 1..%d bytes", MaxPeerMailBytes)
+	}
+	var got MailReceipt
+	var out *PeerOut
+	var peerName string
+	err := s.writeVia(ctx, func(w *wtx) error {
+		resolved, err := paneAuthor(w.Tx, callerOf(ctx), actor)
+		if err != nil {
+			return err
+		}
+		actor = resolved
+		if !peerMailName.MatchString(actor) {
+			return fmt.Errorf("mail from %q: a name of letters, digits, '.', '_', '-' and '/' is what another yard is told", actor)
+		}
+		var e Event
+		if ok, err := get(w.Tx, bEvents, seqKey(answered), &e); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("message %d: %w", answered, ErrNotFound)
+		}
+		if e.Kind != "mail" {
+			return fmt.Errorf("message %d is a %s event, not mail: only mail is answered", answered, e.Kind)
+		}
+		if MailReceiver(e) != actor {
+			return fmt.Errorf("message %d is not mail to %s", answered, actor)
+		}
+		// Under the names the link has now (as MailReply reads them): a
+		// rename since moves the peer's name, and a link gone since is
+		// refused, not answered at an address no longer kept.
+		evs := []Event{e}
+		if err := peersToday(w.Tx, evs); err != nil {
+			return err
+		}
+		e = evs[0]
+		if gone, _ := e.Data["from_peer_unlinked"].(bool); gone {
+			from, _ := e.Data["from"].(string)
+			was, _ := e.Data["from_peer_was"].(string)
+			return fmt.Errorf("message %d is mail from %s at a yard no longer linked (was %s): no address would reach its sender", answered, from, was)
+		}
+		peer, _ := e.Data["from_peer"].(string)
+		if peer == "" {
+			return fmt.Errorf("message %d is not mail from another yard: only a peer's mail is answered this way", answered)
+		}
+		// The wire id is the one the peer sent the mail under, kept on the
+		// event when it was taken (deliverMail): the reply names it, and
+		// that is all the origin needs to find its own mail.
+		wire, _ := e.Data["id"].(string)
+		to, _ := e.Data["from"].(string)
+		if !peerMailName.MatchString(to) {
+			return fmt.Errorf("message %d has no sender to answer", answered)
+		}
+		p, err := loadPeer(w.Tx, peer)
+		if err != nil {
+			return err
+		}
+		if !p.Sealed() {
+			return fmt.Errorf("reply to %s@%s: the link to %s has no encryption key, so its mail cannot be sealed and would not arrive (yardr peer show %s lists the link)", to, peer, peer, peer)
+		}
+		if wire != "" && !slices.Contains(p.Expose, actor) {
+			return fmt.Errorf("%s is not exposed to %s: the link does not carry mail from it", actor, peer)
+		}
+		peerName = peer
+		out, err = w.queuePeerMail(ctx, peer, peerMail{To: to, From: actor, Text: text}, wire, nil, &got)
+		return err
+	})
+	if err != nil {
+		return MailReceipt{}, err
+	}
+	if out == nil {
+		return MailReceipt{}, fmt.Errorf("peer %s: the link does not carry mail out: the operator allows it with yardr peer allow %s --send mail", peerName, peerName)
+	}
+	return got, nil
+}
+
+// queuePeerMail queues m to peer as a PeerMail message that names re, the
+// wire id it answers ("" for none), after its carried files. Its event and
+// its receipt are written in the same write as the message, so the mail,
+// the message and the receipt commit together or not at all. The actor of
+// m is already resolved. It returns nil, with nothing queued beyond the
+// refusal the event records, when the link does not carry mail out, and
+// sets got, when it is not nil, to the receipt of the mail.
+func (w *wtx) queuePeerMail(ctx context.Context, peer string, m peerMail, re string, carried []PeerMessage, got *MailReceipt) (*PeerOut, error) {
+	p, err := loadPeer(w.Tx, peer)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.may(ctx, m.From, ActMailPeer, Object{Kind: KindPeer, Name: peer}); err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	pm := PeerMessage{ID: newPeerMessageID(), Kind: PeerMail, Body: body, Re: re}
+	if err := pm.check(); err != nil {
+		return nil, err
+	}
+	// The files first, and only for mail that goes: the outbox keeps its
+	// order, so each is there when the mail that names it comes. The link
+	// is asked again in the write that queues them.
+	if len(carried) > 0 && p.carries(PeerMail, false) {
+		if err := p.SendsFiles(); err != nil {
+			return nil, fmt.Errorf("mail to %s@%s: %w", m.To, peer, err)
+		}
+		for _, f := range carried {
+			if _, err := w.queuePeer(p, f, m.From); err != nil {
+				return nil, err
+			}
+		}
+	}
+	out, err := w.queuePeer(p, pm, m.From)
+	if err != nil || out == nil {
+		return nil, err
+	}
+	data := map[string]any{"to": m.To, "to_peer": peer, "text": m.Text, "id": pm.ID}
+	if len(m.Files) > 0 {
+		data["files"] = m.Files
+	}
+	if re != "" {
+		data["re"] = re
+	}
+	if err := w.event("", "mail", m.From, data); err != nil {
+		return nil, err
+	}
+	// The event is the last one written, so its seq is the sequence the
+	// write just took: no scan for it.
+	r := MailReceipt{Seq: w.Bucket(bEvents).Sequence(), ID: pm.ID, Direction: ReceiptOut, Peer: p.Name, PeerKey: p.Key, From: m.From, To: m.To, At: now()}
+	if err := writeReceipt(w.Tx, r); err != nil {
+		return nil, err
+	}
+	if got != nil {
+		*got = r
 	}
 	return out, nil
 }
@@ -459,6 +591,20 @@ func (w *wtx) deliverMail(p *Peer, m PeerMessage, mail *peerMail, fl *filing) er
 	}
 	if mail.as != "" {
 		data["as"] = mail.as
+	}
+	// The wire id the reply names is kept as it came, for provenance. It
+	// is a relation only when this yard sent the mail it answers, to this
+	// peer, back along the same participants (answeredMail): that is the
+	// one this yard's own event seq, not the peer's.
+	if m.Re != "" {
+		data["re"] = m.Re
+		orig, ok, err := w.answeredMail(p, m.Re, mail)
+		if err != nil {
+			return err
+		}
+		if ok {
+			data["in_reply_to"] = orig.Seq
+		}
 	}
 	return w.event("", "mail", mail.From+"@"+p.Name, data)
 }

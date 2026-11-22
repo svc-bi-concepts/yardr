@@ -1,4 +1,11 @@
 #!/bin/sh
+gate_slot=$HOME/ws_yardr/integrations/gate-slot.sh
+if [ "${1:-}" != sizes ] && [ "${1:-}" != --race-queue ] && [ -z "${YARDR_TEST_PLAN:-}" ] &&
+  [ -z "${YARD_GATE_SLOT_HELD:-}" ] && [ -f "$gate_slot" ]; then
+  YARD_GATE_FRESH=1
+  export YARD_GATE_FRESH
+  exec sh "$gate_slot" -- sh "$0" "$@"
+fi
 # yardr's tests: the depot's test command (yardr depot add yardr . --test
 # .yardr/test). A builder and a reviewer run it in their worktree, as it is
 # on their branch, before they hand on; the assembly runs main's copy of it
@@ -69,7 +76,7 @@
 # A wait in a contrib suite (a fuse against a hang, the deadline of a poll) is
 # written for an idle box, and the race leg sizes it to the machine it runs on
 # (sizewaits): go test -race gets YARDR_TEST_LOAD, the machine's load over its
-# cores from 1 to 4, which internal/testload multiplies each wait by, and a line
+# cores from 1 to 8, which internal/testload multiplies each wait by, and a line
 # names it. So no wait is raised by hand after it flakes in a landing. The
 # re-run of an over-budget package alone gets no factor, so that a slow path of
 # the product still shows there, and a plain run gets none: a test reads the
@@ -1618,7 +1625,7 @@ summary() {
   if [ "$1" = 0 ]; then res=pass; else res=fail; fi
   echo "test: sh .yardr/test @ $(git rev-parse --short HEAD): $res, $pkgs_ok packages ok, $pkgs_failed failed, $(($(date +%s) - started)) s, waited $waited_total s"
 }
-# The packages over the 60 s budget (docs/testing.md R1): a directory, the
+# The packages over the $budget s budget (docs/testing.md R1): a directory, the
 # bead that brings it under, and why it is over. No measured row is left;
 # the remaining row is the quiet run's yard-shape matrix, an acceptance
 # test that runs only where YARDR_QUIET_RUN is set.
@@ -1674,10 +1681,12 @@ loadedmachine() {
 # sizewaits sizes the race leg's waits to this machine: it sets under, the
 # command the leg's go test runs behind, to env with YARDR_TEST_LOAD, and says
 # so in a line. The factor is the load over the cores, as loadedmachine's line
-# gives both, from 1 to 4. A machine that is quiet, or whose load is unknown, is
+# gives both, from 1 to 8. A machine that is quiet, or whose load is unknown, is
 # 1: unknown load never widens a wait, as it excuses no package from the budget.
-# 4 is about the ratio a landing has been seen in (a load of 40 on 10 cores) and
-# as much room as the waits raised by hand needed. A wait that is met returns
+# 8 is the cap internal/testload holds the machine's own factor to too (maxFactor),
+# so one rule sizes a wait whichever of the two it comes from. It was 4, and the
+# mini has run at a load of 50 to 77 on 10 cores (a factor of 5 to 8), where a
+# fuse of 60 s at 4 was 240 s and expired (yardr-b2er). A wait that is met returns
 # early however long it is, so the factor costs a green run nothing; one that is
 # not met is a hang, which a longer fuse only makes slower to report, and go
 # test's own ten minutes end a suite whatever the factor. One decimal, with a
@@ -1688,7 +1697,7 @@ sizewaits() {
     $1 == "load" && $5 == "cores" && $4 > 0 {
       f = $2 / $4
       if (f < 1) f = 1
-      if (f > 4) f = 4
+      if (f > 8) f = 8
       printf "%.1f\n", f
       found = 1
     }
@@ -1766,6 +1775,16 @@ legflag() {
   echo "test: go test -p=$legn ($legload)"
   legpar=-p=$legn
 }
+# r1budget prints the R1 budget in seconds (docs/testing.md R1): 60 on the mini,
+# and the one number a host with slower cores may set through its workflow, the
+# mirror's runner (mirror.yml, YARDR_R1_BUDGET). The budget is a number of
+# seconds and not a speed factor: the testload factor already scales the waits,
+# and a second multiplier in the same place would be read as that one. It is
+# defined ahead of the race leg's re-entry branch (YARDR_TEST_RACE_LEG), which
+# runs before the script's later functions are defined, so the worker has it.
+r1budget() {
+  printf '%s\n' "${YARDR_R1_BUDGET:-60}"
+}
 # packagebudget judges the 60 s budget (docs/testing.md R1) on a go test
 # -race leg's output ($1): only the ok lines carry judged durations, a
 # package whose tests failed being already red without it. Cached packages
@@ -1801,11 +1820,14 @@ legflag() {
 packagebudget() {
   legout=$1
   shift
+  # The budget is r1budget's: 60 s, or the mirror's YARDR_R1_BUDGET. The allow-list
+  # rows are the same whatever it is.
+  budget=$(r1budget)
   allow=$(mktemp)
   printf '%s\n' "$over60" >"$allow"
   over=$(mktemp)
   unsorted=$(mktemp)
-  awk '
+  awk -v budget="$budget" '
     function seconds(s, total, n) {
       if (s == "") return -1
       total = 0
@@ -1832,7 +1854,7 @@ packagebudget() {
       if (pkg == "yardr.dev/yardr") dir = "."
       else if (pkg ~ /^yardr\.dev\/yardr\//) { dir = pkg; sub(/^yardr\.dev\/yardr\//, "", dir) }
       else next
-      if (secs > 60 && !(dir in over) && !(dir in bad)) {
+      if (secs > budget && !(dir in over) && !(dir in bad)) {
         bad[dir] = 1
         printf "%s %.9g\n", pkg, secs
       }
@@ -1942,23 +1964,23 @@ packagebudget() {
       /^ok[ \t]/ { s = seconds($3); if (s >= 0) { printf "%.9g\n", s; exit } }
     ' "$run")
     if [ "$rrc" = 0 ] && [ -n "$alone" ]; then
-      if awk -v s="$alone" 'BEGIN { exit !(s + 0 > 60) }'; then
+      if awk -v s="$alone" -v budget="$budget" 'BEGIN { exit !(s + 0 > budget + 0) }'; then
         if load=$(loadedeither "$load_start" "$load_end"); then
           if [ -n "$YARDR_R1_STRICT" ]; then
-            echo "test: $pkg took $secs s with -race, $alone s alone, over the 60 s budget (docs/testing.md R1), loaded machine ($load)"
+            echo "test: $pkg took $secs s with -race, $alone s alone, over the $budget s budget (docs/testing.md R1), loaded machine ($load)"
             st=1
           else
             echo "test: R1: $pkg took $secs s in the run, $alone s alone: over budget, loaded machine ($load), not failed"
           fi
         else
-          echo "test: $pkg took $secs s with -race, $alone s alone, over the 60 s budget (docs/testing.md R1)"
+          echo "test: $pkg took $secs s with -race, $alone s alone, over the $budget s budget (docs/testing.md R1)"
           st=1
         fi
       else
         echo "test: R1: $pkg took $secs s in the run, $alone s alone: under budget, loaded run"
       fi
     else
-      echo "test: $pkg took $secs s with -race, over the 60 s budget (docs/testing.md R1), and its re-run alone failed"
+      echo "test: $pkg took $secs s with -race, over the $budget s budget (docs/testing.md R1), and its re-run alone failed"
       st=1
     fi
   done <"$jobs"
@@ -2058,17 +2080,17 @@ filesizes='
 internal/chat/chat.go 1070 the chat TUI model, state and rendering
 internal/cli/bead_ask.go 1105 the ask and answer commands with secret-giving and setup approval
 internal/cli/beads.go 1099 the bead show, list and history commands and their printing
-internal/cli/crew.go 2212 the crew, inbox, mail and memory commands
+internal/cli/crew.go 2207 the crew, inbox, mail and memory commands
 internal/cli/doctor.go 1255 the doctor examinations and its report
 internal/cli/init.go 1600 yard init, onboarding and settings
 internal/cli/ops.go 1793 the server, daemon, depot, group, route and session commands
 internal/cli/pack.go 2096 pack loading, import planning and its question rounds
 internal/cli/peers.go 1564 the peer identity, intake and ping commands
 internal/cli/routereport.go 1513 the route report and its rendering
-internal/cli/sourcecmd.go 2147 the source command and its builtin checks
+internal/cli/sourcecmd.go 2131 the source command and its builtin checks
 internal/cli/subscriptions.go 1148 the identity, subscribe and thread commands
 internal/cli/updown.go 1302 yard up and down with their handoffs
-internal/cli/users.go 1055 the user command, inboxes and conversations
+internal/cli/users.go 1029 the user command, inboxes and conversations
 internal/dispatch/dispatch.go 1564 the daemon routing pass and its runners
 internal/dispatch/harnesslogin.go 1094 harness login leading and onboarding marks
 internal/pack/export.go 1047 pack export and its object shapes
@@ -2489,6 +2511,9 @@ whole() {
     socket=$!
   fi
   first=0
+  # A race leg names a budget other than the mini's 60 s, so its log says which
+  # one it judged by (docs/testing.md R1).
+  [ "$(r1budget)" = 60 ] || echo "test: R1 budget $(r1budget) s (YARDR_R1_BUDGET)"
   # A loaded machine's race leg takes the cores the load leaves it, a CI
   # runner's runs go's default (legflag). Unquoted, an empty legpar is no word
   # at all.
@@ -2625,6 +2650,31 @@ diskfloor() {
   exit 2
 }
 diskfloor
+# r1budgetcheck refuses a YARDR_R1_BUDGET the gate cannot judge by, before it
+# selects anything: a whole number of seconds, never under the 60 s the mini's R1
+# verdict is measured against, and not with the quiet run's marks. The quiet run
+# (R6) holds R1 at 60 s, strict, and is R1's authority, so a budget there would
+# judge the same packages two ways. Exit 2, as the disk floor's refusal does: the
+# run could not start, and no test line is printed.
+r1budgetcheck() {
+  [ -n "$YARDR_R1_BUDGET" ] || return 0
+  case $YARDR_R1_BUDGET in
+    *[!0-9]* | "") echo "test: cannot run: YARDR_R1_BUDGET ($YARDR_R1_BUDGET) is not a whole number of seconds" >&2; exit 2 ;;
+  esac
+  if [ "${#YARDR_R1_BUDGET}" -gt 6 ]; then
+    echo "test: cannot run: YARDR_R1_BUDGET ($YARDR_R1_BUDGET) is over 999999 s" >&2
+    exit 2
+  fi
+  if [ "$YARDR_R1_BUDGET" -lt 60 ]; then
+    echo "test: cannot run: YARDR_R1_BUDGET ($YARDR_R1_BUDGET) is under the 60 s budget of R1" >&2
+    exit 2
+  fi
+  if [ -n "$YARDR_QUIET_RUN" ] || [ -n "$YARDR_R1_STRICT" ]; then
+    echo "test: cannot run: YARDR_R1_BUDGET is refused with YARDR_QUIET_RUN or YARDR_R1_STRICT, which hold R1 at 60 s" >&2
+    exit 2
+  fi
+}
+r1budgetcheck
 # The mark that lets conformance/bdp's test run its script (the header says
 # when) is the run's to give and never the caller's: one the run was started
 # with would run the script in every whole suite. So it starts empty, ahead of

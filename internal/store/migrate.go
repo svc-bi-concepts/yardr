@@ -30,6 +30,11 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+// schemaVersion 37 has every ask indexed under the person it is addressed to
+// (bAskTo, migrateAskIndex), so a person's queue reads the beads that name
+// them and no others. A build before it never opens the store: checkSchema
+// refuses a store newer than the build knows before any migration or bucket
+// write.
 // schemaVersion 36 has a source remember the host its credential was given for
 // (Source.KeyedHost): a call is held while its declaration sends the credential
 // to another host, and migrateSourceKeyedHost pairs each source that already
@@ -224,7 +229,7 @@ import (
 // Bump this whenever a build starts writing something every write must
 // keep up (an index, a field a read relies on): the stamp is what stops an
 // older build from appending to the store without it.
-const schemaVersion = 36
+const schemaVersion = 37
 
 var kSchema = []byte("schema")
 
@@ -353,6 +358,9 @@ func openMigrations(home string, moved, depotsMoved bool) []migration {
 		{run: indexPanesAndPending},
 		{run: indexSessionOrder},
 		{run: indexOpenBeads},
+		// Before createBuckets, which would create the index empty: the
+		// index is filled from the receipts of a store that has them.
+		{run: indexMailReceipts},
 		{run: createBuckets},
 		{run: migrateFlows},
 		{run: migrateDepotKinds},
@@ -383,6 +391,7 @@ func openMigrations(home string, moved, depotsMoved bool) []migration {
 		{version: 34, run: atVersion(migrateNotificationsHeld)},
 		{version: 35, run: atVersion(migrateRoutePriority)},
 		{version: 36, run: atVersion(migrateSourceKeyedHost)},
+		{version: 37, run: atVersion(migrateAskIndex)},
 	}
 }
 

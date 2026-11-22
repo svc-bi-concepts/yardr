@@ -90,7 +90,7 @@ func TestDepotInitPack(t *testing.T) {
 	if after := snapshot(t, repo); !maps.Equal(before, after) {
 		t.Errorf("the checkout changed: %v", slices.Sorted(maps.Keys(after)))
 	}
-	if d, err := a.st.GetDepot(context.Background(), "web"); err != nil || *d != (store.Depot{Name: "web", Path: repo, Kind: store.DepotGit, Base: "main", Test: guess}) {
+	if d, err := a.st.GetDepot(context.Background(), "web"); err != nil || *d != (store.Depot{Name: "web", Path: repo, Kind: store.DepotGit, Base: "main", Test: guess, Visibility: store.DepotPrivate}) {
 		t.Fatalf("depot = %+v, %v", d, err)
 	}
 	if out, err := run(t, a.depotCmd(), "show", "web"); err != nil || !strings.Contains(out, "  test:  "+guess+"\n") {

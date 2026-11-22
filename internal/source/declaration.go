@@ -302,8 +302,8 @@ type QueryValue struct {
 
 // Answer is what of the service's answer a call returns.
 type Answer struct {
-	// Select keeps these top-level keys, of each element when the answer
-	// is a list; without it the answer is returned as it is.
+	// Select keeps these top-level keys or dotted paths (profiles.uid), of each
+	// element when the answer is a list; without it the answer is returned as it is.
 	Select []string `json:"select,omitempty"`
 	// Max is the most a call returns, in bytes after Select: AnswerMax
 	// unless the file raises it, AnswerLimit at most.

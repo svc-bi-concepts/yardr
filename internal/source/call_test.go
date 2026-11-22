@@ -1124,3 +1124,47 @@ func TestCommandsAreHandedNoCredentialThatIsTheAddress(t *testing.T) {
 		t.Errorf("a token is not handed to a command: %s", env)
 	}
 }
+
+// A select entry is a top-level key or a dotted path, and the answer keeps
+// only what the paths name: a leaf its whole value, an inner node only the
+// keys under it, at every level of an object or a list. A path the answer
+// does not have yields nothing, and a path that runs into a scalar drops it.
+// What the top level holds that is not an object or a list is returned as it
+// is, as it always was.
+func TestSelectedKeepsDottedPaths(t *testing.T) {
+	const answer = `{"total":2,"profiles":[` +
+		`{"uid":"u1","fullName":"Ada","experience":[{"title":"CTO","company":"X","since":2001},{"title":"dev","company":"Y"}],"skills":["go"],"contactsFetched":9},` +
+		`{"uid":"u2","fullName":"Bo","experience":[],"openToWork":true}],"private":"no"}`
+	for _, tc := range []struct {
+		name string
+		keys []string
+		want string
+	}{
+		{"a top-level key as before", []string{"total"}, `{"total":2}`},
+		{"a leaf keeps its siblings out", []string{"profiles.uid"},
+			`{"profiles":[{"uid":"u1"},{"uid":"u2"}]}`},
+		{"a leaf of a leaf list keeps its whole value", []string{"profiles.experience"},
+			`{"profiles":[{"experience":[{"title":"CTO","company":"X","since":2001},{"title":"dev","company":"Y"}]},{"experience":[]}]}`},
+		{"two paths under one key share its structure", []string{"total", "profiles.uid", "profiles.experience.title"},
+			`{"profiles":[{"experience":[{"title":"CTO"},{"title":"dev"}],"uid":"u1"},{"experience":[],"uid":"u2"}],"total":2}`},
+		{"a path through a list of objects keeps each level's keys", []string{"profiles.experience.company"},
+			`{"profiles":[{"experience":[{"company":"X"},{"company":"Y"}]},{"experience":[]}]}`},
+		{"an absent path yields nothing, not an error", []string{"profiles.missing", "nope.uid"}, `{"profiles":[{},{}]}`},
+		{"a path through a scalar drops it", []string{"total.uid", "profiles.uid.x"}, `{"profiles":[{},{}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := string(selected([]byte(answer), tc.keys)); got != tc.want {
+				t.Fatalf("selected(%v) = %s; want %s", tc.keys, got, tc.want)
+			}
+		})
+	}
+	if got := string(selected([]byte(`[{"id":1,"x":2},{"id":2}]`), []string{"id"})); got != `[{"id":1},{"id":2}]` {
+		t.Fatalf("a top-level list keeps each element's key: %s", got)
+	}
+	if got := string(selected([]byte(`"just a string"`), []string{"profiles.uid"})); got != `"just a string"` {
+		t.Fatalf("a top-level scalar is returned as it is: %s", got)
+	}
+	if got := string(selected([]byte(`{"profiles":[]}`), []string{"profiles.uid"})); got != `{"profiles":[]}` {
+		t.Fatalf("an empty list is kept empty: %s", got)
+	}
+}

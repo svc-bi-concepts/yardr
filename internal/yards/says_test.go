@@ -192,7 +192,7 @@ func TestOldWireYardIsRefusedBeforeAnyDial(t *testing.T) {
 		},
 		"pull": func() error { _, err := a.caller().Pull(ctx, *toOld, 0, 0); return err },
 	} {
-		if err := call(); err == nil || !strings.Contains(err.Error(), "was linked before sealed bodies: re-link it") {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "was linked before sealed bodies: enroll its missing encryption pin") {
 			t.Errorf("%s to a keyless record = %v, want the re-link line", name, err)
 		}
 	}

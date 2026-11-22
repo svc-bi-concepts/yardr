@@ -460,12 +460,16 @@ never restarts: the session hands off when its conversation allows, or not
 at all.
 
 - The input is what follows the pane's last line that begins with `❯`
-  (Claude Code) or `›` (Codex), down to the next empty line or rule. Kimi
-  Code's is in a box: what follows `>` after the box's left edge `│`, down
-  to the box's bottom, without the edges. A pane that does not show its own
-  kind's mark is read by the other two, and text after one holds a nudge
-  back all the same: the answer Kimi's menus mark with `❯` is not typed
-  after. A harness with none of them, and a pane herdr cannot read, are
+  (Claude Code) or `›` (Codex), down to the next empty line or rule. A
+  box-drawing run followed directly by the kind's `marks.footer` also ends
+  the input: a footer fused to the bottom rule is not a draft. Text above
+  that row still holds the nudge, and kinds with no footer mark read as
+  before. Kimi Code's is in a box: what follows `>` after the box's left
+  edge `│`, down to the box's bottom, without the edges. A pane that does
+  not show its own kind's mark is read by the other two, and text after
+  one holds a nudge back all the same: the answer Kimi's menus mark with
+  `❯` is not typed after. A harness with none of them, and a pane herdr
+  cannot read, are
   nudged as before. The marks of each kind are in the table under "A first
   prompt that gets lost" in [groups.md](groups.md).
 - A placeholder is not text. Claude Code and Codex draw theirs faint (`Try "fix
@@ -475,9 +479,17 @@ at all.
 - Text that stays is never cleared and never typed after. After ten minutes
   one `nudge_held` event on the crew member's journal says so, once per wait,
   with the pane (`yardr events --bead <name>-journal`); the nudge is typed
-  when the text is sent or cleared. `nudge_held` is of the class
-  `attention`, so the yardmaster's inbox has it of every other crew member
+  when the text is sent or cleared. Its `composer` names why the input reads
+  as text: `draft`, or `garbled` for a redraw that puts one character on each
+  line. It is one fixed word and never the text itself. `nudge_held` is of
+  the class `attention`, so the yardmaster's inbox has it of every other crew member
   and of a bead's session.
+- A screen that only looks held (a remote herdr attach overprints it and the
+  input box is not drawn) is not left to hold a nudge for hours: when the
+  input reads as text or unreadable, yardr sends one Ctrl-L to that same
+  pane, reads again after a moment, and types the nudge only if the fresh
+  read shows an empty input. The check is retried every three minutes, and
+  the wait's age is kept across retries.
 - One short mail arrives in the nudge itself: where the session's slice
   holds exactly one unread entry, it is mail, and its line is at most 600
   characters, the nudge types `yardr: <seq> mail from <sender>: <text>` on
@@ -957,9 +969,10 @@ a new comment for an issue delivery; in GitHub it is a comment on the issue
 or pull request.
 A `mail` event to the crew member is answered by mail to its sender: mail
 from this yard (a user or a crew member) as `yardr mail <sender>` would
-send it; mail from `<name>@<peer>` as `yardr mail <name>@<peer>` would (it
-is queued for the peer, which the crew member must be allowed, and a
-refusal reads as that command's). Mail from a bead's session, whose actor
+send it; mail from `<name>@<peer>` follows the
+[peer reply rules](peers.md#mail-between-crew-members), including mail written
+directly through `--home`, and the same section explains refusals for an
+undeliverable link or an older bare foreign sender. Mail from a bead's session, whose actor
 is no inbox, is answered by a note on that bead, written as `yardr bead
 note` writes one: its live session is told of it, and with none running the
 note waits on the bead for whoever works it next. Anything else is refused.
@@ -974,6 +987,12 @@ the caption where it fits, else it is sent first and the files follow
 without one. A source whose file does not say its replies take files is
 refused (`--file` there would send the words and drop the files); mail
 and a note on another yard's bead take no `--file`.
+
+With `--broadcast`, a reply also appears in the channel when the source
+supports it. Direct and group direct messages, mail and notes on another
+yard's bead cannot be broadcast, and `--broadcast` cannot be combined
+with `--file`. For Slack's required permissions and setup, see
+[the Slack pack](../packs/slack/SETUP.md).
 
 yardr only types. The call is made by the CLI in the crew member's pane with
 the credential its `env_file` put there (`LINEAR_API_KEY`; for GitHub
@@ -1002,8 +1021,9 @@ at the end of the body, which renders as nothing. Run the same `yardr
 reply` again, after a timeout or a crash, and yardr answers from the
 record when the post is known to have landed, else asks the source for the
 comment that key made and records it, and only posts when there is none.
-Another text, another `--to`, or other files are another reply. A call to a source is
-bounded at two minutes, well past a slow day at Linear, so a post that
+Another text, another `--to`, other files, or changing `--broadcast` are
+another reply. Retry with the same broadcast choice to reuse its record.
+A call to a source is bounded at two minutes, well past a slow day at Linear, so a post that
 landed slowly is not reported as failed and made again.
 
 **Slack.** A Slack delivery lands in the line session's slice, whoever

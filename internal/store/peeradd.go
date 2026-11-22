@@ -2,8 +2,188 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"reflect"
+	"strings"
+
+	bolt "go.etcd.io/bbolt"
 )
+
+// CommitPeerEnrollment applies the identity from a fresh signed pairing
+// without replacing the existing link. See enrollPeerIdentity for the
+// mutation and audit invariants.
+func (s *Store) CommitPeerEnrollment(ctx context.Context, proof PeerEnrollmentProof, actor string) (*Peer, error) {
+	var out Peer
+	err := s.write(func(w *wtx) error {
+		if err := w.may(ctx, actor, ActPair, Object{Kind: KindPeer}); err != nil {
+			return err
+		}
+		if err := s.verifyPeerEnrollmentProof(w.Tx, proof); err != nil {
+			return err
+		}
+		var err error
+		out, _, err = w.enrollPeerIdentity(proof.Expected, proof.Invite.Name, proof.Invite.Enc, actor)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetPeer(ctx, out.Name)
+}
+
+// verifyPeerEnrollmentProof ties the caller's mutation to the exact native
+// confirm exchange. The ordinary pair command has already shown the check;
+// the store verifies that its signed confirmation names this transcript.
+func (s *Store) verifyPeerEnrollmentProof(tx *bolt.Tx, p PeerEnrollmentProof) error {
+	if len(p.ConfirmRequestURL) > 2048 || len(p.ConfirmRequestBody) > PairingMessageBound || len(p.ConfirmResponseBody) > PairingMessageBound ||
+		len(p.ConfirmRequestSig) > 256 || len(p.ConfirmResponseSig) > 256 || len(p.ConfirmRequestTime) > 32 {
+		return errors.New("peer enrollment proof exceeds the pairing message bound")
+	}
+	requestURL, err := url.Parse(p.ConfirmRequestURL)
+	if err != nil || requestURL.String() != p.Expected.URL+"/peers/pair/confirm" || requestURL.RawQuery != "" || requestURL.Fragment != "" || requestURL.User != nil {
+		return errors.New("peer enrollment confirmation did not use the unchanged peer URL")
+	}
+	if err := VerifyPairRequest(s.yardKey(), p.Expected.Key, http.MethodPost, "/peers/pair/confirm", p.ConfirmRequestTime, p.ConfirmRequestSig, p.ConfirmRequestBody, now()); err != nil {
+		return fmt.Errorf("peer enrollment confirmation request: %w", err)
+	}
+	var answer PairingAnswer
+	if err := json.Unmarshal(p.ConfirmRequestBody, &answer); err != nil || !answer.Confirm || answer.Session != p.Transcript.Session() {
+		return errors.New("peer enrollment confirmation does not name the transcript")
+	}
+	if p.ConfirmResponseStatus != http.StatusOK || VerifyResponse(p.Expected.Key, p.ConfirmResponseStatus, p.ConfirmRequestSig, p.ConfirmResponseSig, p.ConfirmResponseBody) != nil {
+		return errors.New("peer enrollment confirmation response is not signed by the peer")
+	}
+	var outcome PairingOutcome
+	if err := json.Unmarshal(p.ConfirmResponseBody, &outcome); err != nil || outcome.State != Confirmed {
+		return errors.New("peer enrollment confirmation is not confirmed")
+	}
+	return s.validateEnrollmentBinding(tx, p.Expected, p.Invite, p.Transcript)
+}
+
+func (s *Store) validateEnrollmentBinding(tx *bolt.Tx, expected Peer, invite Invite, transcript Transcript) error {
+	parsed, err := ParseInvite(invite.String())
+	if err != nil || invite.Enc == "" || parsed != invite {
+		return errors.New("peer enrollment requires a valid current sealed-wire invite")
+	}
+	if err := transcript.Joiner.Valid(); err != nil {
+		return fmt.Errorf("peer enrollment transcript: %w", err)
+	}
+	if err := transcript.Host.Valid(); err != nil {
+		return fmt.Errorf("peer enrollment transcript: %w", err)
+	}
+	if Commit(transcript.Joiner) != transcript.Commit || transcript.Joiner.URL != "" {
+		return errors.New("peer enrollment transcript does not match its commitment")
+	}
+	// The name may have changed since the peer was linked; the pinned key
+	// and URL may not, and the pairing must name the invite's yard.
+	if expected.Key != invite.Key || expected.URL != invite.URL ||
+		transcript.Host.Name != invite.Name || transcript.Host.Key != invite.Key || transcript.Host.Enc != invite.Enc || transcript.Host.URL != invite.URL {
+		return fmt.Errorf("peer %s identity or authority does not match the invite and pairing", expected.Name)
+	}
+	if expected.Enc != "" && expected.Enc != invite.Enc {
+		return fmt.Errorf("peer %s already has a different encryption key; key rotation is not supported", expected.Name)
+	}
+	var current Peer
+	ok, err := get(tx, bPeers, expected.Name, &current)
+	if err != nil {
+		return err
+	}
+	if !ok || !reflect.DeepEqual(current, enrollmentPeerRecord(expected)) {
+		return fmt.Errorf("peer %s changed during enrollment", expected.Name)
+	}
+	var name string
+	if _, err := get(tx, bSettings, "name", &name); err != nil {
+		return err
+	}
+	if name == "" {
+		name = strings.TrimLeft(filepath.Base(s.home), ".")
+	}
+	if transcript.Joiner.Name != name || transcript.Joiner.Key != s.yardKey() {
+		return errors.New("peer enrollment transcript does not match this yard's identity")
+	}
+	priv, err := s.peerEncPriv()
+	if err != nil {
+		return errors.New("this yard has no usable encryption identity for the pairing")
+	}
+	ownEnc, err := EncPublicOf(priv)
+	if err != nil || transcript.Joiner.Enc != ownEnc {
+		return errors.New("peer enrollment transcript does not match this yard's encryption identity")
+	}
+	return nil
+}
+
+// enrollPeerIdentity is the one private write a proof-verified enrollment
+// makes: it fills the peer's missing encryption pin and takes the name the
+// peer calls itself now, as one write. It is called only by
+// CommitPeerEnrollment and by the host's finishPairing, after the native
+// confirmations; the caller has checked the key, URL and invite agreement.
+//
+// The record must still be expected in full (the compare is the CAS), and
+// an encryption key already saved must be the invite's. Nothing is written
+// when both the name and the key already match. A changed name is audited
+// as peer_identity_enrolled, which carries no key or proof; a fill of the
+// encryption key alone keeps the event it always had.
+func (w *wtx) enrollPeerIdentity(expected Peer, calls, enc, actor string) (Peer, bool, error) {
+	var current Peer
+	ok, err := get(w.Tx, bPeers, expected.Name, &current)
+	if err != nil {
+		return Peer{}, false, err
+	}
+	if !ok {
+		return Peer{}, false, ErrNotFound
+	}
+	if !reflect.DeepEqual(current, enrollmentPeerRecord(expected)) {
+		return Peer{}, false, fmt.Errorf("peer %s changed during enrollment", expected.Name)
+	}
+	if current.Enc != "" && current.Enc != enc {
+		return Peer{}, false, fmt.Errorf("peer %s already has a different encryption key; key rotation is not supported", expected.Name)
+	}
+	if current.Enc == enc && current.Calls == calls {
+		return current, true, nil
+	}
+	if current.Enc == "" {
+		if _, err := ParseEncPublic(enc); err != nil {
+			return Peer{}, false, fmt.Errorf("peer %s: %w", expected.Name, err)
+		}
+	}
+	pinAdded := current.Enc == ""
+	if current.Calls != calls {
+		// The old and new names are what the operators compared, so the
+		// audit keeps both; the local alias is the only other field.
+		data := map[string]any{"peer": expected.Name, "old_calls": current.Calls, "new_calls": calls, "encryption_pin_added": pinAdded}
+		current.Enc, current.Calls = enc, calls
+		if err := put(w.Tx, bPeers, expected.Name, &current); err != nil {
+			return Peer{}, false, err
+		}
+		if err := w.event("", "peer_identity_enrolled", actor, data); err != nil {
+			return Peer{}, false, err
+		}
+		return current, false, nil
+	}
+	current.Enc = enc
+	if err := put(w.Tx, bPeers, expected.Name, &current); err != nil {
+		return Peer{}, false, err
+	}
+	if err := w.event("", "peer_encryption_enrolled", actor, map[string]any{"peer": expected.Name, "key": expected.Key}); err != nil {
+		return Peer{}, false, err
+	}
+	return current, false, nil
+}
+
+// enrollmentPeerRecord removes only read-time summaries added by GetPeer;
+// the compare still covers every field stored with the peer record.
+func enrollmentPeerRecord(p Peer) Peer {
+	p.Roster = nil
+	p.Waiting, p.Failed, p.Error = 0, 0, ""
+	p.Away, p.Beads = 0, 0
+	p.OpenByDepot, p.ArriveByDepot = nil, nil
+	return p
+}
 
 // errOwnPeerInvite is the refusal shared by peer add and its run-ask card.
 var errOwnPeerInvite = errors.New("that invite is this yard's own: give it to the other yard's operator, and add theirs here")

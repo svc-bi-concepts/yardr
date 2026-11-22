@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -38,10 +39,10 @@ import (
 // one — with its user, and with only its bot id — a message with no
 // plain text) and what message.im carries beside new messages: an edit,
 // pinned as ignored, since an edit in a direct message reaches the yard
-// and must match no subscription. There is no fixture for an unmentioned
-// channel message or an unmentioned group message, since no subscription
-// brings either to the yard in a first version, and none pins room
-// group, which no event can supply.
+// and must match no subscription. The channel, group and group direct
+// message fixtures are the message.channels, message.groups and
+// message.mpim events beside a mention, pinned under TestSlackPackChannelMessages,
+// and none pins room group, which no event can supply.
 
 // slackParse is the pack's declaration as the yard would read it.
 func slackParse(t *testing.T) (*source.Declaration, string, string) {
@@ -107,8 +108,24 @@ func TestSlackPackDeclaration(t *testing.T) {
 	if !ok || post.Kind != source.Update || post.Request.Line() != "POST /chat.postMessage" {
 		t.Fatalf("post call = %+v", post)
 	}
-	if len(d.Calls) != 2 {
-		t.Fatalf("calls = %d, want whoami and post", len(d.Calls))
+	channels, ok := d.Call("channels")
+	if !ok || channels.Kind != source.Read || channels.Request.Line() != "GET /conversations.list" || len(channels.Params) != 0 {
+		t.Fatalf("channels call = %+v", channels)
+	}
+	if !reflect.DeepEqual(channels.Answer.Select, []string{"ok", "error", "channels.id", "channels.name", "channels.is_member"}) {
+		t.Fatalf("channels select = %q", channels.Answer.Select)
+	}
+	join, ok := d.Call("join")
+	if !ok || join.Kind != source.Update || join.Request.Line() != "POST /conversations.join" || len(join.Params) != 1 {
+		t.Fatalf("join call = %+v", join)
+	}
+	user, ok := d.Call("user")
+	if !ok || user.Kind != source.Read || strings.Join(user.Run, " ") != "slack/lookup user" || len(user.Params) != 1 ||
+		!reflect.DeepEqual(user.Answer.Select, []string{"users"}) {
+		t.Fatalf("user call = %+v", user)
+	}
+	if len(d.Calls) != 5 {
+		t.Fatalf("calls = %d, want whoami, post, channels, join and user", len(d.Calls))
 	}
 	h := d.Hook
 	if h == nil {
@@ -506,6 +523,37 @@ func TestSlackPackThread(t *testing.T) {
 				return
 			}
 			_, _ = io.WriteString(w, `{"ok":true,"ts":"1729157300.000900"}`)
+		case "conversations.info":
+			form, _ := url.ParseQuery(string(raw))
+			channel := form.Get("channel")
+			if mediaType(r) != "application/x-www-form-urlencoded" || channel == "" {
+				_, _ = io.WriteString(w, `{"ok":false,"error":"invalid_arguments"}`)
+				return
+			}
+			if channel == "CNOINFO" {
+				_, _ = io.WriteString(w, `{"ok":false,"error":"missing_scope"}`)
+				return
+			}
+			info := map[string]any{"id": channel, "is_im": false, "is_mpim": false, "is_channel": true, "is_group": false}
+			if channel == "G098MN456" {
+				info["is_mpim"], info["is_channel"] = true, false
+			}
+			if channel == "GLEGACY" {
+				info["is_channel"], info["is_group"] = false, true
+			}
+			if channel == "D012AB3CD" {
+				info["is_im"], info["is_channel"] = true, false
+			}
+			if channel == "CWRONG" {
+				info["id"] = "COTHER"
+			}
+			if channel == "CINVALID" {
+				delete(info, "is_im")
+			}
+			if channel == "CCONTRADICT" {
+				info["is_group"] = true
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": info})
 		case "conversations.replies":
 			form, _ := url.ParseQuery(string(raw))
 			reads = append(reads, slackRead{r.Method, mediaType(r), r.URL.RawQuery, form})
@@ -586,6 +634,27 @@ func TestSlackPackThread(t *testing.T) {
 		}
 		if m.ID != "1729157300.000900" || m.Body != "the shed lands Monday" {
 			t.Fatalf("%s: reply = %+v", channel, m)
+		}
+	}
+	before := len(posts)
+	if _, err := ad.ReplyBroadcast(ctx, env("C012AB3CD"), "", "broadcast answer", "key-broadcast", cred); err != nil {
+		t.Fatal(err)
+	}
+	if got := posts[len(posts)-1]; got["thread_ts"] != threads["C012AB3CD"][0].ts || got["reply_broadcast"] != true {
+		t.Errorf("broadcast reply was sent %v", got)
+	}
+	if _, err := ad.ReplyBroadcast(ctx, env("D012AB3CD"), "", "no broadcast", "key-dm", cred); err == nil || len(posts) != before+1 {
+		t.Errorf("DM broadcast = %v, posts %d (before %d)", err, len(posts), before)
+	}
+	legacy := hooks.Envelope{Source: "slack", Type: "message", Thread: hooks.Thread{ID: "GLEGACY:1729156800.000100"}}
+	if _, err := ad.ReplyBroadcast(ctx, legacy, "", "legacy private", "key-legacy", cred); err != nil {
+		t.Errorf("legacy private channel broadcast: %v", err)
+	}
+	for i, channel := range []string{"G098MN456", "CNOINFO", "CWRONG", "CINVALID", "CCONTRADICT"} {
+		bad := hooks.Envelope{Source: "slack", Type: "message", Thread: hooks.Thread{ID: channel + ":1729156800.000100"}}
+		before = len(posts)
+		if _, err := ad.ReplyBroadcast(ctx, bad, "", "must refuse", fmt.Sprintf("key-refuse-%d", i), cred); err == nil || len(posts) != before {
+			t.Errorf("metadata for %s: err %v, posts %d -> %d", channel, err, before, len(posts))
 		}
 	}
 	if auth != "Bearer "+cred {
@@ -706,4 +775,406 @@ func TestSlackPackThreadKeepsTheTokenOutOfArguments(t *testing.T) {
 	if strings.Contains(string(got), "MARKER-q2jq-token") {
 		t.Error("the bot's token was an argument of curl")
 	}
+}
+
+// slackBot is the bot's member id in the fixtures, the mention the
+// subscriptions of step 9 wake on.
+const slackBot = "U999BOT99"
+
+// slackEvent is an Events API body whose event is ev.
+func slackEvent(ev string) []byte {
+	return []byte(`{"type":"event_callback","team_id":"T012AB3CD","event_id":"Ev9","event":` + ev + `}`)
+}
+
+// A message in a channel, a group or a group direct message the bot is in
+// is stored as a message in its conversation's thread, with its room
+// channel, its sender and no mentions, and it nudges nothing: only a
+// mention, or a one-to-one direct message, wakes the bot. A message that
+// mentions the bot keeps its mention only on the app_mention Slack sends
+// beside it (TestSlackPackChannelMentionWakesOnce), since the message
+// itself arrives as message.channels and must not wake a second time.
+func TestSlackPackChannelMessages(t *testing.T) {
+	ad, _ := slackDecl(t)
+	for _, tc := range []struct {
+		name       string
+		wantThread string
+		wantText   string
+		wantSender string
+	}{
+		{"slack_message_channel.json", "C012AB3CD:1729157300.000600", "standup moved to ten", "U012AB3CD"},
+		{"slack_message_channel_mention.json", "C012AB3CD:1729157400.000700", "<@U999BOT99> standup moved to ten?", "U012AB3CD"},
+		{"slack_message_group.json", "G098MN456:1729157500.000800", "who has the keys?", "U034EF56G"},
+		{"slack_message_mpim.json", "G098MN789:1729157600.000900", "<@U012AB3CD> lunch?", "U034EF56G"},
+	} {
+		got, err := ad.Normalize(nil, fixture(t, tc.name))
+		if err != nil {
+			t.Errorf("%s: normalize: %v", tc.name, err)
+			continue
+		}
+		if got.Type != "message" || got.Thread.ID != tc.wantThread || got.Text != tc.wantText {
+			t.Errorf("%s: type %q thread %q text %q, want message %q %q", tc.name, got.Type, got.Thread.ID, got.Text, tc.wantThread, tc.wantText)
+		}
+		if len(got.Mentions) != 0 {
+			t.Errorf("%s: mentions = %q, want none: a channel message's mention is its app_mention's", tc.name, got.Mentions)
+		}
+		if !reflect.DeepEqual(got.Fields["room"], []string{"channel"}) || !reflect.DeepEqual(got.Fields["sender"], []string{tc.wantSender}) {
+			t.Errorf("%s: fields = %v, want room channel and sender %s", tc.name, got.Fields, tc.wantSender)
+		}
+	}
+}
+
+// A channel mention arrives twice: as message.channels, which carries the
+// message and is stored, and as its app_mention, which is heard. Only the
+// app_mention nudges, so the mention wakes the bot once. The app_mention
+// below is the one Slack sends beside slack_message_channel_mention.json:
+// the same ts, channel, sender and text, under its own event id.
+func TestSlackPackChannelMentionWakesOnce(t *testing.T) {
+	ad, _ := slackDecl(t)
+	msg, err := ad.Normalize(nil, fixture(t, "slack_message_channel_mention.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	twin, err := ad.Normalize(nil, slackEvent(`{"type":"app_mention","user":"U012AB3CD","text":"<@U999BOT99> standup moved to ten?","ts":"1729157400.000700","channel":"C012AB3CD","event_ts":"1729157400.000700"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Thread.ID != twin.Thread.ID || msg.Message != twin.Message {
+		t.Fatalf("the two are not one message: %q %q against %q %q", msg.Thread.ID, msg.Message, twin.Thread.ID, twin.Message)
+	}
+	if len(msg.Mentions) != 0 {
+		t.Errorf("message.channels mentions = %q, want none: only its app_mention carries the mention", msg.Mentions)
+	}
+	if !reflect.DeepEqual(twin.Mentions, []string{slackBot}) {
+		t.Errorf("app_mention mentions = %q, want the bot", twin.Mentions)
+	}
+}
+
+// What is not a message of the conversation: a join, a message_replied
+// Slack sends beside a thread reply, and any other subtype are answered as
+// type event and match nothing. A thread broadcast and a bot's own post
+// in a channel are messages, the former in the thread it was broadcast
+// from and the latter by its bot id, as a direct message's are.
+func TestSlackPackSubtypes(t *testing.T) {
+	ad, _ := slackDecl(t)
+	for _, tc := range []struct {
+		name       string
+		body       []byte
+		wantType   string
+		wantThread string
+		wantSender string
+	}{
+		{"a channel join is an event", fixture(t, "slack_channel_join.json"), "event", "", ""},
+		{"a message_replied is an event", fixture(t, "slack_message_replied.json"), "event", "", ""},
+		{"a channel topic change is an event", slackEvent(`{"type":"message","subtype":"channel_topic","channel_type":"channel","user":"U012AB3CD","text":"<@U012AB3CD> set the topic","ts":"1729157900.001200","channel":"C012AB3CD"}`), "event", "", ""},
+		{"a thread broadcast is a message of its thread", slackEvent(`{"type":"message","subtype":"thread_broadcast","channel_type":"channel","user":"U078GH90J","text":"and the gate?","thread_ts":"1729156800.000100","ts":"1729157000.000300","channel":"C012AB3CD"}`), "message", "C012AB3CD:1729156800.000100", "U078GH90J"},
+		{"a bot's post in a channel is a message by its bot id", slackEvent(`{"type":"message","subtype":"bot_message","channel_type":"channel","bot_id":"B012AB3CD","text":"posted","ts":"1729157900.001300","channel":"C012AB3CD"}`), "message", "C012AB3CD:1729157900.001300", "B012AB3CD"},
+	} {
+		got, err := ad.Normalize(nil, tc.body)
+		if err != nil {
+			t.Errorf("%s: normalize: %v", tc.name, err)
+			continue
+		}
+		if got.Type != tc.wantType || got.Thread.ID != tc.wantThread {
+			t.Errorf("%s: type %q thread %q, want %q %q", tc.name, got.Type, got.Thread.ID, tc.wantType, tc.wantThread)
+		}
+		if tc.wantSender != "" && !reflect.DeepEqual(got.Fields["sender"], []string{tc.wantSender}) {
+			t.Errorf("%s: sender = %q, want %s", tc.name, got.Fields["sender"], tc.wantSender)
+		}
+		if tc.wantType == "event" && len(got.Mentions) != 0 {
+			t.Errorf("%s: an event carries mentions %q", tc.name, got.Mentions)
+		}
+	}
+}
+
+// The channel calls against a stand-in for Slack, through the declared
+// call itself: channels lists the public channels with their membership,
+// form-encoded as a read is, and join puts the bot in one channel as a
+// JSON write. A channel Slack refuses comes back ok false with its reason,
+// not as a success, and a private or direct conversation id is refused
+// before anything is sent.
+func TestSlackPackChannelCalls(t *testing.T) {
+	d, _, _ := slackParse(t)
+	type seen struct {
+		method, path, query, auth, media, body string
+	}
+	var got []seen
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		got = append(got, seen{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Content-Type"), string(raw)})
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/conversations.list":
+			_, _ = io.WriteString(w, `{"ok":true,"channels":[{"id":"C012AB3CD","name":"general","is_member":true,"topic":{"value":"hi"},"purpose":{"value":"all"},"creator":"U012AB3CD"},{"id":"C098MN456","name":"ops","is_member":false,"topic":{"value":""},"purpose":{"value":"ops"},"creator":"U098MN456"}],"response_metadata":{"next_cursor":""}}`)
+		case "/conversations.join":
+			if strings.Contains(string(raw), "CARCHIVED") {
+				_, _ = io.WriteString(w, `{"ok":false,"error":"is_archived"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"ok":true,"channel":{"id":"C098MN456","name":"ops","is_member":true}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	dup := *d
+	dup.Base = srv.URL
+	ctx := context.Background()
+
+	res, err := source.Do(ctx, &dup, "channels", nil, "xoxb-test", nil)
+	if err != nil {
+		t.Fatalf("channels: %v", err)
+	}
+	if res.Status != http.StatusOK {
+		t.Fatalf("channels status = %d", res.Status)
+	}
+	var list struct {
+		OK       bool `json:"ok"`
+		Channels []struct {
+			ID       string `json:"id"`
+			IsMember bool   `json:"is_member"`
+		} `json:"channels"`
+	}
+	if err := json.Unmarshal(res.Answer, &list); err != nil || !list.OK || len(list.Channels) != 2 || list.Channels[1].ID != "C098MN456" || list.Channels[1].IsMember {
+		t.Fatalf("channels answer = %s, %v", res.Answer, err)
+	}
+	// The select keeps each channel's id, name and is_member and drops the
+	// topic, purpose and creator Slack sends with it, and the paging key.
+	if strings.Contains(string(res.Answer), "topic") || strings.Contains(string(res.Answer), "creator") || strings.Contains(string(res.Answer), "response_metadata") {
+		t.Fatalf("channels answer keeps fields the select drops: %s", res.Answer)
+	}
+	if want := `{"channels":[{"id":"C012AB3CD","is_member":true,"name":"general"},{"id":"C098MN456","is_member":false,"name":"ops"}],"ok":true}`; string(res.Answer) != want {
+		t.Fatalf("channels answer = %s, want %s", res.Answer, want)
+	}
+	if len(got) != 1 || got[0].method != http.MethodGet || got[0].auth != "Bearer xoxb-test" {
+		t.Fatalf("channels sent %+v", got)
+	}
+	q, _ := url.ParseQuery(got[0].query)
+	if q.Get("types") != "public_channel" || q.Get("exclude_archived") != "true" || q.Get("limit") != "1000" {
+		t.Errorf("channels query = %q", got[0].query)
+	}
+
+	res, err = source.Do(ctx, &dup, "join", map[string]string{"channel": "C098MN456"}, "xoxb-test", nil)
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	var joined struct {
+		OK      bool   `json:"ok"`
+		Error   string `json:"error"`
+		Channel struct {
+			ID string `json:"id"`
+		} `json:"channel"`
+	}
+	if err := json.Unmarshal(res.Answer, &joined); err != nil || !joined.OK || joined.Channel.ID != "C098MN456" {
+		t.Fatalf("join answer = %s, %v", res.Answer, err)
+	}
+	if last := got[len(got)-1]; last.method != http.MethodPost || last.path != "/conversations.join" || last.body != `{"channel":"C098MN456"}` || last.auth != "Bearer xoxb-test" {
+		t.Errorf("join sent %+v", last)
+	}
+
+	res, err = source.Do(ctx, &dup, "join", map[string]string{"channel": "CARCHIVED"}, "xoxb-test", nil)
+	if err != nil {
+		t.Fatalf("join of an archived channel: %v", err)
+	}
+	if err := json.Unmarshal(res.Answer, &joined); err != nil || joined.OK || joined.Error != "is_archived" {
+		t.Errorf("a refused join answered %s, %v: want ok false and is_archived", res.Answer, err)
+	}
+
+	// A group or direct conversation is no channel the bot can join: the
+	// pattern refuses it before a request is made.
+	sent := len(got)
+	for _, id := range []string{"G098MN456", "D012AB3CD", "c012ab3cd"} {
+		if err := source.ValidateCallParams(&dup, "join", map[string]string{"channel": id}, nil); err == nil {
+			t.Errorf("join accepted %q", id)
+		}
+	}
+	if len(got) != sent {
+		t.Errorf("a refused join sent %d requests", len(got)-sent)
+	}
+}
+
+// The user call's program, slack/lookup user, answers the members of the
+// workspace whose real or display name holds the name it is handed, as a
+// mention needs their ids. The stand-in's users.list is two pages, each
+// profile carrying an email, a phone and a picture, which must reach no
+// answer: the answer holds id, real_name, display_name and is_bot only,
+// at most five members in directory order, a deactivated account is none,
+// and the match is case-insensitive on either name. Slack's refusal of a
+// page is the program's error, its reason alone on stderr, and no partial
+// answer.
+func TestSlackPackUser(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed, and the pack's lookup command calls the service with it")
+	}
+	_, home := slackDecl(t)
+	prog := filepath.Join(home, "sources", "slack", "slack", "lookup")
+	member := func(id, real, display string, bot, deleted bool) map[string]any {
+		return map[string]any{"id": id, "real_name": real, "is_bot": bot, "deleted": deleted,
+			"profile": map[string]any{"display_name": display, "email": display + "@example.com",
+				"phone": "+41 79 000 00 00", "image_192": "https://img.example/" + id + ".png", "title": "Analyst"}}
+	}
+	page1 := []map[string]any{
+		member("U012AB3CD", "Ada Lovelace", "ada", false, false),
+		member("U034EF56G", "Grace Hopper", "grace", false, false),
+		member("U999BOT99", "yardr", "yardr", true, false),
+	}
+	page2 := []map[string]any{
+		member("U078GH90J", "Ada Byron", "byron", false, false),
+		member("U55DEL555", "Ada Former", "former", false, true),
+		member("U100ADM01", "Adam Ash", "adam", false, false),
+		member("U100ADM02", "Adam Birch", "birch", false, false),
+		member("U100ADM03", "Adam Cole", "cole", false, false),
+		member("U100ADM04", "Adam Dunn", "dunn", false, false),
+	}
+	refuse := false
+	var cursors []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.TrimPrefix(r.URL.Path, "/") != "users.list" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"ok":false,"error":"unknown_method"}`)
+			return
+		}
+		if m, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); m != "" && m != "application/x-www-form-urlencoded" {
+			t.Errorf("users.list was sent as %q, want form-encoded", m)
+		}
+		if r.Header.Get("Authorization") != "Bearer xoxb-test-token" {
+			t.Errorf("users.list was called with Authorization %q", r.Header.Get("Authorization"))
+		}
+		if refuse {
+			_, _ = io.WriteString(w, `{"ok":false,"error":"missing_scope"}`)
+			return
+		}
+		form, _ := url.ParseQuery(readAllString(t, r))
+		cursor := form.Get("cursor")
+		cursors = append(cursors, cursor)
+		out := map[string]any{"ok": true}
+		if cursor == "" {
+			out["members"] = page1
+			out["response_metadata"] = map[string]any{"next_cursor": "page2"}
+		} else {
+			if cursor != "page2" {
+				t.Errorf("users.list was sent cursor %q, want page2", cursor)
+			}
+			out["members"] = page2
+			out["response_metadata"] = map[string]any{"next_cursor": ""}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	}))
+	defer srv.Close()
+	run := func(name string) (string, string, int) {
+		t.Helper()
+		in, err := json.Marshal(map[string]any{"params": map[string]any{"name": name}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(prog, "user")
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "SLACK_BOT_TOKEN=xoxb-test-token", "YARDR_SOURCE_BASE=" + srv.URL}
+		cmd.Stdin = bytes.NewReader(in)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		code := 0
+		if err := cmd.Run(); err != nil {
+			exit, ok := err.(*exec.ExitError)
+			if !ok {
+				t.Fatal(err)
+			}
+			code = exit.ExitCode()
+		}
+		return stdout.String(), stderr.String(), code
+	}
+	// The answer's ids and names, and nothing a profile holds beyond them.
+	ids := func(out string) []string {
+		t.Helper()
+		for _, leaked := range []string{"@example.com", "+41", "img.example", "Analyst"} {
+			if strings.Contains(out, leaked) {
+				t.Errorf("the answer carries %q: %s", leaked, out)
+			}
+		}
+		var a struct {
+			Users []map[string]any `json:"users"`
+		}
+		if err := json.Unmarshal([]byte(out), &a); err != nil {
+			t.Fatalf("answer is no users object: %v: %s", err, out)
+		}
+		var got []string
+		for _, u := range a.Users {
+			if len(u) != 4 {
+				t.Errorf("a user carries %d fields, want id, real_name, display_name and is_bot: %v", len(u), u)
+			}
+			got = append(got, u["id"].(string))
+		}
+		return got
+	}
+	out, errOut, code := run("ada")
+	if code != 0 || errOut != "" {
+		t.Fatalf("ada: exit %d, stderr %q", code, errOut)
+	}
+	// Lovelace and Byron match, the deactivated Former does not, and the
+	// first five of the six matches in directory order are the answer.
+	if want := []string{"U012AB3CD", "U078GH90J", "U100ADM01", "U100ADM02", "U100ADM03"}; !reflect.DeepEqual(ids(out), want) {
+		t.Errorf("ada: ids = %q, want %q", ids(out), want)
+	}
+	if !reflect.DeepEqual(cursors, []string{"", "page2"}) {
+		t.Errorf("users.list was asked with cursors %q, want the first page then page2", cursors)
+	}
+	out, errOut, code = run("GRACE")
+	if code != 0 || errOut != "" || !reflect.DeepEqual(ids(out), []string{"U034EF56G"}) {
+		t.Errorf("GRACE: exit %d, stderr %q, answer %s", code, errOut, out)
+	}
+	var grace struct {
+		Users []map[string]any `json:"users"`
+	}
+	_ = json.Unmarshal([]byte(out), &grace)
+	if want := (map[string]any{"id": "U034EF56G", "real_name": "Grace Hopper", "display_name": "grace", "is_bot": false}); !reflect.DeepEqual(grace.Users[0], want) {
+		t.Errorf("GRACE: user = %v, want %v", grace.Users[0], want)
+	}
+	// The bot is a member like any other: its name matches, and is_bot says so.
+	out, _, _ = run("yard")
+	var bot struct {
+		Users []map[string]any `json:"users"`
+	}
+	_ = json.Unmarshal([]byte(out), &bot)
+	if len(bot.Users) != 1 || bot.Users[0]["is_bot"] != true {
+		t.Errorf("yard: answer = %s, want the bot with is_bot true", out)
+	}
+	if out, errOut, code := run("nobody"); code != 0 || errOut != "" || strings.TrimSpace(out) != `{"users":[]}` {
+		t.Errorf("nobody: exit %d, stderr %q, answer %q, want an empty list", code, errOut, out)
+	}
+	if out, _, code := run("former"); code != 0 || strings.TrimSpace(out) != `{"users":[]}` {
+		t.Errorf("former: exit %d, answer %q: a deactivated account matches nothing", code, out)
+	}
+	if out, errOut, code := run(""); code == 0 || out != "" || !strings.Contains(errOut, "no name") {
+		t.Errorf("an empty name: exit %d, stdout %q, stderr %q, want a refusal before any request", code, out, errOut)
+	}
+	page1 = nil
+	for i := 0; i < 200; i++ {
+		page1 = append(page1, member(fmt.Sprintf("U%08d", i), "Ada "+strings.Repeat("x", 2048), "ada", false, false))
+	}
+	cursors = nil
+	out, errOut, code = run("ada")
+	if code != 0 || errOut != "" {
+		t.Fatalf("large matching directory: exit %d, stderr %q", code, errOut)
+	}
+	if want := []string{"U00000000", "U00000001", "U00000002", "U00000003", "U00000004"}; !reflect.DeepEqual(ids(out), want) {
+		t.Errorf("large matching directory: ids = %q, want %q", ids(out), want)
+	}
+	if !reflect.DeepEqual(cursors, []string{"", "page2"}) {
+		t.Errorf("large matching directory: cursors = %q, want both pages", cursors)
+	}
+	refuse = true
+	out, errOut, code = run("ada")
+	if code == 0 || out != "" || strings.TrimSpace(errOut) != "slack missing_scope" {
+		t.Errorf("refused: exit %d, stdout %q, stderr %q, want no answer and slack missing_scope alone", code, out, errOut)
+	}
+}
+
+// readAllString is the request's body as text, for a test that reads the
+// form a command sent.
+func readAllString(t *testing.T, r *http.Request) string {
+	t.Helper()
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }

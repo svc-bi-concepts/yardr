@@ -178,12 +178,6 @@ func (g Group) peerTries() int {
 	return PeerBeadTries
 }
 
-// peerRemote is the remote of the depot a branch the group's peer returns is
-// fetched from.
-func (g Group) peerRemote() string {
-	return or(setting(g.Config[GroupRemote]), PeerRemote)
-}
-
 // checkPeerGroup refuses a group of the peer runner that could send
 // nothing: it names no peer, one this yard is not linked with, or one
 // whose link carries no beads out.
@@ -354,10 +348,10 @@ func stayOf(tx *bolt.Tx, uuid string) (entered, unheld uint64, err error) {
 //
 // A bead that cannot be sent ends its stage here, as one that was sent and
 // not taken does later: undelivered when the peer is gone or its link
-// carries no beads out, refused when the bead is larger than crosses a
-// link, or when its branch has commits of this yard's own since a yard
-// returned it. Nothing is queued for any of these, and each reads as not
-// sent.
+// carries no beads out, refused when the bead is larger than crosses a link.
+// A branch with commits of this yard's own is pushed first (startOf), and
+// the sending is tried again on a later pass while the push fails. Nothing
+// is queued for any of these, and each reads as not sent.
 func (s *Store) PeerBeadSend(ctx context.Context, session string) (*BeadPeer, error) {
 	sess, err := s.GetSession(ctx, session)
 	if err != nil {
@@ -392,9 +386,12 @@ func (s *Store) PeerBeadSend(ctx context.Context, session string) (*BeadPeer, er
 		if err != nil {
 			return nil, err
 		}
-		gctx, cancel := context.WithTimeout(ctx, peerFetchTimeout)
-		from, moved = againOf(gctx, *depot, pre.ID, baseOf(gctx, *depot, fam.Base), last)
-		cancel()
+		if err := s.checkPeerRemote(ctx, *depot, sess.Group, pre.ID); err != nil {
+			return nil, err
+		}
+		if from, moved, err = s.startOf(ctx, *depot, pre.ID, sess.Group, fam.Base, last); err != nil {
+			return nil, err
+		}
 	}
 	err = s.write(func(w *wtx) error {
 		row, err := w.loadBead(pre.UUID)
@@ -954,7 +951,7 @@ func (s *Store) settleSent(ctx context.Context, uuid string) error {
 		case g == nil:
 		case rec.Fetched != nil:
 			note = append(note, fmt.Sprintf("The yard %s returned its branch %s at %s, which is %s here now. The work on it is that yard's, and so is any test line in its notes: this yard has not tested it.",
-				name, g.Branch, short(g.Commit), Branch(row.ID)))
+				name, g.Branch, short(g.Commit), BranchOfBead(row.Bead)))
 		default:
 			note = append(note, fmt.Sprintf("The yard %s returned a branch (%s at %s) that this yard did not take: %s. What came back is the outcome and the notes.",
 				name, g.Branch, short(g.Commit), strings.TrimSuffix(rec.NotTaken, ".")))
@@ -1089,7 +1086,7 @@ func (s *Store) PeerFetches(ctx context.Context) ([]PeerFetch, error) {
 			if rec.GaveUp != nil && row.Hold {
 				return nil
 			}
-			f := PeerFetch{Bead: h.of(rec.Bead), Message: rec.Message, Peer: rec.Was, Into: Branch(row.ID), Git: *rec.Git,
+			f := PeerFetch{Bead: h.of(rec.Bead), Message: rec.Message, Peer: rec.Was, Into: BranchOfBead(row.Bead), Git: *rec.Git,
 				Attempts: rec.Attempts, Error: rec.Error, RetryAt: rec.RetryAt, Remote: PeerRemote, Tries: PeerBeadTries}
 			if rec.GaveUp != nil {
 				// Released since: a round of its own.
@@ -1155,7 +1152,7 @@ func (s *Store) PeerFetched(ctx context.Context, bead, message, notTaken string)
 			kind, data["reason"] = "peer_bead_not_fetched", notTaken
 		} else {
 			rec.Fetched = &at
-			data["into"] = Branch(row.ID)
+			data["into"] = BranchOfBead(row.Bead)
 		}
 		rec.Error, rec.RetryAt, rec.GaveUp = "", nil, nil
 		if err := put(w.Tx, bPeerSent, rec.Bead, rec); err != nil {

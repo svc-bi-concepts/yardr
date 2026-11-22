@@ -40,6 +40,9 @@ func (c *Client) AdvanceNote(ctx context.Context, id, stage, note string, exp st
 func (c *Client) Done(ctx context.Context, id, outcome, note string, exp store.Expect, actor string) (*store.Bead, error) {
 	return callV[*store.Bead](c, ctx, "Done", id, outcome, note, exp, actor)
 }
+func (c *Client) RetryRefusedDone(ctx context.Context, id, session, actor string) (*store.RetriedMove, error) {
+	return callV[*store.RetriedMove](c, ctx, "RetryRefusedDone", id, session, actor)
+}
 func (c *Client) CloseBead(ctx context.Context, id, reason string, exp store.Expect, actor string) (*store.Bead, error) {
 	return callV[*store.Bead](c, ctx, "CloseBead", id, reason, exp, actor)
 }
@@ -231,6 +234,9 @@ func (c *Client) ApproveSetup(ctx context.Context, id string, ask uint64, option
 
 func (c *Client) PutDepot(ctx context.Context, r store.Depot, actor string) error {
 	return c.call(ctx, "PutDepot", nil, r, actor)
+}
+func (c *Client) TellDepotVisibility(ctx context.Context, depot, recorded, actual string) error {
+	return c.call(ctx, "TellDepotVisibility", nil, depot, recorded, actual)
 }
 func (c *Client) Depots(ctx context.Context) ([]store.Depot, error) {
 	return callV[[]store.Depot](c, ctx, "Depots")
@@ -512,8 +518,18 @@ func (c *Client) Journal(ctx context.Context, name, kind, text, actor string) (b
 func (c *Client) Mail(ctx context.Context, to, text, actor string, files ...store.BlobFile) error {
 	return c.call(ctx, "Mail", nil, to, text, actor, files)
 }
+
+func (c *Client) MailFromPeer(ctx context.Context, to, text, from, peerKey string, files ...store.BlobFile) error {
+	return c.call(ctx, "MailFromPeer", nil, to, text, from, peerKey, files)
+}
 func (c *Client) MailReply(ctx context.Context, to, text, actor string, answered uint64) error {
 	return c.call(ctx, "MailReply", nil, to, text, actor, answered)
+}
+func (c *Client) MailLocalReceipt(ctx context.Context, to, text, actor string, files ...store.BlobFile) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailLocalReceipt", to, text, actor, files)
+}
+func (c *Client) MailReplyReceipt(ctx context.Context, to, text, actor string, answered uint64) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailReplyReceipt", to, text, actor, answered)
 }
 func (c *Client) React(ctx context.Context, seq uint64, emoji, actor string) error {
 	return c.call(ctx, "React", nil, seq, emoji, actor)
@@ -583,6 +599,9 @@ func (c *Client) DevicePairCodeSelf(ctx context.Context, user string) (*store.De
 }
 func (c *Client) UserInbox(ctx context.Context, name string, limit int, actor string) (*store.Mailbox, error) {
 	return callV[*store.Mailbox](c, ctx, "UserInbox", name, limit, actor)
+}
+func (c *Client) HeldCards(ctx context.Context, name, actor string) ([]store.HeldCard, error) {
+	return callV[[]store.HeldCard](c, ctx, "HeldCards", name, actor)
 }
 func (c *Client) AckUserInbox(ctx context.Context, name string, through uint64, actor string) error {
 	return c.call(ctx, "AckUserInbox", nil, name, through, actor)
@@ -659,6 +678,9 @@ func (c *Client) Threads(ctx context.Context, name string) ([]store.Participatio
 }
 func (c *Client) Replying(ctx context.Context, name string, seq uint64, to, body, actor string, files ...store.BlobFile) (*store.Reply, error) {
 	return callV[*store.Reply](c, ctx, "Replying", name, seq, to, body, actor, files)
+}
+func (c *Client) ReplyingBroadcast(ctx context.Context, name string, seq uint64, to, body, actor string, files ...store.BlobFile) (*store.Reply, error) {
+	return callV[*store.Reply](c, ctx, "ReplyingBroadcast", name, seq, to, body, actor, files)
 }
 func (c *Client) Replied(ctx context.Context, name string, rp store.Reply, actor string) error {
 	return c.call(ctx, "Replied", nil, name, rp, actor)
@@ -809,6 +831,15 @@ func (c *Client) PeerSend(ctx context.Context, name, kind string, body json.RawM
 func (c *Client) MailPeer(ctx context.Context, to, peer, text, actor string, files ...store.BlobFile) (*store.PeerOut, error) {
 	return callV[*store.PeerOut](c, ctx, "MailPeer", to, peer, text, actor, files)
 }
+func (c *Client) MailPeerReceipt(ctx context.Context, to, peer, text, actor string, files ...store.BlobFile) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailPeerReceipt", to, peer, text, actor, files)
+}
+func (c *Client) MailPeerReply(ctx context.Context, answered uint64, text, actor string) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailPeerReply", answered, text, actor)
+}
+func (c *Client) MailReceiptOf(ctx context.Context, seq uint64, actor string) (store.MailReceipt, error) {
+	return callV[store.MailReceipt](c, ctx, "MailReceiptOf", seq, actor)
+}
 func (c *Client) PeerOutbox(ctx context.Context, name string, limit int) ([]store.PeerOut, error) {
 	return callV[[]store.PeerOut](c, ctx, "PeerOutbox", name, limit)
 }
@@ -865,6 +896,9 @@ func (c *Client) CheckPeer(ctx context.Context, p store.Peer) error {
 }
 func (c *Client) PairPeer(ctx context.Context, p store.Peer, actor string) (*store.Peer, error) {
 	return callV[*store.Peer](c, ctx, "PairPeer", p, actor)
+}
+func (c *Client) CommitPeerEnrollment(ctx context.Context, proof store.PeerEnrollmentProof, actor string) (*store.Peer, error) {
+	return callV[*store.Peer](c, ctx, "CommitPeerEnrollment", proof, actor)
 }
 func (c *Client) PairRefused(ctx context.Context, reason, peer, actor string) error {
 	return c.call(ctx, "PairRefused", nil, reason, peer, actor)

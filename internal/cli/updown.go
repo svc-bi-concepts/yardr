@@ -285,7 +285,12 @@ func partAddr(cfg *config.Config, settings map[string]string, k *longRunning) st
 // kept it from looking at all (no yard in the home); what could not be
 // started is in the report. With login each part is installed as a login
 // service too, and a part that does not run is started by its service.
+// A home with a STOPPED file is refused before anything starts: stopped is
+// for a yard that is retired or moved, and `down` is the pause (see errStopped).
 func (a *app) up(ctx context.Context, cfg *config.Config, login bool) (*upReport, error) {
+	if cfg.Stopped() {
+		return nil, errStopped{cfg: cfg}
+	}
 	if a.st == nil {
 		if _, err := os.Stat(cfg.DBPath()); errors.Is(err, os.ErrNotExist) {
 			return nil, notInitialized{cfg.Home}
@@ -782,6 +787,9 @@ func (a *app) down(w, warn io.Writer, ctx context.Context, cfg *config.Config, y
 	rep := &downReport{Home: cfg.Home, Agents: []yardAgent{}}
 	yardr := yardrAt(cfg.Home)
 	serverWas := serverRunning(ctx, cfg)
+	if first == nil && a.st == nil && !serverWas && cfg.Stopped() {
+		return a.downStopped(ctx, cfg, login)
+	}
 	// The agents are in the store, so a server that was stopped is started
 	// to ask it: agents can outlive it, and one that runs starts it again.
 	st, err := a.store(ctx)
@@ -920,23 +928,7 @@ func (a *app) down(w, warn io.Writer, ctx context.Context, cfg *config.Config, y
 	if err != nil {
 		return nil, err
 	}
-	var stopped []yardPart
-	for _, k := range longRunnings[1:] {
-		p := yardPart{Part: k.Name}
-		run, err := k.stop(cfg, stopWait)
-		switch {
-		case err != nil:
-			p.Running, p.Error, p.Do = true, err.Error(), fmt.Sprintf("%s %s stop", yardr, k.Name)
-		case len(run) > 0:
-			p.Stopped, p.PID = true, run[0].PID
-			if partAddr(cfg, settings, k) == "" {
-				// up starts a part by the setting or the service file
-				// that names its address.
-				p.Detail = fmt.Sprintf("yardr up does not start it again: %s %s start", yardr, k.Name)
-			}
-		}
-		stopped = append(stopped, p)
-	}
+	stopped := stopOthers(cfg, settings, yardr)
 
 	// The services go once nothing of theirs runs, and before the server
 	// does: the herdr session whose server one of them starts is the yard's

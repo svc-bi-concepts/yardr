@@ -662,9 +662,24 @@ func TestHearByIdentityOffersMappingCard(t *testing.T) {
 			t.Fatalf("held event %d payload = %q, %v, want it to carry %q", i, payload, err, want)
 		}
 	}
+	// Ann is subscribed to talk, so each held delivery also gave her an
+	// identity_held notice (heldNotice): one per card, while the card grew
+	// within the hour. The held deliveries are the hook events in her inbox.
 	page, err := r.st.Inbox(ctx, "ann", 0)
-	if err != nil || page.Total != 2 {
-		t.Fatalf("ann's inbox = %+v, %v, want the two held deliveries routed to her", page, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hooks, notices int
+	for _, e := range page.Events {
+		switch e.Kind {
+		case "hook":
+			hooks++
+		case store.KindIdentityHeld:
+			notices++
+		}
+	}
+	if hooks != 2 || notices != 2 || page.Total != 4 {
+		t.Fatalf("ann's inbox = %+v, want the two held deliveries routed to her and a notice for each card", page)
 	}
 	r.now = r.now.Add(time.Second)
 	if code := r.talk(t, "U999", "mapped now"); code != http.StatusOK {

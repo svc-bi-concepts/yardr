@@ -226,7 +226,7 @@ func printBeadPeer(w io.Writer, b *store.Bead) {
 			if there := away.There(); there != "" {
 				fmt.Fprintf(w, "  %s\n", there)
 			}
-			if code := away.CodeLine(b.ID); code != "" {
+			if code := away.CodeLine(*b); code != "" {
 				fmt.Fprintf(w, "  %s\n", code)
 			}
 		}()
@@ -236,7 +236,7 @@ func printBeadPeer(w io.Writer, b *store.Bead) {
 		return
 	}
 	fmt.Fprintf(w, "  %s\n", p.Line())
-	if code := p.CodeLine(b.ID); code != "" {
+	if code := p.CodeLine(*b); code != "" {
 		fmt.Fprintf(w, "  %s\n", code)
 	}
 	// Above the text it is about, in bead show and in a prime alike.

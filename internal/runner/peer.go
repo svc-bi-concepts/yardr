@@ -39,6 +39,11 @@ func (p *Peer) Start(ctx context.Context, job dispatch.Job) (map[string]any, err
 		return nil, dispatch.Blocked(fmt.Errorf("this yard has no key, so it sends its peers nothing: yardr peer key makes one (%s)", config.At(p.Home).PeerKey()))
 	}
 	sent, err := p.Store.PeerBeadSend(ctx, job.Session.ID)
+	if errors.Is(err, store.ErrNoPeerRemote) {
+		// The depot is set up without the group's remote: the bead is held
+		// with the reason, and a person adds the remote and lifts the hold.
+		return nil, dispatch.BeadBlocked(err)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -2,9 +2,11 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,6 +14,33 @@ import (
 	"yardr.dev/yardr/internal/store"
 	"yardr.dev/yardr/internal/storetest"
 )
+
+// storedPid is a pid as the store reads it back, as text to compare with the
+// pid's own Sprint. The store's JSON reads every number as a float64, and fmt
+// prints a float64 of seven digits or more in exponent form (3865836 as
+// 3.865836e+06). A Linux pid is often that long; a macOS pid is shorter, which
+// is why this comparison held there and failed on the Linux runner.
+func storedPid(v any) string {
+	if f, ok := v.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
+}
+
+// A pid read back from the store keeps the digits it was written with, whatever
+// its length: the seven-digit pid of a Linux runner is the case that failed.
+func TestStoredPidKeepsTheDigitsOfALongPid(t *testing.T) {
+	t.Parallel()
+	for _, pid := range []int{12345, 3865836, 4194304} {
+		var handle map[string]any
+		if err := json.Unmarshal([]byte(fmt.Sprintf(`{"shell_pid":%d}`, pid)), &handle); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := storedPid(handle["shell_pid"]), fmt.Sprint(pid); got != want {
+			t.Errorf("storedPid of %d read back = %q, want %q", pid, got, want)
+		}
+	}
+}
 
 // paneStore is a store that notes what herdr had been asked when a pane
 // was put on record, and can refuse the record.
@@ -88,7 +117,7 @@ func TestStartCrewRecordsItsPaneBeforeTheAgentStarts(t *testing.T) {
 		t.Fatalf("the pane was recorded after the agent started; herdr's calls before the record:\n%s", st.before)
 	}
 	r, err := st.GetCrew(ctx, "yardmaster")
-	if err != nil || r.Live() || fmt.Sprint(r.Starting["shell_pid"]) != fmt.Sprint(os.Getpid()) {
+	if err != nil || r.Live() || storedPid(r.Starting["shell_pid"]) != fmt.Sprint(os.Getpid()) {
 		t.Fatalf("the yardmaster = %+v, %v: want its starting pane on record", r, err)
 	}
 
@@ -120,6 +149,9 @@ func TestStartDoesNotRunAgentWithoutARecordedPane(t *testing.T) {
 	} {
 		h, st := shellHerdr(t, wt)
 		h.YardHome = t.TempDir()
+		if _, err := st.CreateBead(ctx, store.NewBead{ID: "yard-13", Title: "record the pane"}, "me"); err != nil {
+			t.Fatal(err)
+		}
 		h.Bin = fakeHerdrBin(t, `printf '%s\n' "$*" >> `+st.calls+`
 case "$1 $2" in
   "worktree create") echo '{"result":{"workspace":{"workspace_id":"w1"},"tab":{"tab_id":"t1"},"root_pane":{"pane_id":"p1"},"worktree":{"path":"`+wt+`"}}}' ;;
@@ -173,6 +205,9 @@ func TestHerdrStartRecordsItsPaneBeforeTheAgentStarts(t *testing.T) {
 		}
 		h, st := shellHerdr(t, wt)
 		h.YardHome = t.TempDir()
+		if _, err := st.CreateBead(ctx, store.NewBead{ID: job.Bead.ID, Title: "record the pane"}, "me"); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := h.Start(ctx, job); err != nil {
 			t.Fatalf("%s depot: %v", name, err)
 		}
@@ -185,6 +220,9 @@ func TestHerdrStartRecordsItsPaneBeforeTheAgentStarts(t *testing.T) {
 
 		h, st = shellHerdr(t, wt)
 		h.YardHome = t.TempDir()
+		if _, err := st.CreateBead(ctx, store.NewBead{ID: job.Bead.ID, Title: "record the pane"}, "me"); err != nil {
+			t.Fatal(err)
+		}
 		st.refuse = errors.New("the store is away")
 		handle, err := h.Start(ctx, job)
 		if err == nil || !strings.Contains(err.Error(), "the store is away") || strings.Contains(readCalls(t, st.calls), "agent start") {
@@ -230,7 +268,7 @@ esac`)
 		t.Fatal(err)
 	}
 	r, err = st.GetCrew(ctx, "yardmaster")
-	if err != nil || fmt.Sprint(r.Starting["shell_pid"]) != fmt.Sprint(os.Getpid()) || r.Starting["shell_start"] == nil {
+	if err != nil || storedPid(r.Starting["shell_pid"]) != fmt.Sprint(os.Getpid()) || r.Starting["shell_start"] == nil {
 		t.Fatalf("after a second failed start the yardmaster's starting pane = %v, %v: want the pane the first one left", r.Starting, err)
 	}
 	// The start that was underway may have gone to another herdr session:

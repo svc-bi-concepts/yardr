@@ -51,11 +51,27 @@ const routeLimitsMemory = 5 * time.Minute
 // used up, the bead waits, and says so in one quota_wait event until it
 // starts.
 //
+// A route with a peer group (store.PeerRunner) passes a full group over
+// to it (store.Route.ChooseOver): a group at its limit, or a local group
+// the yard's max_sessions holds, is passed over toward the peer alone, and
+// a peer group that comes after the route's others takes the bead only once
+// the bead has waited its after setting in its stage. A route without one
+// is chosen as it always was: a group at its limit is waited for.
+//
 // def is the yard's default_kind setting, for a group that names no kind.
-func (d *Dispatcher) chooseGroup(ctx context.Context, b store.Bead, r *store.Route, groups map[string]store.Group, active map[string]int, def string) (c store.RouteChoice, ok bool) {
-	if !r.Gated(groups, def) {
+// cap is the yard's max_sessions for this pass, and stayStart when the bead
+// entered its stage, which a peer group's after setting counts from.
+func (d *Dispatcher) chooseGroup(ctx context.Context, b store.Bead, r *store.Route, groups map[string]store.Group, active map[string]int, def string, cap yardCap, stayStart time.Time) (c store.RouteChoice, ok bool) {
+	peers := map[string]time.Duration{}
+	for _, rg := range r.Groups() {
+		if g, known := groups[rg.Name]; known && g.Runner == store.PeerRunner {
+			peers[g.Name] = g.PeerAfter()
+		}
+	}
+	if !r.Gated(groups, def) && len(peers) == 0 {
 		return r.Choose(nil, nil), true
 	}
+	over := store.Overflow{Full: map[string]string{}, Peer: peers, Waited: d.now().Sub(stayStart)}
 	free := false
 	var waits []waitedGroup
 	var aside []waitedGroup
@@ -69,9 +85,20 @@ func (d *Dispatcher) chooseGroup(ctx context.Context, b store.Bead, r *store.Rou
 			if w.hold {
 				aside = append(aside, w)
 			}
-		} else {
-			free = true
+			if w.full {
+				over.Full[g.Name] = "at its limit"
+			}
+			continue
 		}
+		// The yard's cap holds a group that runs here only when the route
+		// can pass the bead on to a peer, which starts nothing here; a
+		// route without one keeps the report the cap always made.
+		if len(peers) > 0 && cap.Full && store.RunsHere(g.Runner) {
+			waits = append(waits, waitedGroup{Group: g.Name, Reason: capReason(cap.Max), full: true})
+			over.Full[g.Name] = "capped"
+			continue
+		}
+		free = true
 	}
 	if !free {
 		// A route that names no known group stays silent, as before:
@@ -90,7 +117,7 @@ func (d *Dispatcher) chooseGroup(ctx context.Context, b store.Bead, r *store.Rou
 	// comparison's duration, as it decides every other wait of the pass.
 	// Each group is judged for the model the bead would start with in it,
 	// so a per-model window used up holds the group that would stop on it.
-	c = choice.ChooseAt(d.now(), func(group, source string) store.Quota {
+	c = choice.ChooseOver(d.now(), over, func(group, source string) store.Quota {
 		if source != "" {
 			return d.sourceQuota(ctx, source)
 		}
@@ -109,6 +136,13 @@ func (d *Dispatcher) chooseGroup(ctx context.Context, b store.Bead, r *store.Rou
 	}
 	if c.Group != "" {
 		return c, true
+	}
+	// A peer group that has not waited its after setting: the bead waits
+	// for it, and for the full groups before it, which say why.
+	if c.Wait != nil {
+		waits = append(waits, waitedGroup{Group: c.Wait.Group, Reason: c.Wait.Reason})
+		d.reportGroupWait(ctx, b, r, waits)
+		return c, false
 	}
 	if ctx.Err() != nil {
 		return c, false // the daemon is stopping: the provider was not heard out
@@ -137,6 +171,27 @@ type waitedGroup struct {
 	Group  string
 	Reason string
 	hold   bool
+	// full says the group could take the bead but for its limit, or for
+	// the yard's cap: the wait a peer group after it may pass the bead over.
+	full bool
+}
+
+// yardCap is the yard's max_sessions as a pass reads it: Full when the
+// sessions the yard runs are as many as the setting allows, and Max is the
+// setting. A paused yard (Max 0) passes nothing over: nothing starts here,
+// whatever runs.
+type yardCap struct {
+	Full bool
+	Max  int
+}
+
+// capReason is why a bead waits for the yard's max_sessions setting.
+func capReason(most int) string {
+	if most == 0 {
+		return "max_sessions is 0 (paused); the bead starts when the setting is raised (yardr settings set max_sessions <n>)"
+	}
+	return fmt.Sprintf(
+		"the yard runs as many sessions as max_sessions (%d) allows; the bead starts when one ends, or the setting is raised (yardr settings set max_sessions <n>)", most)
 }
 
 // withoutGroups is r without the groups named in aside: choosing among the
@@ -168,9 +223,9 @@ func withoutGroups(r *store.Route, aside []waitedGroup) store.Route {
 func (d *Dispatcher) waitReason(g store.Group, b store.Bead, active map[string]int) (waitedGroup, bool) {
 	if active[g.Name] >= g.Limit {
 		if g.Limit == 0 {
-			return waitedGroup{Group: g.Name, Reason: fmt.Sprintf("group %s is paused (limit 0); the bead starts when the limit is raised (yardr group set %s --limit <n>)", g.Name, g.Name)}, true
+			return waitedGroup{Group: g.Name, Reason: fmt.Sprintf("group %s is paused (limit 0); the bead starts when the limit is raised (yardr group set %s --limit <n>)", g.Name, g.Name), full: true}, true
 		}
-		return waitedGroup{Group: g.Name, Reason: fmt.Sprintf("group %s runs as many sessions as its limit (%d) allows; the bead starts when one ends, or the limit is raised (yardr group set %s --limit <n>)", g.Name, g.Limit, g.Name)}, true
+		return waitedGroup{Group: g.Name, Reason: fmt.Sprintf("group %s runs as many sessions as its limit (%d) allows; the bead starts when one ends, or the limit is raised (yardr group set %s --limit <n>)", g.Name, g.Limit, g.Name), full: true}, true
 	}
 	if o := d.down[g.Name]; o != nil && time.Now().Before(o.until) {
 		return waitedGroup{Group: g.Name, Reason: fmt.Sprintf("group %s's runtime is down (see the group's runtime_down event); the bead starts when it is tried again", g.Name)}, true
