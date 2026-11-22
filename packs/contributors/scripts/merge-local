@@ -280,7 +280,7 @@ fi
 
 # The commit the reviewer approved, from the bead's notes, read as infra-land.sh
 # reads them, so that both landers agree. Only a review session's note counts:
-# its author is <name>-review or <name>-review@<peer>, so a yardmaster's note
+# its author is <bead>-review or <bead>-review@<peer>, so a yardmaster's note or another bead's review
 # does not. In a note, the first "Reviewed" or "Approved" (any case, optionally
 # followed by "head") and a sha of 7 to 40 lowercase hex digits with a digit in
 # it counts, unless the word is preceded by "not". Across notes the newest note
@@ -290,7 +290,7 @@ fi
 # that must stand between a keyword and its sha, as infra-land.sh's. Prints the sha, or nothing for a bead with no such
 # note.
 approved_from_json() {
-  awk '
+  awk -v bead="$BEAD" '
     # sha_in returns the first sha that the text of a note approves. The text
     # gets a leading space, so a keyword at its start has the whitespace before
     # it that the rule asks for; the keyword is matched in lower case, but the
@@ -318,7 +318,8 @@ approved_from_json() {
     /^ *\{$/ { author = ""; next }
     /^ *"text": *"/ {
       t = $0; sub(/^ *"text": *"/, "", t); sub(/",?$/, "", t); gsub(/\\n/, "\t", t)
-      if (author ~ /^[A-Za-z0-9_.-]+-review(@[A-Za-z0-9_.-]+)?$/) {
+      pfx = bead "-review"
+      if (author == pfx || (index(author, pfx "@") == 1 && substr(author, length(pfx) + 2) ~ /^[A-Za-z0-9_.-]+$/)) {
         sha = sha_in(t)
         if (sha != "") found = sha
       }

@@ -1004,6 +1004,15 @@ func TestMergeLocalApprovedCommit(t *testing.T) {
 		noApproval(t, y)
 	})
 
+	t.Run("another bead's review note approves nothing", func(t *testing.T) {
+		y, _, off := reviewedBranch(t)
+		y.yardrAs("other-1-review", "approved "+off+"\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		noApproval(t, y)
+	})
+
 	t.Run("a yardmaster's note approves nothing", func(t *testing.T) {
 		y, _, off := reviewedBranch(t)
 		y.yardrAs("yardmaster-chris", "approved "+off+"\n", "bead", "note", "r-1", "-")
