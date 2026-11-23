@@ -51,10 +51,18 @@ yard if it differs.
    field of it, the scripts with their checksums among them.
 3. **The bot token, on a secret card.**
    ```sh
-   yardr bead ask <bead> "The Slack bot token" --secret slack --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
+   yardr bead ask <bead> "The Slack bot token" --secret slack --env SLACK_BOT_TOKEN --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
    ```
    Typed unseen, written by the server to the source's env file as
-   `SLACK_BOT_TOKEN`; in no note, as every secret ask.
+   `SLACK_BOT_TOKEN`; in no note, as every secret ask. The explicit `--env`
+   selects the bot token instead of the pack's default mint input.
+
+   For a vault-backed token instead, `SLACK_VAULT_KEY` names the vault key,
+   not the token, and is declared non-secret. The pack brings no mint
+   command: the operator sets the source's `mint_command` as described in
+   [credential minting](../../docs/integrations.md#a-declared-source).
+   Setting the vault key without that command fails with
+   `no mint_command is set`; leaving it unset keeps the static-token path.
 4. **Whose token it is.**
    ```sh
    yardr source check slack
@@ -135,7 +143,7 @@ yard if it differs.
    `yardr reply` speaks with the answering crew member's copy of the
    bot token:
    ```sh
-   yardr bead ask <bead> "The token it answers with" --secret slack --for-crew yardmaster --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
+   yardr bead ask <bead> "The token it answers with" --secret slack --for-crew yardmaster --env SLACK_BOT_TOKEN --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
    ```
    The yard's server writes it into the crew member's env file, or with
    none set into `~/.yardr/crew/yardmaster.env`, which is then set as

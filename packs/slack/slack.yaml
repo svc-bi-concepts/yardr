@@ -35,6 +35,13 @@ base: https://slack.com/api
 credential:
   env: SLACK_BOT_TOKEN            # the bot's token: the name, never the value
   header: "Authorization: Bearer {credential}"
+  # The token may be minted from a vault key instead: SLACK_VAULT_KEY names
+  # the key, set in the env file, never the token. The pack brings no
+  # mint_command: the operator's source setting is the command, and a pack
+  # applied again keeps it. An env file that sets no SLACK_VAULT_KEY reads
+  # the static SLACK_BOT_TOKEN as before.
+  mint:
+    - { name: SLACK_VAULT_KEY, secret: false }
 calls:
   whoami:                         # yardr source check slack: whose token this is
     kind: read

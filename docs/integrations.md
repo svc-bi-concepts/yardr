@@ -2514,14 +2514,10 @@ them whole):
   the yard, and each is stored, but only a mention nudges (see
   subscriptions below). Slack's `url_verification` challenge to that URL
   is answered from the hook.
-- **The credential** is the bot's token twice: the source's env file
-  holds `SLACK_BOT_TOKEN` for the check and post calls, and the
-  answering crew member's env file holds the same value for replying,
-  since there is one bot for the whole yard and it speaks as the bot.
-  The crew member's copy is given on a card (`yardr bead ask <bead>
-  "…" --secret slack --for-crew yardmaster --context "…"`), and takes
-  effect when it next starts, so restart it. Rotation rewrites both
-  files.
+- **The credential** belongs to one bot for the whole yard, which
+  speaks as that bot. For the source and crew credential cards, rotation
+  and the vault-backed alternative, follow
+  [the Slack setup](../packs/slack/SETUP.md).
 - **The identity** is the bot's `user_id` with its `bot_id` as the
   key, both read from `yardr source check slack`, which prints the
   check call's selected fields: `yardr bead ask <bead> "…" --run "crew
