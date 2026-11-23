@@ -686,6 +686,11 @@ A merge commit on the branch contributes its message like any other commit.
 A bead that comes back after a red run keeps the squash on its branch, and the
 next landing squashes again: the earlier subject line is left out and its
 footers are gathered anew.
+Before the branch moves to the squash, the head it had is kept at
+`refs/archive/<bead>` (at `refs/archive/<bead>-1`, `-2`, … when the bead was
+squashed before), so that nothing a squash replaces is left to the reflog,
+which a `git gc` expires. The ref is only ever created, never moved. The push
+sends the base alone, so the archive stays in the repository it was made in.
 Every type of bead is squashed in this mode but a train, which lands by
 rebase in either mode, so that the base gets the commit of each child; a
 wagon, landing on its train's branch, is squashed like any other, and a
