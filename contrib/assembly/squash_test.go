@@ -522,6 +522,16 @@ func TestMergeLocalLandMode(t *testing.T) {
 	if y.git(y.repo, "rev-list", "--count", before+"..main") != "1" || y.git(y.repo, "rev-parse", "main^") != before {
 		t.Fatalf("main gained\n%s\nwant one commit on top of %s", y.git(y.repo, "log", "--format=%H %s", before+"..main"), before)
 	}
+	// The commits the branch had before the squash stay reachable under the
+	// archive ref: the head the squash replaced, after the rebase onto main
+	// that comes before it, so its three commits sit on main and its tree is
+	// the squash's.
+	if got := y.git(y.repo, "rev-list", "--count", before+"..refs/archive/r-2"); got != "3" {
+		t.Fatalf("refs/archive/r-2 holds %s commits past main, want the branch's three", got)
+	}
+	if got := y.git(y.repo, "rev-parse", "refs/archive/r-2^{tree}"); got != y.git(y.repo, "rev-parse", "main^{tree}") {
+		t.Fatalf("refs/archive/r-2 has tree %s, not the landed tree", got)
+	}
 	want := `feat(store)!: Withhold setup candidates from non-operator devices (r-2)
 
 Add the withholding
@@ -559,5 +569,60 @@ Yardr-Bead: r-2
 	}
 	if y.git(wt, "rev-parse", "HEAD") != y.git(y.repo, "rev-parse", "main") || y.git(wt, "status", "--porcelain") != "" || y.git(y.repo, "status", "--porcelain") != "" {
 		t.Fatal("the branch is not the landed commit, or a tree is not clean")
+	}
+}
+
+// A bead squashed again keeps the archive of its first squash where it is:
+// the second takes the next free refs/archive/<bead>-<n>, and no archive is
+// moved. A red run holds a bead with its squash on the branch, and the next
+// landing squashes that again (docs/line.md, landing by squash).
+func TestMergeLocalSquashKeepsEachArchive(t *testing.T) {
+	y := newYard(t)
+	y.commitMsg(y.wt, "one\n", map[string]string{"b.txt": "b\n"})
+	y.commitMsg(y.wt, "two\n", map[string]string{"c.txt": "c\n"})
+	red := y.commit(y.wt, "RED", "red\n")
+
+	y.opts = "YARDR_LAND=squash"
+	y.assembly()
+
+	// A red run sends the bead back to its builder, with the squash on the branch.
+	if b := y.bead(); b.Stage != "new" || b.Hold {
+		t.Fatalf("bead %s hold=%v after a red run, want back in new", b.Stage, b.Hold)
+	}
+	if got := y.git(y.repo, "rev-parse", "refs/archive/r-1"); got != red {
+		t.Fatalf("refs/archive/r-1 is %s after the first squash, want the head it replaced, %s", got, red)
+	}
+
+	// Without RED, the commit on top of the squash is the head the second
+	// squash replaces, and it is kept under the next free name. The bead is
+	// approved again, as a builder's fix sends it back.
+	y.git(y.wt, "rm", "-q", "RED")
+	y.git(y.wt, "commit", "-q", "-m", "unred")
+	unred := y.git(y.wt, "rev-parse", "HEAD")
+	st := rpc.NewClient((&config.Config{Home: y.home}).Socket())
+	if _, err := st.Advance(context.Background(), "r-1", "approved", store.Expect{}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	y.assembly()
+
+	if b := y.bead(); b.Stage != "merged" || b.Status != "closed" {
+		t.Fatalf("bead %s/%s after the second squash, want merged and closed:\n%s", b.Stage, b.Status, y.notes())
+	}
+	if got := y.git(y.repo, "rev-parse", "refs/archive/r-1"); got != red {
+		t.Fatalf("the second squash moved refs/archive/r-1 to %s, want it kept at %s", got, red)
+	}
+	if got := y.git(y.repo, "rev-parse", "refs/archive/r-1-1"); got != unred {
+		t.Fatalf("refs/archive/r-1-1 is %s, want the head the second squash replaced, %s", got, unred)
+	}
+	if !strings.Contains(y.log, "kept at refs/archive/r-1-1)") {
+		t.Fatalf("the squashed line does not name the archive:\n%s", y.log)
+	}
+	// The archives are the depot's, not the worktree's: they stay when the
+	// worktree that made the squash is gone.
+	y.git(y.repo, "worktree", "remove", "--force", y.wt)
+	for _, c := range []struct{ ref, want string }{{"refs/archive/r-1", red}, {"refs/archive/r-1-1", unred}} {
+		if got := y.git(y.repo, "rev-parse", c.ref); got != c.want {
+			t.Fatalf("%s is %s after its worktree is removed, want %s", c.ref, got, c.want)
+		}
 	}
 }

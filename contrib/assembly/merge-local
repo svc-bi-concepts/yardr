@@ -795,9 +795,24 @@ squash() {
   case $sq_new in
   '' | *[!0-9a-f]*) hold "cannot write the squash commit of $BEAD: $sq_new" ;;
   esac
+  # The commits the branch had before the squash are kept under
+  # refs/archive/$BEAD, and nothing is deleted: a git gc drops commits that
+  # only the reflog reaches once it expires, so the old head is named before
+  # the branch moves. The ref is only ever created. A bead squashed again
+  # (after a red run, the branch keeps its squash) takes the next free
+  # $BEAD-<n>, and an existing archive is never moved. The push sends the base
+  # alone, so the archive stays in this repository.
+  sq_arch=refs/archive/$BEAD
+  sq_n=0
+  while git -C "$REPO" rev-parse -q --verify "$sq_arch" >/dev/null; do
+    sq_n=$((sq_n + 1))
+    sq_arch=refs/archive/$BEAD-$sq_n
+  done
+  git -C "$REPO" update-ref -m "assembly: keep the head $BEAD had before its squash" "$sq_arch" "$sq_old" "" ||
+    hold "cannot keep the head $sq_old of $BEAD at $sq_arch"
   git -C "$WT" update-ref -m "assembly: squash $BEAD onto $BASE" "refs/heads/$BR" "$sq_new" "$sq_old" ||
     hold "cannot move $BR to its squash commit $sq_new"
-  echo "== squashed $BEAD onto $BASE: $SQ_SUBJECT"
+  echo "== squashed $BEAD onto $BASE: $SQ_SUBJECT (its head before the squash is kept at $sq_arch)"
 }
 # A train lands the commits of its children, which is how the base gets one
 # commit for each of them: it is never squashed.
