@@ -523,7 +523,12 @@ exits.
    where the flow offers one (to `merge`, section 5), else the `merge`
    stage where the flow allows it, else `failed` back to `new`, as in
    depot yardr, whose flow has no `merge`. Only what the flow allows is
-   tried, so no refused move is raised;
+   tried, so no refused move is raised. Before the rebase moves the branch,
+   the head it had is kept at `refs/archive/<bead>` (`-1`, `-2`, … when that
+   name is taken), since the rebase gives each commit a new sha and the
+   reviewer approved the old one. A rebase that conflicts moves nothing, so
+   the ref it wrote is taken back; a branch the base already holds is not
+   rebased and keeps nothing;
 2. lowers the file size table of the depot's test command to the branch's
    files, where that command is one file of the branch that carries such a
    table (a line `filesizes='`; depot yardr's `.yardr/test` is one). It runs
@@ -691,6 +696,8 @@ Before the branch moves to the squash, the head it had is kept at
 squashed before), so that nothing a squash replaces is left to the reflog,
 which a `git gc` expires. The ref is only ever created, never moved. The push
 sends the base alone, so the archive stays in the repository it was made in.
+A squash after a rebase keeps both: the approved head at `refs/archive/<bead>`
+and the rebased head it replaced at `-1`.
 Every type of bead is squashed in this mode but a train, which lands by
 rebase in either mode, so that the base gets the commit of each child; a
 wagon, landing on its train's branch, is squashed like any other, and a
