@@ -170,13 +170,10 @@ A crew member's pane is read the same way while it is idle with its inbox
 unread.
 
 **An agent that waits for its own background work is not idle either.** A
-session whose pane says, when it reaches `idle`, that a command its agent
-started in the background still runs (the `background` lines of any
-harness file, whichever kind the group names; Claude Code's
-`1 shell still running` or `2 monitors still running`) raises no
-`session_idle`, and its idle spell starts again from that look, so `grace`
-does not end it. `max_age` applies. See
-[groups.md](groups.md#a-command-runs-in-the-background).
+pane's background-work lines govern this exception, including when provider
+fallback changes the harness: see
+[groups.md](groups.md#a-command-runs-in-the-background) for matching and
+the effect on idle nudges, `session_idle`, `grace` and `max_age`.
 
 **Defaults without a grace.** An idle session is only reported: an agent
 waiting on a human (a permission prompt, a question) is idle too, and

@@ -115,7 +115,7 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 			w.drawn = true
 			if rerr == nil && waitContext(ctx, heldRedrawWait) == nil {
 				done := askTimer(ctx, askPane)
-				text, known, composer, err, _ = read()
+				text, known, _, err, _ = read()
 				done()
 				if err == nil && known && strings.TrimSpace(text) == "" {
 					delete(d.drafts, key)
