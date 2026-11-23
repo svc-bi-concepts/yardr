@@ -54,7 +54,8 @@ yard if it differs.
    yardr bead ask <bead> "The Slack bot token" --secret slack --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
    ```
    Typed unseen, written by the server to the source's env file as
-   `SLACK_BOT_TOKEN`; in no note, as every secret ask.
+   `SLACK_BOT_TOKEN`; in no note, as every secret ask. A source that sets
+   `SLACK_VAULT_KEY` needs a `mint_command` too, or it fails with `no mint_command is set`.
 4. **Whose token it is.**
    ```sh
    yardr source check slack
