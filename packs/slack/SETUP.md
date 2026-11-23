@@ -51,7 +51,7 @@ yard if it differs.
    field of it, the scripts with their checksums among them.
 3. **The bot token, on a secret card.**
    ```sh
-   yardr bead ask <bead> "The Slack bot token" --secret slack --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
+   yardr bead ask <bead> "The Slack bot token" --secret slack --env SLACK_BOT_TOKEN --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
    ```
    Typed unseen, written by the server to the source's env file as
    `SLACK_BOT_TOKEN`; in no note, as every secret ask. A source that sets
@@ -136,7 +136,7 @@ yard if it differs.
    `yardr reply` speaks with the answering crew member's copy of the
    bot token:
    ```sh
-   yardr bead ask <bead> "The token it answers with" --secret slack --for-crew yardmaster --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
+   yardr bead ask <bead> "The token it answers with" --secret slack --for-crew yardmaster --env SLACK_BOT_TOKEN --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
    ```
    The yard's server writes it into the crew member's env file, or with
    none set into `~/.yardr/crew/yardmaster.env`, which is then set as
