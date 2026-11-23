@@ -1071,12 +1071,13 @@ waits for an answer, its harness says something no pattern knows) without
 **An agent that waits for its own background work is not idle.** An agent
 that starts a long command in the background (the depot's test) and waits
 for it is idle to herdr, and its harness wakes it when the command exits. So
-when a session reaches `idle`, the pane read for `session_idle` is first
-looked at for a line of the kind's `background`
-([what yardr knows of a kind](#what-yardr-knows-of-a-kind)), in its last 6
-lines that are not empty: what the harness draws around its input, not what
-the agent wrote further up. Claude Code's are the line that ends its turn
-and its status line (seen 13 Oct 2026, 2.1.288):
+when a session reaches `idle`, the last 6 non-empty lines of its pane are
+checked against every known harness's `background` patterns
+([what yardr knows of a kind](#what-yardr-knows-of-a-kind)). Provider fallback
+can run a different harness from the group's kind, so the kind does not
+restrict this check. These are lines the harness draws around its input,
+not what the agent wrote further up. Claude Code's are the line that ends
+its turn and its status line (seen 13 Oct 2026, 2.1.288):
 
 ```text
 ✻ Brewed for 48s · done 12:44 AM · 1 shell still running
@@ -1089,6 +1090,9 @@ Muse Code's is the status line under its input (seen 20 Oct 2026, 1.4.9):
 └ ◆ Run depot test gate in worktree  running                     14m 01s
 ```
 
+The same check runs before an idle nudge: while a matching line shows, no
+nudge is sent or marked as sent. Once the line is gone, a due nudge can go.
+
 With one there, no `session_idle` is raised and the idle spell starts again
 from that look: the pane is read again one `idle` later, and a `grace` does
 not end the session meanwhile. Once the line is gone and the agent still
@@ -1096,8 +1100,8 @@ sits there, it is told of one `idle` after the last look that saw it. What
 it does not catch: a background command that never exits, or one the agent
 left running while it asks its human something, keeps `session_idle` away
 for as long as it shows. `max_age` applies as ever, and an error of the
-harness is still told of at the start of the spell. No other kind's file
-names such a line, so their agents are told of at the limit as before.
+harness is still told of at the start of the spell. An agent whose pane
+shows no matching line is told of at the limit as before.
 
 #### A usage limit says its window and when it resets
 
