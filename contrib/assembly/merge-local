@@ -299,6 +299,22 @@ approved_from_json() {
     }
     END { print last }'
 }
+# keep_head writes the head $2 the branch had before $1 moved it ("its squash",
+# "its rebase") to refs/archive/$BEAD, so that nothing a landing replaces is
+# left to the reflog, which a git gc expires. The ref is only ever created: a
+# bead landed again takes the next free $BEAD-<n>, and an existing archive is
+# never moved. Its name is left in ARCHIVE. The push sends the base alone, so
+# the archive stays in this repository.
+keep_head() {
+  ARCHIVE=refs/archive/$BEAD
+  keep_n=0
+  while git -C "$REPO" rev-parse -q --verify "$ARCHIVE" >/dev/null; do
+    keep_n=$((keep_n + 1))
+    ARCHIVE=refs/archive/$BEAD-$keep_n
+  done
+  git -C "$REPO" update-ref -m "assembly: keep the head $BEAD had before $1" "$ARCHIVE" "$2" "" ||
+    hold "cannot keep the head $2 of $BEAD at $ARCHIVE"
+}
 # Before the rebase, which gives every commit of the branch a new sha: the
 # reviewer approved one commit, and the branch must contain it. A branch on
 # another line of commits does not land, though its tip may be tested and
@@ -366,17 +382,26 @@ if [ -n "$PUSH" ]; then
   fi
 fi
 
-# Rebase onto the base when it moved since the branch was made.
+# Rebase onto the base when it moved since the branch was made. The rebase gives
+# each commit a new sha, so the head it moves from is kept under refs/archive/
+# $BEAD first. A branch the base already holds is not rebased, and keeps nothing.
 if ! git -C "$REPO" merge-base --is-ancestor "$BASE" "$BR"; then
   t0=$(date +%s)
+  rb_old=$(git -C "$REPO" rev-parse "refs/heads/$BR") || hold "cannot read $BR"
+  keep_head "its rebase" "$rb_old"
+  rb_arch=$ARCHIVE
   git -C "$WT" rebase "$BASE" && ok=1 || ok=
   step "$t0" rebase
   if [ -z "$ok" ]; then
     files=$(git -C "$WT" diff --name-only --diff-filter=U | tr '\n' ' ')
     git -C "$WT" rebase --abort
+    # A conflict moved nothing, so the archive it made holds a head the branch
+    # still has: it is taken back, and the ref is only ever one this run made.
+    git -C "$REPO" update-ref -d "$rb_arch" "$rb_old" 2>/dev/null
     conflict "rebase onto $BASE conflicts in: $files
 Rebase $BR onto $BASE, keep both changes' intent, run the tests again."
   fi
+  echo "== rebased $BR onto $BASE (its head before the rebase is kept at $rb_arch)"
 fi
 
 # --- closefds: the same text in merge-local, integrate-train, pr-ci, deploy-dokku and deploy-void (a test holds them equal) ---
@@ -795,24 +820,12 @@ squash() {
   case $sq_new in
   '' | *[!0-9a-f]*) hold "cannot write the squash commit of $BEAD: $sq_new" ;;
   esac
-  # The commits the branch had before the squash are kept under
-  # refs/archive/$BEAD, and nothing is deleted: a git gc drops commits that
-  # only the reflog reaches once it expires, so the old head is named before
-  # the branch moves. The ref is only ever created. A bead squashed again
-  # (after a red run, the branch keeps its squash) takes the next free
-  # $BEAD-<n>, and an existing archive is never moved. The push sends the base
-  # alone, so the archive stays in this repository.
-  sq_arch=refs/archive/$BEAD
-  sq_n=0
-  while git -C "$REPO" rev-parse -q --verify "$sq_arch" >/dev/null; do
-    sq_n=$((sq_n + 1))
-    sq_arch=refs/archive/$BEAD-$sq_n
-  done
-  git -C "$REPO" update-ref -m "assembly: keep the head $BEAD had before its squash" "$sq_arch" "$sq_old" "" ||
-    hold "cannot keep the head $sq_old of $BEAD at $sq_arch"
+  # The head the squash replaces is kept first (keep_head): a bead squashed
+  # again after a red run takes the next free archive name.
+  keep_head "its squash" "$sq_old"
   git -C "$WT" update-ref -m "assembly: squash $BEAD onto $BASE" "refs/heads/$BR" "$sq_new" "$sq_old" ||
     hold "cannot move $BR to its squash commit $sq_new"
-  echo "== squashed $BEAD onto $BASE: $SQ_SUBJECT (its head before the squash is kept at $sq_arch)"
+  echo "== squashed $BEAD onto $BASE: $SQ_SUBJECT (its head before the squash is kept at $ARCHIVE)"
 }
 # A train lands the commits of its children, which is how the base gets one
 # commit for each of them: it is never squashed.

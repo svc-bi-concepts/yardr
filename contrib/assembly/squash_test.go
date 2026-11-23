@@ -512,6 +512,10 @@ func TestMergeLocalLandMode(t *testing.T) {
 	y.commitMsg(wt, "Document the withholding\n\nYardr-Bead: r-2\n"+builderTrailer+"\n",
 		map[string]string{"internal/store/c.go": "c\n"})
 	before := y.git(y.repo, "rev-parse", "main")
+	// The branch is rebased onto main before it is squashed, so the head it had
+	// when the reviewer approved it is kept first, and the rebased head the
+	// squash replaces after it.
+	approved := y.git(wt, "rev-parse", "HEAD")
 	y.opts = "YARDR_LAND=squash"
 
 	y.exec("merge-local", "assembly", "r-2")
@@ -522,15 +526,18 @@ func TestMergeLocalLandMode(t *testing.T) {
 	if y.git(y.repo, "rev-list", "--count", before+"..main") != "1" || y.git(y.repo, "rev-parse", "main^") != before {
 		t.Fatalf("main gained\n%s\nwant one commit on top of %s", y.git(y.repo, "log", "--format=%H %s", before+"..main"), before)
 	}
-	// The commits the branch had before the squash stay reachable under the
-	// archive ref: the head the squash replaced, after the rebase onto main
-	// that comes before it, so its three commits sit on main and its tree is
-	// the squash's.
-	if got := y.git(y.repo, "rev-list", "--count", before+"..refs/archive/r-2"); got != "3" {
-		t.Fatalf("refs/archive/r-2 holds %s commits past main, want the branch's three", got)
+	// The commits the branch had before the rebase stay reachable under the
+	// archive ref: the reviewer's approved head, which the rebase replaced.
+	if got := y.git(y.repo, "rev-parse", "refs/archive/r-2"); got != approved {
+		t.Fatalf("refs/archive/r-2 is %s, want the approved head the rebase replaced, %s", got, approved)
 	}
-	if got := y.git(y.repo, "rev-parse", "refs/archive/r-2^{tree}"); got != y.git(y.repo, "rev-parse", "main^{tree}") {
-		t.Fatalf("refs/archive/r-2 has tree %s, not the landed tree", got)
+	// The head the squash replaced is the rebased one: its three commits sit on
+	// main, and its tree is the squash's.
+	if got := y.git(y.repo, "rev-list", "--count", before+"..refs/archive/r-2-1"); got != "3" {
+		t.Fatalf("refs/archive/r-2-1 holds %s commits past main, want the branch's three", got)
+	}
+	if got := y.git(y.repo, "rev-parse", "refs/archive/r-2-1^{tree}"); got != y.git(y.repo, "rev-parse", "main^{tree}") {
+		t.Fatalf("refs/archive/r-2-1 has tree %s, not the landed tree", got)
 	}
 	want := `feat(store)!: Withhold setup candidates from non-operator devices (r-2)
 
@@ -624,5 +631,75 @@ func TestMergeLocalSquashKeepsEachArchive(t *testing.T) {
 		if got := y.git(y.repo, "rev-parse", c.ref); got != c.want {
 			t.Fatalf("%s is %s after its worktree is removed, want %s", c.ref, got, c.want)
 		}
+	}
+}
+
+// A landing by rebase moves the branch onto the base's commits, which gives
+// each of them a new sha, so the head the branch had (the one the reviewer
+// approved) is kept under refs/archive/<bead> before the branch moves
+// (docs/line.md, merge-local).
+func TestMergeLocalRebaseKeepsHead(t *testing.T) {
+	y := newYard(t)
+	y.commitMsg(y.wt, "one\n", map[string]string{"b.txt": "b\n"})
+	two := y.commitMsg(y.wt, "two\n", map[string]string{"c.txt": "c\n"})
+	// main moves on, so the branch has to be rebased onto it before it lands.
+	y.commit(y.repo, "m.txt", "m\n")
+	main := y.git(y.repo, "rev-parse", "main")
+
+	y.opts = "YARDR_LAND=rebase"
+	y.assembly()
+
+	if b := y.bead(); b.Stage != "merged" || b.Status != "closed" {
+		t.Fatalf("bead %s/%s after landing by rebase, want merged and closed:\n%s", b.Stage, b.Status, y.notes())
+	}
+	if got := y.git(y.repo, "rev-parse", "refs/archive/r-1"); got != two {
+		t.Fatalf("refs/archive/r-1 is %s, want the head the rebase moved from, %s", got, two)
+	}
+	if got := y.git(y.repo, "rev-parse", "main"); got == main {
+		t.Fatal("main did not move: the landing did not happen")
+	}
+	if !strings.Contains(y.log, "its head before the rebase is kept at refs/archive/r-1)") {
+		t.Fatalf("the log does not name the archive of the rebase:\n%s", y.log)
+	}
+}
+
+// A branch the base already holds is not rebased, so it moves nothing and
+// keeps nothing: no archive ref is written.
+func TestMergeLocalRebaseNoOpWritesNoArchive(t *testing.T) {
+	y := newYard(t)
+	y.commitMsg(y.wt, "one\n", map[string]string{"b.txt": "b\n"})
+	y.commitMsg(y.wt, "two\n", map[string]string{"c.txt": "c\n"})
+
+	y.opts = "YARDR_LAND=rebase"
+	y.assembly()
+
+	if b := y.bead(); b.Stage != "merged" || b.Status != "closed" {
+		t.Fatalf("bead %s/%s after a no-op rebase, want merged and closed:\n%s", b.Stage, b.Status, y.notes())
+	}
+	if refs := y.git(y.repo, "for-each-ref", "refs/archive/"); refs != "" {
+		t.Fatalf("a rebase that moved nothing wrote archive refs:\n%s", refs)
+	}
+	if strings.Contains(y.log, "kept at refs/archive/") {
+		t.Fatalf("the log names an archive a rebase that moved nothing did not write:\n%s", y.log)
+	}
+}
+
+// A rebase that conflicts moves nothing: the branch is back where it was, so
+// the archive the run wrote for it is taken back, and no ref is left behind.
+func TestMergeLocalRebaseConflictLeavesNoArchive(t *testing.T) {
+	y := newYard(t)
+	tip := y.commit(y.wt, "a.txt", "bead's\n")
+	y.commit(y.repo, "a.txt", "main's\n")
+
+	y.assembly()
+
+	if b := y.bead(); b.Stage != "merge" {
+		t.Fatalf("bead %s after a conflicting rebase, want merge:\n%s", b.Stage, y.notes())
+	}
+	if got := y.git(y.wt, "rev-parse", "HEAD"); got != tip {
+		t.Fatal("the branch was left rebased")
+	}
+	if refs := y.git(y.repo, "for-each-ref", "refs/archive/"); refs != "" {
+		t.Fatalf("a conflicting rebase left archive refs:\n%s", refs)
 	}
 }
