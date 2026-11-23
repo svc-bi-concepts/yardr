@@ -6,10 +6,13 @@ import (
 	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"yardr.dev/yardr/internal/peer"
 )
 
 func TestGetenv(t *testing.T) {
@@ -530,5 +533,63 @@ func TestDaemonPIDAndStart(t *testing.T) {
 	}
 	if _, ok := DaemonStart(lock); ok {
 		t.Fatal("a released lock reads a start time")
+	}
+}
+
+// DaemonChecker names the daemon of a home by its lock: the pid the lock
+// holds, with the start time beside it, and only while the lock is held.
+// The checker reads the lock once per call, so each case is one lock state.
+func TestDaemonCheckerNamesTheHolder(t *testing.T) {
+	if !peer.HaveStat() {
+		t.Skip("no process start times on this OS")
+	}
+	home := t.TempDir()
+	lock := At(home).DaemonLock()
+	self := os.Getpid()
+	st, err := peer.Describe(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := DaemonChecker(home)
+	if check(self) {
+		t.Fatal("a missing lock names a daemon")
+	}
+	f, err := os.OpenFile(lock, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	write := func(s string) {
+		t.Helper()
+		if err := f.Truncate(0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteAt([]byte(s), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(strconv.Itoa(self) + " " + strconv.FormatUint(st.Start, 10) + "\n")
+	if check(self) {
+		t.Fatal("a lock nobody holds names a daemon")
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if !check(self) {
+		t.Fatal("the holder by pid and start time is not the daemon")
+	}
+	if check(self + 1) {
+		t.Fatal("another pid is the daemon")
+	}
+	write(strconv.Itoa(self) + " " + strconv.FormatUint(st.Start+1, 10) + "\n")
+	if check(self) {
+		t.Fatal("a pid with another start time is the daemon: a reused pid")
+	}
+	write(strconv.Itoa(self) + "\n")
+	if check(self) {
+		t.Fatal("a holder with no start recorded is the daemon")
+	}
+	if pid, start, ok := lockHolder(lock); pid != self || ok || start != 0 {
+		t.Fatalf("no start recorded: lockHolder = %d, %d, %v", pid, start, ok)
 	}
 }
