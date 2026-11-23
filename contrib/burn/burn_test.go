@@ -173,6 +173,16 @@ func (r *rig) goModule(files map[string]string) {
 	r.env = append(r.env, "REAL_GO="+goBin, "GOCACHE="+strings.TrimSpace(string(cache)),
 		"GOFLAGS=-trimpath", "GOTOOLCHAIN=local",
 		"PATH="+filepath.Join(r.dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The real go takes its cgo setting from the caller too. A go with no C
+	// compiler on its PATH defaults cgo off, and a -race build then refuses
+	// ("go: -race requires cgo"). The gate's runners set CGO_ENABLED and CC
+	// (a zig) for the job, and burn's env is built from nothing, so those two
+	// are passed through when the caller has them.
+	for _, name := range []string{"CGO_ENABLED", "CC"} {
+		if v, ok := os.LookupEnv(name); ok {
+			r.env = append(r.env, name+"="+v)
+		}
+	}
 }
 
 // psSays makes burn take level for the nice level it runs at: the stand-in ps
@@ -678,6 +688,56 @@ func TestRace(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The real go is started with the caller's CGO_ENABLED and CC, as it is with the
+// caller's PATH: a runner's cgo setting and its zig compiler reach the build.
+// The stand-in go writes down what it is started with, which says the same on
+// every host. The run has no -r: a race build with cgo off is refused on Linux
+// and accepted on macOS, so a -r run would pass on one host and fail on the
+// other for a reason this test does not check. The -r cases above cover the
+// race build. Not parallel: it sets the caller's environment, which the
+// parallel tests read.
+func TestBurnPassesTheCallersCgoToGo(t *testing.T) {
+	t.Setenv("CGO_ENABLED", "0")
+	t.Setenv("CC", "zig cc -target x86_64-linux-gnu")
+	r := newRig(t)
+	r.goModule(map[string]string{
+		"go.mod": "module example.com/racy\n\ngo 1.21\n",
+		"racy_test.go": `package racy
+
+import "testing"
+
+func TestRace(t *testing.T) {
+	var x int
+	done := make(chan bool)
+	go func() { x++; done <- true }()
+	x++
+	<-done
+	_ = x
+}
+`,
+	})
+	// The stand-in records the cgo setting and the compiler of each go it is
+	// started as, then runs the real go.
+	scripttest.Write(t, filepath.Join(r.dir, "bin", "go"),
+		"echo \"CGO_ENABLED=$CGO_ENABLED CC=$CC\" >> \"$RIG/cgo-seen\"\nexec \"$REAL_GO\" \"$@\"\n")
+	cmd, _, stderr := r.burn(0, "-n", "1", "-x", "1", "-c", "1", ".", "TestRace")
+	if code := finish(t, cmd); code != 0 && code != 1 {
+		t.Fatalf("exit status = %d, want the build to run\n%s", code, stderr)
+	}
+	// burn starts go more than once (the build, then go's own calls), so every
+	// line is checked, and there must be at least one.
+	want := "CGO_ENABLED=0 CC=zig cc -target x86_64-linux-gnu"
+	seen := strings.Split(r.read("cgo-seen"), "\n")
+	if len(seen) == 0 || seen[0] == "" {
+		t.Fatal("the go stand-in was never started")
+	}
+	for _, got := range seen {
+		if got != want {
+			t.Errorf("go was started with %q, want %q: the caller's cgo setting does not reach it", got, want)
+		}
 	}
 }
 

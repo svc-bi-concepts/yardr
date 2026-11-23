@@ -515,9 +515,17 @@ prints them as `builders@Weekly<80,5h<90 else spare-builders`.
   is re-read every pass, about every 30 seconds, since load moves faster
   than any provider's windows.
 - **A group at its limit is waited for, not passed over.** So is one whose
-  runtime is down or that is held back for a model. Only a quota condition
-  sends a bead to a further group, and what the yard runs at once stays
-  bounded by the groups' limits. The bead gets one `group_wait` event,
+  runtime is down or that is held back for a model, and a bead the yard's
+  `max_sessions` holds. Only a quota condition sends a bead to a further
+  group, and what the yard runs at once stays bounded by the groups' limits.
+  The one exception is a peer group ([peers.md](peers.md)) after the full
+  group: a group at its limit, or a bead held by `max_sessions`, is passed
+  over toward that peer group alone, never toward a local group between the
+  two, since the peer takes the bead without a session here. A peer group
+  takes it once the bead has waited its `after` setting in the stage
+  (`yardr group set <name> after=15m`; unset: at once), and the peer's own
+  `--limit` still holds it. A route with no peer group after a full group
+  waits, as this rule says. The bead gets one `group_wait` event,
   logged once per stage and route until it starts, as `quota_wait` is:
   `route`, `groups` (each group with its `reason` in words: at its limit,
   its runtime down, or held back for the bead's model), `reason` (the same
@@ -1209,7 +1217,7 @@ key sets them.
 |---|---|---|
 | `manual` | nothing; the bead waits on the group | `notify`, `wait` ([below](#a-bead-that-waits-long)), `fold`, `fold_after`, `fold_max` ([below](#a-siding)) |
 | `exec` | `sh -c cmd` in the depot, with `YARDR_BEAD`, `YARDR_SESSION`, `YARDR_STAGE`, `YARDR_GROUP`, `YARDR_ACTOR` (the group), `YARDR_KIND` (`exec`), `YARDR_MODEL` and `YARDR_GIT_SYSTEM_CLEAN`; for a bead with a depot also `YARDR_DEPOT`, `YARDR_DEPOT_PATH`, `YARDR_BASE` (what the bead lands on: the depot's base, or its train's branch, see [line.md](line.md#trains); for a bead from a linked yard that named where its work starts, that commit, see [peers.md](peers.md#code-that-comes-back)), `YARDR_BRANCH` (`yard/<bead>`), `YARDR_WORKTREE` (where herdr groups check that branch out); `YARDR_TEST` (the depot's test command, unset when it has none, see [configuration.md](configuration.md#registering-a-depot)); `YARDR_TYPE` (the bead's type) and `YARDR_TRAIN` (the train it is a child of, empty for none), by which merge-local knows a wagon of a train ([line.md](line.md#wagons)); and `YARDR_BIN`, `YARDR_HOME` for the script's own `yardr` commands; `YARDR_DEPOT_KIND` is `git`, or `dir` for a dir depot, whose beads get no base, branch or worktree. An assembly is one ([line.md](line.md#4-approved-the-assembly-lands-it-on-main)), and so is an integrator such as `yardr-integrators`, which integrates a train's branch once its children have landed ([line.md](line.md#the-trains-own-flow)) | `cmd`, `dir`, `log`, `worktrees`, `env_file`, `timeout`, `nice` ([below](#sessions-that-give-way)) |
-| `herdr` | a herdr worktree workspace on branch `yard/<bead>` (from the bead's base) at `~/.yardr/worktrees/<depot>/<bead>` (reopened for later stages, one tab per stage), an agent in it, in a tab of its own with `YARDR_ACTOR` (the agent), `YARDR_BEAD`, `YARDR_SESSION`, `YARDR_STAGE`, `YARDR_GROUP`, `YARDR_KIND` (its harness kind), `YARDR_MODEL`, `YARDR_GIT_SYSTEM_CLEAN`, `YARDR_BASE` (what it branches from: the depot's base, or its train's branch), `YARDR_HOME` and `YARDR_BIN` in its environment, prompted with a brief in the worktree's git dir (`git rev-parse --git-path yardr`); a dir depot's bead works in the directory itself (see [Dir depots](#dir-depots)) | `kind`, `prompt`, `args`, `model`, `keep`, `worktrees`, `idle`, `max_age`, `grace`, `stall`, `still`, `label`, `env_file`, `trust`, `nice` ([below](#sessions-that-give-way)) |
+| `herdr` | a herdr worktree workspace on branch `yard/<bead>` (from the bead's base) at the [configured worktree location](configuration.md#where-the-worktrees-go) (reopened for later stages, one tab per stage), an agent in it, in a tab of its own with `YARDR_ACTOR` (the agent), `YARDR_BEAD`, `YARDR_SESSION`, `YARDR_STAGE`, `YARDR_GROUP`, `YARDR_KIND` (its harness kind), `YARDR_MODEL`, `YARDR_GIT_SYSTEM_CLEAN`, `YARDR_BASE` (what it branches from: the depot's base, or its train's branch), `YARDR_HOME` and `YARDR_BIN` in its environment, prompted with a brief in the worktree's git dir (`git rev-parse --git-path yardr`); a dir depot's bead works in the directory itself (see [Dir depots](#dir-depots)) | `kind`, `prompt`, `args`, `model`, `keep`, `worktrees`, `idle`, `max_age`, `grace`, `stall`, `still`, `label`, `env_file`, `trust`, `nice` ([below](#sessions-that-give-way)) |
 | `peer` | nothing here: the bead is sent to a linked yard, which works it in a flow of its own and returns how it ended ([Peer groups](#peer-groups)) | `peer`, `tries`, `remote`, `max_age` |
 
 An exec script acts as its group, whatever actor it names: a command
@@ -1652,7 +1660,7 @@ built into the binary and read once when yardr starts:
 | `install` | where to get the harness; printed, never run | `yardr doctor`, the onboarding |
 | `fetch` | how the harness gets onto a Mac that has no package manager and nobody at a terminal: one file of one version at its maker's address, with its sha256 ([doctor.md](doctor.md#a-program-fetched-on-a-mac)). Printed, never fetched by yardr. Claude Code and Codex have one; a kind with none is installed by hand | `yardr doctor --json`, `yardr harness show --json`, for a program that fetches |
 | `trust` | the folder-trust dialog yardr answers: `dialog` (the text that marks it), `answers` (those that accept it, one string or a list, one entry per harness version that renamed it; the old `answer` reads as one), `cursor` (the mark of its selected answer), and optional `env` (`KEY=VALUE` entries that let the harness skip the dialog). The runner sets the values only when trust is automatic; with `trust=false` it clears them, and a group's `env_file` cannot override them. A kind with no `trust` is left for a person | the herdr runner, at start |
-| `marks` | `input`, `message`, `edge`: what its pane is read by ([herdr setup](#herdr-setup)); `placeholder`: the input's hint when it holds nothing, which reads empty, for a harness that draws one in no faint style ([Kiro](#kiro)'s is gray); `error`: the marks taken off a line before it is read for an error | the herdr runner; the daemon |
+| `marks` | `input`, `message`, `edge`: what its pane is read by ([herdr setup](#herdr-setup)); `placeholder`: the input's hint when it holds nothing, which reads empty, for a harness that draws one in no faint style ([Kiro](#kiro)'s is gray); `footer`: the footer mark used to end the input ([text in the input](crew.md#text-in-the-input)); `error`: the marks taken off a line before it is read for an error | the herdr runner; the daemon |
 | `flags` | `model` (selects the model), `unattended` (what `yardr init` gives the yardmaster and the forms preselect), `version` (prints its version and exits), `version_contains` (what that output must contain for the program to be this harness, since any executable can be called `claude`: plain text, looked for anywhere in everything the flag printed. A program that exits 0 from the flag without it is [another program](doctor.md#a-program-that-answers-as-another), not found by doctor, not chosen by the onboarding and not called by `--try`. Claude Code's is `Claude Code` and Codex's `codex-cli`, each read from the real program; a kind with none takes any program that answers), `one_shot` (answers one prompt and exits: `yardr doctor --try`), `always` (added first to every agent of the kind, before the group's own: [Codex](#codex)'s `--no-daemon` and its update check off, [Kiro](#kiro)'s `chat` subcommand), `permissions` (named flag sets, each with `label`, `args`, `description`). `{socket}` in an argument, a preset's or a group's own `args`, is the path of the yard's socket, put in by the runner when the agent starts: for a kind whose sandbox denies unix sockets and can be told of one to let through (the `read only` presets). `{workdir}` is the directory the session works in (a bead's worktree, a crew member's directory), put in the same way: for a sandbox that is told what to deny by an absolute path (Claude Code's `read only`). `{tmpdir}` is a private temporary directory the runner makes for the session when an argument names it, beside the worktrees and for the yard's user alone, and removes when the session ends; `TMPDIR` and `TMPPREFIX` (zsh's) name it in the session's environment: for a sandbox that writes nowhere else and must still let a shell make the file of a here-document (Codex's `read only`) | `yardr init`, `group add`, `pack apply`, `doctor`; the herdr runner |
 | `offers` | the models to pick from: each a `model` id the kind's `--model` flag takes, a `label` a person reads, and what it is `recommended` for (`yardmaster` on the one frontier model a yardmaster should run on). A suggestion, not a check: `init --model` takes any id, whether the file names it or not. Claude Code, Codex, Kimi, Muse and Kiro name one each; a kind with none suggests no model | `yardr harness show`, `yardr doctor --json`, for a program that offers them |
 | `model` | where the model an agent reports is read ([Models](#models)): `home` and `home_env` (the harness's own directory), `glob` (the session file, `{session}` being the id herdr reports), `type` and `field` (which line, and where in it; `type_field` names the key that holds the type when it is not `type`), and `workspace` (how the file of a session herdr reports no id for is found instead: `type` and `field` name the line that holds the worktree, `at` the line's own time as `usage` reads it; Muse has one) | the daemon |
@@ -2006,7 +2014,9 @@ check the footer's model instead.
   Enter on that pass, and one for an agent at a dialog is not typed and
   not counted, as one that ends with the agent at a dialog counts none
   either when the pane has no echo of it (herdr reports `blocked`: the agent
-  took nothing). A pane that cannot be read keeps the send guarded. A
+  took nothing). A pane that cannot be read keeps the send guarded. For a
+  kind whose input mark yardr does not know, the first prompt waits on
+  herdr's own `interactive_ready` for the agent instead of a screen. A
   delivery that has done neither after ten
   seconds was lost (`session_prompt_lost`) and is made again, three times in
   all; after the third, `session_prompt_gave_up` tells the yardmaster, its `hint`
@@ -2136,7 +2146,14 @@ check the footer's model instead.
   so later stages reuse them. A worktree with uncommitted or untracked changes
   is kept (a `workspace_kept` event says why) and `yard/<bead>` branches are
   never deleted. Set `--set cleanup=false` on a group to keep its worktrees.
-  Reopening a bead checks its branch out again.
+  If its worktree was removed, reopening a bead checks its branch out again.
+  If opening by branch fails but the bead's worktree path still exists,
+  yardr reattaches `yard/<bead>` only when the worktree is registered with
+  Git, clean (including no untracked files), and detached at exactly
+  `origin/yard/<bead>`. It moves the local bead branch to that commit and
+  checks it out before starting the session. Other existing states fail
+  with a reason naming the state. Pull-request worktrees stay detached;
+  this recovery does not apply to them.
 - **Labels.** herdr nests each workspace under its depot's node, so labels
   leave the depot out: a bead's workspace is `<group> [<train>] <bead>` (the
   train only for a child of one) and its stage's tab `<stage> [<train>]

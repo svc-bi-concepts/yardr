@@ -176,6 +176,19 @@ func (y *yard) run(t *testing.T, args ...string) (string, error) {
 	return y.runWith(t, y.env, args...)
 }
 
+// onSystemPath reports whether the machine's /usr/bin or /bin has an
+// executable named p: the directories a case's PATH gives the script, which
+// a case cannot take a program out of.
+func onSystemPath(p string) bool {
+	for _, dir := range []string{"/usr/bin", "/bin"} {
+		fi, err := os.Stat(filepath.Join(dir, p))
+		if err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // runWith is run in the environment env. Its stdin has a line on it, which
 // nothing the script starts may read.
 func (y *yard) runWith(t *testing.T, env []string, args ...string) (string, error) {
@@ -934,6 +947,16 @@ func TestServerYardStopsWithTheWayOn(t *testing.T) {
 	}
 	// The script takes whole seconds, so round the scaled fuse up.
 	yardmasterWait := int((testload.Scale(2*time.Second) + time.Second - 1) / time.Second)
+	// The case's PATH is the machine's /usr/bin and /bin, which can hold a
+	// program the case means to leave out (a Claude Code install puts claude
+	// in /usr/bin). The script names only what that PATH lacks, so the case
+	// expects the same list.
+	var lacking []string
+	for _, p := range []string{"yardr", "herdr", "claude"} {
+		if !onSystemPath(p) {
+			lacking = append(lacking, p)
+		}
+	}
 	cases := []struct {
 		name       string
 		setup      func(t *testing.T, y *yard) []string // the environment the script runs in
@@ -958,7 +981,7 @@ func TestServerYardStopsWithTheWayOn(t *testing.T) {
 				return withEnv(y.env, "PATH=/usr/bin:/bin")
 			},
 			say: []string{"these are not on PATH:",
-				"in " + local + ", which this shell's PATH lacks: yardr herdr claude",
+				"in " + local + ", which this shell's PATH lacks: " + strings.Join(lacking, " "),
 				"run this from a login shell"},
 		},
 		{

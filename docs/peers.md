@@ -200,8 +200,8 @@ laptop may write to nobody here: yardr peer allow laptop --expose <crew member o
 mail between crew members is not allowed yet: yardr peer allow laptop --send mail --receive mail
 ```
 
-What is saved is what the commands by hand save: north has `laptop` without
-a URL, laptop has `north` with the address it called, and each allows `ping`
+For a new link, what is saved is what the commands by hand save: north has
+`laptop` without a URL, laptop has `north` with the address it called, and each allows `ping`
 both ways. Nothing else is allowed, and pairing prints the two `peer allow`
 commands that allow more: `--expose` for who the peer may write to here
 (with `--expose` given to `peer pair` it prints who that is instead), and
@@ -216,11 +216,14 @@ the same and the command says that the ping is owed.
   called, and nowhere else: not in the store, not in an event, not in a log.
   A server that stops takes an open pairing with it.
 - **The check.** Say no to one that differs from the other operator's, or
-  that you cannot compare. Either operator saying no, or not answering
-  within 5 minutes of the call, leaves nothing saved on either yard.
+  that you cannot compare. Until both have confirmed, either operator
+  saying no, or not answering within 5 minutes of the call, creates no new
+  link and leaves an existing link unchanged. For an uncertain enrollment
+  outcome, see [enrollment recovery](#enrolling-a-legacy-link).
 - **Names.** Each yard saves the other under the name it gives itself, or
-  under `--name`. A name or a key that is a peer already is refused in the
-  words `peer add` uses, before either operator is asked: the yard that
+  under `--name` for a new link. For an existing link, see
+  [enrollment](#enrolling-a-legacy-link). For a new link, a name or a key
+  that is a peer already is refused in the words `peer add` uses, before either operator is asked: the yard that
   calls finds out before it has said who it is, so its code is still good
   for the same command with `--name`.
 - **`--url`** is where the other yard reaches the one that opens the
@@ -232,14 +235,60 @@ the same and the command says that the ping is owed.
   one network; a listener on every address (`:8790`) needs it. The yard
   that calls keeps the address it called, until `yardr peer set`
 [changes it](#changing-where-a-peer-is-called).
-- **Without a terminal** there is no one to ask, and both commands refuse,
-  naming `--yes`. `--yes` confirms the check without asking and prints it,
-  for scripts and tests ([below](#what-pairing-rests-on) is what that
+- **Without a terminal**, commands for a new link refuse, naming `--yes`.
+  For a new link, `--yes` confirms the check without asking
+  and prints it, for scripts and tests ([below](#what-pairing-rests-on) is what that
   costs). With `--json`, which needs `--yes`, the yard that opens the
   pairing prints two documents: `{"pairing", "code", "address", "expires",
   "command"}` at once, and at the end what both print: `{"role", "peer",
   "check", "ping" or "ping_error"}`.
 - **Only the operator** pairs, as only the operator adds a peer.
+
+#### Enrolling a legacy link
+
+Once both yards run a sealed-wire build, each operator independently gets
+the other yard's fresh `yardr-peer-2` invite over a trusted channel
+(`yardr peer invite`, with the unchanged `--url` where the existing link
+has one). Each invite must match the stored signing key and URL, and any
+encryption key already pinned. Use each yard's existing local peer name;
+the names may differ between yards.
+
+The yard at the caller's existing stored URL opens the pairing, using
+`--url` if needed to advertise that same address:
+
+```sh
+yardr peer pair --enroll <existing-peer-name> --invite '<fresh-v2-invite>'
+```
+
+The caller uses the address and code it shows, with its own existing peer
+name and independently obtained invite:
+
+```sh
+yardr peer pair <address> <code> --enroll <existing-peer-name> --invite '<fresh-v2-invite>'
+```
+
+Both operators compare a fresh check. When the other yard has renamed
+itself since the link was made, the invite carries its new name: the check
+shows the change, and both operators confirm it as they would any check.
+Both screens show the saved advertised name beside the new one before the
+check. Enrollment updates that name without changing the local peer name;
+its audit event is listed under [Events](#events).
+
+Enrollment requires a terminal and refuses `--yes`, `--json`, `--name` and
+`--expose`. The authenticated check binds the encryption key to the existing
+signing identity. A missing encryption pin is filled; identities, link
+settings, permissions, queued messages and accepted work stay in place.
+A fresh pairing can also confirm an equal pin when one yard committed
+first, or refresh the advertised name of an already enrolled peer; a
+different pin is refused. This does not rotate keys or make old and new
+builds transparently compatible.
+
+If a final answer is lost, waiting is cancelled or a server restarts, one
+yard may have committed already. Inspect `yardr peer show <name>` on both
+sides and confirm their current identities before retrying with a new code,
+fresh invites and fresh checks. Do not remove/re-add the peer, clear a pin
+or replay queued work: removing a peer drops queued mail, grants and custody
+records.
 
 #### What pairing rests on
 
@@ -313,12 +362,14 @@ yard carried to the other.
    ```
 
    The link works once both have. A name or a key that is a peer already is
-   refused: `yardr peer rm` first, to replace one. A peer whose address
+   refused. For a legacy link without an encryption pin, use
+   [enrollment](#enrolling-a-legacy-link) to keep its queues, grants and
+   custody records. A peer whose address
    moved is not replaced: `yardr peer set <name> --url <url>` [changes where
    it is called](#changing-where-a-peer-is-called) and keeps the link. A
    `yardr-peer-1` line from before the sealed wire still adds, with no
    encryption key pinned: [The requests](#the-requests) says what that
-   link gets until it is re-added from a new invite.
+   link gets until it is enrolled.
 
 3. **Each allows what the link carries.** Nothing is allowed by default:
 
@@ -1129,6 +1180,38 @@ message does, pushed or pulled. The command returns once it is queued:
 `yardr peer show north` lists it (`waiting: mail <id> from yardmaster to
 yardmaster@north`) until the peer has it.
 
+**Receipts and replies.** Each mail this yard queues for a peer, or writes to
+its own inboxes, has a receipt (`MailReceipt`) written in the same transaction as
+its outbox message and its event: the event's seq, the wire id, the peer as the
+link named it and the peer's key, and the participants. A receipt proves only
+that this yard committed the mail. It lives with the event it names and carries
+no body: the text stays in the event and the outbox, as before.
+
+A reply to mail received over the link carries the wire id of the mail it
+answers as `re`, and the receiving yard relates it to that mail only when
+its own receipt for that id was queued to
+this peer's key, the reply runs back along the same two names, and the original
+mail event is still kept. Only then does the mail event say `in_reply_to`.
+When that event has been pruned, the reply stays ordinary mail with `re` as sent,
+even if the outbox still holds the original message and keeps its receipt.
+The receipt index (`mail_receipt_ids`) is built once, for a store that had
+receipts before it, and is written with them.
+
+For mail received over the link, the event says so in its data: `id` is the
+wire id of the mail, `re` the id the peer's reply names as sent, kept for provenance,
+and `in_reply_to` the seq, in this yard's own log, of the outgoing mail it
+answers, present only when the relation is validated. `in_reply_to` is never the
+peer's seq for the reply.
+
+The mapping's lifetime follows the custody it serves, with no timer of its own.
+A receipt goes when the event it names is pruned and the outbox no longer holds
+its message. Acknowledging the message does not expire the receipt while the
+event is kept, and a prune that removes the event while the message is still
+queued keeps the receipt until a later prune finds the message gone. A peer
+renamed keeps its relation, since the key is what identifies it; a name made
+again under another key does not inherit one. Mail from before receipts existed
+has none, and stays ordinary mail.
+
 **Who may send.** For a crew member two things must hold, for a user of the
 yard the first alone:
 
@@ -1167,19 +1250,60 @@ one line:
 The name is what the other yard said. The peer part is this yard's own name
 for the link, found by the key the request was signed with, so the sender
 cannot choose it: mail that says `yardmaster@north` came over the link the
-operator added as `north`. No actor of this yard has an `@` in its name. What
-the line means: the crew member weighs such mail as it would a stranger's
+operator added as `north`. Mail written directly through `--home` instead
+identifies the sending yard by its local key, as described below. No actor of
+this yard has an `@` in its name. What the line means: the crew member weighs
+such mail as it would a stranger's
 letter, and acts on it only as far as it would on its own judgement or on the
 operator's word. The crew member's prime and the yardmaster's role prompt say
 so. Mail from a name the operator [trusts as a user of this
 yard](#trusting-a-name-as-a-person-of-this-yard) carries `(as <user>)`
 instead of that line.
 
+**Writing directly into another home.** On the same machine, an operator can
+write into another yard's inbox with
+`yardr --home <target-home> --actor <sender> mail <recipient> <text>`.
+When the sender is neither a crew member nor a user of the target home,
+yardr records it as `<sender>@<peer>`, where `<peer>` is the target home's
+link to the yard selected before `--home` (by `YARDR_HOME`, or the default
+home). That link is matched by the sending yard's key, so a rename follows
+the same yard. With no such link the command refuses the mail, since no
+reply could reach its sender. A name that belongs to the target yard stays
+local. When the target yard has users, an unregistered login must be named
+explicitly with `--actor` or `YARDR_ACTOR` ([users.md](users.md)).
+
+This writes locally rather than delivering over the link: it needs neither
+an encryption pin nor the link's incoming-mail grant or exposed roster.
+A local crew or bead session cannot record mail as another yard's sender.
+The resulting mail has no wire id; its reply still goes over the peer link.
+
 **Answering.** With `yardr reply <seq>`, the number its inbox line starts
 with: the reply is mail to `<name>@<peer>`, if the crew member may mail
 that peer (a refusal reads as `yardr mail`'s); a user answers so too, or on
 the sender's row in `yardr chat`. `yardr mail <name>@<peer>` is for writing
 first. There are no thread ids: a mail is one message.
+
+The store's `MailPeerReply(answered, text, actor)` takes the answered inbox seq,
+the reply text and the actor. It takes the sender, the link and the wire id
+from the mail event as it was taken, so the reply goes back to the
+yard it came from, and no caller can choose another destination or reference.
+For mail received over the link it names that mail as `re`; for mail written
+directly through `--home`, it queues ordinary peer mail without `re`.
+It is refused for mail that is not to the caller, not from a peer, or from a
+link since removed. For mail received over the link, the caller must still be
+exposed on it. If the link has no encryption pin, the reply is refused before
+queuing, naming the peer and explaining that its mail cannot be sealed and
+would not arrive; `yardr peer show <peer>` shows the link.
+With `--json`, `yardr reply` adds `re` when there is a wire id answered, and
+`receipt` (`seq`, `id`, `direction`, `peer`, `peer_key`, `from`,
+`to`, `at`), and `id` is the reply's own wire id. The top-level `seq` still
+names the answered inbox event; `receipt.seq` names the outgoing reply's event
+in this yard's log.
+
+Older mail recorded with a bare foreign sender has no link to answer over.
+If that name is no crew member or user here, `yardr reply` explains that the
+sender is not a member of this yard and suggests
+`yardr mail <sender>@<peer>`; use `yardr peer list` to choose its yard's link.
 
 **From a yard removed since.** After `yardr peer rm north`, mail north sent
 that is still unread shows as
@@ -1660,9 +1784,21 @@ laptop routes `build` to `at-north`, north routes it to its builders.
   peer allow north --send bead`).
 - `--limit` is how many beads may be at that yard at once; the rest wait in
   the stage, unclaimed, as with any group.
+- `after=<duration>` is how long a bead waits in its stage before this group
+  takes it past a full group of its route, such as `after=15m` (unset: at
+  once). A peer group is the route's last group: it takes no `--else wait`
+  after it and no condition. `yardr route add --stage new --group builders
+  --else at-north` sends a bead that `builders` is full for to `at-north`,
+  and with `yardr group set at-north after=15m` it waits fifteen minutes in
+  the stage first.
 - `remote=<name>` is the remote of the bead's depot that a branch the yard
-  returns is fetched from (`origin` unless set), and `tries` is also how
+  returns is fetched from (`origin` unless set), and the remote a branch of
+  this yard's own is pushed to before the bead is sent, when it has commits
+  the base does not (the base's remote when unset), and `tries` is also how
   often that fetch is tried ([Code that comes back](#code-that-comes-back)).
+  That remote must be in every depot clone the group sends from: a bead of
+  a depot without it is held unsent, with the command that adds it, rather
+  than sent to come back with its branch nowhere to be taken from.
 - No members. `--type`, `--label` and `--bead-priority` of the route
   choose which beads of the stage go there (only those labelled `remote`, say).
 - `yardr flow show <depot>` has the group under GROUP and `yard north` under
@@ -1700,7 +1836,7 @@ note that says why:
 
 | outcome | when |
 |---|---|
-| `refused` | the other yard did not take the bead (the reasons [below](#what-arrives), in this yard's words), or this yard did not send it: the bead is too large (a title over 512 bytes, a body over 64 KB), or its branch has commits of this yard's own since the other yard returned it ([a bead sent again](#a-bead-sent-again)) |
+| `refused` | the other yard did not take the bead (the reasons [below](#what-arrives), in this yard's words), or this yard did not send it: the bead is too large (a title over 512 bytes, a body over 64 KB), or its depot has no remote to push a branch with commits of this yard's own to ([a bead sent again](#a-bead-sent-again)) |
 | `undelivered` | the message was posted as often as the group's `tries` (5, about a quarter of an hour with the daemon's waits; `--set tries=<n>`) and the yard was never reached; the link stopped carrying `bead` out (`peer allow --no-send bead`); the link was removed while the bead was there; or this yard did not send it: the peer is linked no more, or its link carries no `bead` out |
 
 A try that does not reach the yard counts for every bead that waits for it,
@@ -1873,7 +2009,9 @@ none: a bead it sends is refused`.
 
 - **The bead says which repository it is for.** A bead sent from a
   repository carries the remote its work starts from, and it goes to the
-  intake whose depot's origin is that remote. A yard that builds for two
+  intake whose depot's origin is that remote. A remote through a git remote
+  helper, `helper::url` (`av::https://host/owner/repo.git`), is matched by its
+  url: the helper's name is no part of the remote. A yard that builds for two
   repositories holds an intake for each, and each bead goes to its own:
   ```sh
   yardr peer intake north --depot web --flow incoming
@@ -2636,9 +2774,14 @@ remote, the `bead` message carries `git`: `base`, the branch's name;
 `base_commit`, where the base stands in this yard's depot when the bead is
 sent; and `remote`, the URL of the base's remote: the remote of a base like
 `origin/main`, else the
-upstream of the local base branch, else `origin`. A dir depot, and a depot
-with no remote, send no `git`: such a bead crosses with its words, as
-before.
+upstream of the local base branch, else `origin`. A dir depot sends no
+`git`: such a bead crosses with its words.
+
+Before sending from a repository, the yard checks that it has the peer
+group's `remote` (`origin` by default). If it does not, the bead is held in
+its stage and nothing is sent. Add the remote with
+`git -C <depot path> remote add <remote> <url>`, then
+`yardr bead unhold <id>` tries the send again.
 
 The base commit has to be on the remote. A base that this yard landed on
 and did not push (`merge-local` without `YARDR_PUSH`) is a commit the other
@@ -2739,9 +2882,10 @@ branch is there:
 | what happened | what the yard does |
 |---|---|
 | the fetch failed (the remote is down, a credential is missing) | tries again after a wait that doubles from 30s up to an hour, as an issue move does. After the group's `tries` (5; `--set tries=<n>`, the setting that also counts the posts of the bead) the bead is **held**, with a note that has git's words |
+| the depot has no remote of the group's name (removed after the bead was sent) | the same as a failed fetch: tried again, then held; add the remote with `git -C <depot path> remote add <remote> <url>` and `yardr bead unhold <id>` takes the branch |
 | the branch on the remote is not at the commit the return names | not taken, and held at once: no try changes it |
 | the branch name is no bead's, or the commit no commit's | the same |
-| this yard's `yard/<bead>` exists and the returned commit does not come after it | the same: move or delete the branch first. A bead sent a second time no longer ends here: it starts where this yard's branch stands, or is not sent ([a bead sent again](#a-bead-sent-again)). What is left is a branch that had commits of this yard's own before the bead was first sent |
+| this yard's `yard/<bead>` exists and the returned commit does not come after it | the same: move or delete the branch first. A bead sent a second time no longer ends here: its branch is pushed and it starts where the branch stands ([a bead sent again](#a-bead-sent-again)). What is left is a branch that had commits of this yard's own before the bead was first sent |
 
 The held bead stays in its stage, owned by the peer group, so nothing sends
 it out again. `yardr bead unhold <id>` tries anew, with a full count of
@@ -2758,8 +2902,7 @@ applied, with a note by `yard` that the branch was not taken and why
 (`peer_bead_not_fetched` on the bead), when:
 
 - the bead's depot is a dir depot, or the bead has none;
-- the remote the branch was pushed to is not this depot's remote, or the depot
-  has no remote of that name.
+- the remote the branch was pushed to is not this depot's remote.
 
 What came back is then the outcome and the notes. For work whose result is
 words that is all there is to take.
@@ -2785,9 +2928,9 @@ b takes c's branch into its own bead's branch, its `return-branch` pushes
 that under b's name, and a takes b's. The bead b sends on names the commit
 a named, so c starts where a's bead starts. Where two of the yards have no
 remote in common, words come back over that hop, and that is not an error:
-the taking yard's depot is a directory, the asking yard's depot has no remote
-to name, or the branch was pushed to a remote the asking yard's depot does
-not have. The yard before it then has the outcome and the notes, and
+the taking yard's depot is a directory, or the branch was pushed to a
+different remote than the asking yard's configured remote. The yard before
+it then has the outcome and the notes, and
 nothing to push. (A taking yard whose depot is a repository with another
 remote than the bead names is the one case that refuses, as
 `base_unknown`: its work would start somewhere else.)
@@ -2801,7 +2944,7 @@ group's `remote` on the way back.
 
 | | |
 |---|---|
-| left out | the scheme (`https`, `ssh`, `git`, the scp spelling `git@host:path`), the login, the port, a trailing `.git`, a trailing `/` |
+| left out | a remote helper's prefix (`av::`, as in `av::https://host/path`), the scheme (`https`, `ssh`, `git`, the scp spelling `git@host:path`), the login, the port, a trailing `.git`, a trailing `/` |
 | compared | the host, in lower case, and the path as it is written: `acme/web` and `Acme/web` are two |
 
 So these are one remote, `github.com/acme/web`, and a laptop that clones by
@@ -2813,12 +2956,15 @@ ssh://git@github.com/acme/web
 ssh://git@github.com:2222/acme/web.git
 https://github.com/acme/web
 https://jo:<token>@github.com/acme/web.git/
+av::https://github.com/acme/web.git
 ```
 
 `github.com/acme/api` is another remote, and so is `gitlab.com/acme/web`.
 A path on the machine (`/srv/git/web.git`, `file:///srv/git/web.git`) is
 `file:///srv/git/web`, with the links in it followed, and is the same
-remote only for two yards on that machine.
+remote only for two yards on that machine. A helper's prefix before
+anything but a network address (`ext::`, `fd::`, `file::`, `av::/srv/git/web.git`)
+names no remote.
 
 What is compared is what `git remote get-url <remote>` prints in each depot,
 so a URL that git's `url.<base>.insteadOf` rewrites is compared as
@@ -2883,16 +3029,22 @@ What the branch may hold decides it:
 |---|---|
 | stands at the returned commit, or behind it | is sent, starting where the branch stands |
 | is gone, or holds nothing the depot's base does not (made anew from it) | is sent from the base, as a first sending is |
-| holds commits made here since the return | is **not sent**: the stage ends as `refused`, by `yard`, and nothing is queued |
+| holds commits this yard made that the base does not, since the return or at all | is pushed first, under its own name (`refs/heads/yard/<bead>`), to the `remote` of the group or else the base's remote, and is sent from the pushed head; a push that fails is an event, and the sending is tried again on a later pass |
 
 The third row is a reviewer's fix committed here, or a merge of the base
-into the branch. The other yard does not have those commits, and a bead's
-own commits are not sent to the yard that works it. The note says what to
-do:
+into the branch. The other yard does not have those commits, so the branch
+is pushed to the remote the other yard fetches from before the bead is sent,
+and the bead starts from the pushed head: its message names the branch as
+its base (`base: yard/web-d5zc`, `base_commit` its head), as for a bead sent
+again. A first sending of a bead whose branch has commits of this yard's own
+is pushed the same way.
 
-```text
-This yard did not send this bead to north: its branch yard/web-d5zc is at 5f0c1a77e2b9 here, with commits made here since the other yard returned yard/web-0wzb at 2db68ec0a4d1. That yard does not have them, and a bead's own commits are not sent to the yard that works it. Move the branch back to 2db68ec0a4d1, or work the bead in this yard.
-```
+The push is `git push <remote> refs/heads/yard/<bead>:refs/heads/yard/<bead>`,
+a fast-forward only: a remote that holds another commit under that name
+refuses it. A push that fails is recorded as `peer_bead_push_failed`, the
+bead is not sent, and the start is tried again on a later pass, as any
+start that fails is; the dispatcher holds the bead for a person after
+three failed starts in a stage, as it does for any start that keeps failing.
 
 Route `refused` out of the peer's stage to a stage worked here, as the
 example flow does (`decide on refused`).
@@ -3194,23 +3346,18 @@ and is refused before anything is dialled, with one line, by `yardr peer
 ping`, `yardr peer show` and `yardr doctor` alike:
 
 ```text
-<peer> was linked before sealed bodies: re-link it — yardr peer rm <peer>, then link it again by its address or its new invite
+<peer> was linked before sealed bodies: enroll its missing encryption pin with yardr peer pair --enroll <peer> --invite <fresh-v2-invite> on both yards
 ```
 
 The dispatcher makes no dial and counts no try for such a peer. A request
 signed the old way (the `Yardr-Peer-*` triplet over a body's sha256) is
 the same plain unsigned 401 at the receiver: no compat reader is kept.
-Upgrading the two yards in either order, an operator sees this: while
-only one side is upgraded, its traffic is refused (401 on the old side's
-asking, an unopenable answer on the other's), which counts as a failed
-try, so what waited is delivered once both run the new build — unless its
-tries run out first, in a gap of days rather than minutes, after which
-it is given up as any failed message is. What the peer held for this yard
-crosses after a gap of any length, since asking burns no tries.
-Enrolment is unchanged apart from presenting the yard's encryption key
-beside its signing key; a yard linked by its address is re-linked by
-deriving the address again (`yardr peer rm`, then the same add), which
-mints no code and changes no operator's confirmation.
+A legacy link resumes only after both yards upgrade and
+[enroll its missing pin](#enrolling-a-legacy-link). For a link that already
+pins an encryption key, a peer still on the old build causes failed pushes,
+which burn tries. What waits is delivered once both run the new build,
+unless its tries run out first; failed messages are not replayed. Messages
+that only wait to be pulled burn no tries and can cross after any gap.
 
 Until a header signature holds, a request is read up to a small
 message's bound (256 KiB plus room); then up to the sealed encoding of
@@ -3251,9 +3398,11 @@ with is 401, as any request that is no peer's.
 
 | event | when | data |
 |---|---|---|
-| `peer_added` | `peer add`, and a pairing that ended with a link | `peer`, `key`, `url`; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was added that way |
+| `peer_added` | `peer add`, and a pairing that created a new link | `peer`, `key`, `url`; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was added that way |
+| `peer_encryption_enrolled` | enrollment filled a missing encryption pin without changing the advertised name; confirming an equal pin and unchanged name emits no event | `peer`, `key` (the signing identity) |
+| `peer_identity_enrolled` | enrollment changed the advertised name, optionally filling a missing encryption pin in the same write | `peer` (the local name), `old_calls`, `new_calls`, `encryption_pin_added` |
 | `peer_pair_opened` | `peer pair` opened a pairing on this yard | `pairing`, its id; `expires`; `url`; `role` `host` |
-| `peer_paired` | a pairing ended with a link: with it `peer_added` and `peer_allowed`, in the same write | `peer`, `key`, `url`, `calls`, `role` (`host`: this yard was called; `joiner`: it called), `pairing` on the host |
+| `peer_paired` | a pairing created a new link: with it `peer_added` and `peer_allowed`, in the same write | `peer`, `key`, `url`, `calls`, `role` (`host`: this yard was called; `joiner`: it called), `pairing` on the host |
 | `peer_pair_refused` | a pairing ended without one | `reason`: `wrong_code` (on the host after five, with `wrong_codes`; on the yard that called for each), `declined` (this yard's operator), `peer_declined` (the other's), `timed_out`, `closed` (`--end`, Ctrl+C), `already_peer`, `bad_name`, `own_key`; `role`; `pairing` on the host; `peer`, `calls` and `key` once the other yard is known |
 | `peer_removed` | `peer rm` | `peer`, `messages_dropped`, `identities` (each `source`, `id`, `crew`) that went with it, `crew` that could mail it and no longer can, `beads` it sent that now say their link is removed, `beads_away` of this yard's that were there and ended as `undelivered`, `asks` it asked that were dropped (each person they were for gets one mail from `yard` listing theirs); `approved`, the `bead` and `ask` of the run ask the operator approved, when it was removed that way |
 | `peer_renamed` | `peer rename` | `from`, `to`; `peer`, the new name; `messages` that waited and moved with it; `crew` whose `peers` setting followed, `groups` whose `peer` setting did, `subscriptions`: who holds a subscription whose `peer=` or `speaker=` filter did; `approved`, the `bead` and `ask` of the run ask the operator approved, when it was renamed that way |
@@ -3269,7 +3418,8 @@ with is 401, as any request that is no peer's.
 | `peer_message_refused` | a kind this yard's yardr does not know, a kind the link does not carry, something pulled that is no message, or mail this yard does not take | `peer`, `kind`, `id`, `direction` (`in` or `out`), `reason` (`kind_unknown` with `detail`; `kind_not_allowed`; `not_a_message`, with its `seq` and neither id nor kind; for mail `not_exposed` with `to` when it is a name, `no_such_resident` with `to`, `too_large`, `not_mail`, and `rate_limited` once an hour with `limit` and `until`; for a file `too_large` with `hash`, `bytes` and `limit`, `not_file` with `detail`, never its bytes, and `rate_limited` once an hour with `limit` and `until`; for a bead `no_intake` with `detail` naming the remotes the intakes take, or when the intake's depot or flow is gone, `version` with `v` and `known`, `too_large`, `already_here` with `here`, `busy` with `open` and `limit`, `not_a_bead`, `loop`, `too_far` with `yards` and `limit`, `base_unknown` with `detail`, each with the sender's `bead` and `stage` once they are read; for a return `version` and `not_a_bead`; for a bead event `not_an_event`, `version` with `v` and `known`, and `rate_limited` once an hour with `limit` and `until`; for a read `no_such_bead`, `not_a_read`, `version` with `v` and `known`, and `rate_limited` once an hour with `limit` and `until`; for a note `no_such_bead`, `not_a_note`, `too_large`, `version` with `v` and `known`, and `rate_limited` once an hour with `limit` and `until`) |
 | `peer_bead_arrived` | a bead from a peer became a bead here; on that bead, by `peer:<peer>` | `peer`, `id` of the message, `from` (the sender's handle), `stage` (its stage), `way`, `depot`, `flow`, `notes_left_out`; `base` and `base_commit` when its work starts where the sender said |
 | `peer_bead_returned` | a bead from a peer ended and its return was queued; on the bead, by who ended it | `peer`, `id` of the return, `re` (the message that brought the bead), `to` (the sender's handle), `outcome`, `notes` (how many), `notes_left_out`; `branch`, `commit` and `remote` when the return names where the result is |
-| `peer_bead_sent` | a bead entered a stage a peer works and its message was queued; on the bead, by `yard` | `peer`, `id` of the message, `stage`, `group`, `session`, `tries`, `notes` (how many), `notes_left_out`, `yards_before` for a bead sent on; `base`, `base_commit` and `remote` when it says where its work starts |
+| `peer_bead_push_failed` | the push of a bead's branch to the remote its peer fetches from failed, so the bead was not sent; the start is tried again on a later pass; on the bead, by `yard` | `branch`, `remote`, `reason` in this yard's words, `attempts` (how many of these in the bead's stay) |
+| `peer_bead_sent` | a bead entered a stage a peer works and its message was queued; on the bead, by `yard` | `peer`, `id` of the message, `stage`, `group`, `session`, `tries`, `notes` (how many), `notes_left_out`, `yards_before` for a bead sent on; `base`, `base_commit` and `remote` when it says where its work starts (for a branch pushed first, the pushed head) |
 | `peer_bead_returned` | on the yard that sent it: the peer's return came; on the bead, by `peer:<peer>`. The `advanced` (or `held`) that follows has the same actor, with `outcome` and `peer` | `peer`, `id` of the return, `re`, `from` (the peer's handle), `outcome`, `stage`, `way`, `notes`, `notes_left_out`; `branch`, `commit` and `remote` when it names a branch; `stale` with a `reason` for a return that changed nothing |
 | `peer_bead_event` | on the yard that sent the bead: the peer said how its bead stands (a `bead-event`); on the bead, by `peer:<peer>`. Nothing of the bead changes with it | `peer`, `id` of the message, `re` (the `bead` message), `from` (the peer's handle), `event`, `stage` (the peer's), `left` (the stage it left, for `advanced`), `held`, `way`; `stale` with a `reason` for one that was dropped, which is on no bead when it names none of this yard's |
 | `peer_bead_read` | on the yard that works the bead: the peer read it, and the answer was queued; on the bead, by `peer:<peer>`. On the yard that sent the bead: the peer's answer came and replaced the copy kept; on the bead, by `peer:<peer>`. Never the notes' text | where the bead is worked: `peer`, `id` of the question, `re` (the message that brought the bead), `answer` (the answer's id), `to` (the sender's handle), `notes` (how many), `notes_left_out`, `way`. Where it was sent from: `peer`, `id` of the answer, `re` (the question), `from` (the peer's handle), `stage`, `held`, `notes`, `notes_left_out`, `way`; `stale` with a `reason` for an answer that was dropped, which is on no bead when it answers no question |
@@ -3277,7 +3427,7 @@ with is 401, as any request that is no peer's.
 | `hook` | with each `peer_bead_event` that was not dropped: the same event as a delivery of [the source `peer`](#the-source-peer); on no bead, by `peer:<peer>`, with no `hook` | the envelope (`source` `peer`, `type` `bead`, `action`, `thread`, `fields`), `there`, `held`, and whom it reached: `deliveries`, `notified` |
 | `peer_bead_fetched` | the branch a return named is this yard's bead's branch now; on the bead, by `yard`, before the `advanced` | `peer`, `branch` (the peer's), `commit`, `remote`, `into` (this yard's) |
 | `peer_bead_not_fetched` | the branch a return named was not taken; on the bead, by `yard` | `peer`, `branch`, `commit`, `remote`, `reason`; with `held` and `attempts` when the bead is held over it, without when the code is not this yard's to take and the outcome is applied |
-| `peer_bead_refused` | the peer did not take a bead, or this yard did not send it (too large, or its branch has commits of this yard's own since it came back); on the bead | `peer`, `id`, `stage`, `outcome` `refused`, `reason` in this yard's words, `sent` `false` when this yard did not send it |
+| `peer_bead_refused` | the peer did not take a bead, or this yard did not send it (too large); on the bead | `peer`, `id`, `stage`, `outcome` `refused`, `reason` in this yard's words, `sent` `false` when this yard did not send it |
 | `peer_bead_undelivered` | a bead was given up (its tries, its link, or its peer went), or this yard did not send it (the peer is linked no more, or its link carries no `bead` out); on the bead, by `yard` | `peer`, `id`, `stage`, `outcome` `undelivered`, `reason`, `attempts` when given up after tries, `sent` `false` when this yard did not send it |
 | `peer_message_failed` | a message was given up: after its tries, because the peer refused it, or because this link stopped carrying its kind while it waited | `peer`, `kind`, `id`, `attempts`, `reason`, `way` `pull` when the peer said so with a question; for a file its `hash` and `mail`, the id of the mail it was for |
 | `mail` | mail was queued for a peer, or mail from one reached an inbox; by `yard`, to who wrote a mail or asked a read that was given up | as local mail (`to`, `text`), with `id`, and `to_peer` where it left or `from` and `from_peer` where it came in. The actor of mail that came in is `<name>@<peer>` |

@@ -144,6 +144,18 @@ func TestInputText(t *testing.T) {
 		"draft of two lines": {"claude", rule + "❯ first line\r\n  second line\r\n" + rule + claudeFooter, "first line\nsecond line", true},
 		"draft begun with an empty first line": {
 			"claude", rule + "❯ \r\n  second line\r\n" + rule + claudeFooter, "second line", true},
+		// Claude Code's footer drawn fused to the bottom rule (yardr-bvck3)
+		// ends the input as the rule does: an empty input whose footer
+		// row is fused reads empty, and a real draft above it still holds.
+		"claude, empty input, footer fused to the rule": {
+			"claude", "⏺ reply\r\n❯\r\n❯\r\n──⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent\r\n", "", true},
+		"claude, draft above a fused footer": {
+			"claude", "❯ draft\r\n──⏵⏵ bypass permissions on (shift+tab to cycle)\r\n", "draft", true},
+		// The mark inside a row, not after a rule's run, is the input's text.
+		"claude, footer mark inside a draft's row": {
+			"claude", rule + "❯ draft\r\nmore ⏵⏵ text\r\n" + rule + claudeFooter, "draft\nmore ⏵⏵ text", true},
+		// A kind with no footer mark has no fused footer: its row is text.
+		"codex, fused footer row is text": {"codex", "› draft\r\n──⏵⏵ x\r\n" + codexFooter, "draft\n──⏵⏵ x", true},
 		// A person who types a placeholder's words has typed text: the
 		// attribute is asked, not the wording.
 		"placeholder's words, typed": {"codex", "\x1b[0m\x1b[1m›\x1b[0m Ask Codex to do anything\r\n" + codexFooter, "Ask Codex to do anything", true},
@@ -202,11 +214,52 @@ func TestInputText(t *testing.T) {
 		"no kind, Claude Code's draft":         {"", claudeDraft, "some creative..", true},
 		// Its own mark tells before another's further down.
 		"claude, Codex's mark below its input": {"claude", claudeDraft + "› printed\r\n", "some creative..", true},
+		// Claude Code's chrome under an empty input is no text: its recap,
+		// its background-agents footer, its clear offer.
+		"claude, recap under an empty input":             {"claude", rule + "❯ \r\n※ recap: fixed the parser\r\n" + rule + claudeFooter, "", true},
+		"claude, agents footer under an empty input":     {"claude", rule + "❯ \r\n⏵⏵ bypass permissions on · ← 2 agents\r\n" + rule, "", true},
+		"claude, clear offer under an empty input":       {"claude", rule + "❯ \r\nnew task? /clear to save 114.8k tokens\r\n" + rule + claudeFooter, "", true},
+		"claude, chrome under a typed line is text":      {"claude", rule + "❯ typed\r\n※ recap: fixed\r\n" + rule + claudeFooter, "typed\n※ recap: fixed", true},
+		"claude, typed clear offer is a draft":           {"claude", rule + "❯ new task? /clear to save 114.8k tokens\r\n" + rule + claudeFooter, "new task? /clear to save 114.8k tokens", true},
+		"claude, a line that only begins as chrome":      {"claude", rule + "❯ \r\n← 2 agents, said by hand\r\n" + rule, "← 2 agents, said by hand", true},
+		"claude, a survey under an empty input is text":  {"claude", rule + "❯ \r\nHow is Claude doing this session? (optional)\r\n1: Bad  2: Fine  3: Good  0: Dismiss\r\n" + rule + claudeFooter, "How is Claude doing this session? (optional)\n1: Bad  2: Fine  3: Good  0: Dismiss", true},
+		"claude, agents words inside a longer line":      {"claude", rule + "❯ \r\nsee ← 2 agents · more\r\n" + rule, "see ← 2 agents · more", true},
+		"claude, one character a line is text still":     {"claude", rule + "❯ \r\nw\r\na\r\nt\r\n" + rule + claudeFooter, "w\na\nt", true},
+		"claude, recap above the input is not the input": {"claude", "※ recap: fixed the parser\r\n" + claudeEmpty, "", true},
 	} {
 		text, known := inputText(c.pane, c.kind)
 		if text != c.text || known != c.known {
 			t.Errorf("%s: inputText = %q, %v; want %q, %v", name, text, known, c.text, c.known)
 		}
+	}
+}
+
+// TestInputComposerNamesItsReason is what nudge_held's composer carries: one
+// of the fixed codes, for a Claude Code input and each shape of it, and no
+// reason for an input that holds no text. A draft that resembles chrome is a
+// draft, and a garbled redraw is held as one (see ComposerGarbled).
+func TestInputComposerNamesItsReason(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		kind, pane, text, reason string
+	}{
+		"empty":              {"claude", claudeEmpty, "", ""},
+		"placeholder":        {"claude", claudePlaceholder, "", ""},
+		"draft":              {"claude", claudeDraft, "some creative..", ComposerDraft},
+		"recap under empty":  {"claude", rule + "❯ \r\n※ recap: fixed\r\n" + rule + claudeFooter, "", ComposerChrome},
+		"agents under empty": {"claude", rule + "❯ \r\n⏵⏵ bypass permissions on · ← 2 agents\r\n" + rule, "", ComposerChrome},
+		"clear offer, typed": {"claude", rule + "❯ new task? /clear to save 114.8k tokens\r\n" + rule, "new task? /clear to save 114.8k tokens", ComposerDraft},
+		"survey under empty": {"claude", rule + "❯ \r\nHow is Claude doing this session? (optional)\r\n1: Bad  2: Fine  3: Good  0: Dismiss\r\n" + rule, "How is Claude doing this session? (optional)\n1: Bad  2: Fine  3: Good  0: Dismiss", ComposerDraft},
+		"garbled redraw":     {"claude", rule + "❯ \r\nw\r\na\r\nt\r\n" + rule, "w\na\nt", ComposerGarbled},
+		"codex draft":        {"codex", codexDraft, "half a thought", ComposerDraft},
+		"no mark":            {"acme", noMark, "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if text, _, reason := inputComposer(c.pane, c.kind); text != c.text || reason != c.reason {
+				t.Fatalf("inputComposer = %q, %q; want %q, %q", text, reason, c.text, c.reason)
+			}
+		})
 	}
 }
 
@@ -243,6 +296,28 @@ func kimiPane(joins string, lines ...string) string {
 		s += " │" + l + strings.Repeat(" ", inner-ansi.StringWidth(l)) + "│ " + end(i+1)
 	}
 	return s + " ╰" + strings.Repeat("─", inner) + "╯\n Never Ask  K3 thinking: high  ~\n context: 4% (34.9k/1M)\n"
+}
+
+func TestRedrawInputOnlySendsCtrlLToTheHandlePane(t *testing.T) {
+	t.Parallel()
+	log := filepath.Join(t.TempDir(), "keys")
+	h := &Herdr{Bin: deafHerdrBin(t, `echo "$*" >> `+log)}
+	if marked, err := h.RedrawInput(context.Background(), map[string]any{"pane": "w1:p1", harnessKind: "claude"}); err != nil || !marked {
+		t.Fatalf("RedrawInput = %v, %v; want marked and no error", marked, err)
+	}
+	got, err := os.ReadFile(log)
+	if err != nil || strings.TrimSpace(string(got)) != "pane send-keys w1:p1 C-l" {
+		t.Fatalf("keys sent = %q, %v; want only Ctrl-L to the handle pane", got, err)
+	}
+	if _, err := h.RedrawInput(context.Background(), map[string]any{harnessKind: "claude"}); err == nil {
+		t.Fatal("redraw without a verified pane succeeded")
+	}
+	if marked, err := h.RedrawInput(context.Background(), map[string]any{"pane": "w1:p1", harnessKind: "no-such-kind"}); marked || err != nil {
+		t.Fatalf("kind without an input mark: RedrawInput = %v, %v; want unmarked", marked, err)
+	}
+	if again, _ := os.ReadFile(log); string(again) != string(got) {
+		t.Fatalf("keys sent for a kind with no mark: %q", again)
+	}
 }
 
 // Found live (yardr-w9vj): the brakeman, a Kimi, sat idle with an empty
@@ -462,12 +537,12 @@ func TestNudgeIsNotTypedIntoAnInputThatHoldsText(t *testing.T) {
 				}
 				return
 			}
-			if typed() != 0 || keys() != 0 {
-				t.Fatalf("keys sent to an input that holds text:\n%s", calls())
+			if typed() != 0 || keys() != 1 || strings.Count(calls(), "pane send-keys p1 C-l") != 1 {
+				t.Fatalf("want only one Ctrl-L sent to an input that holds text:\n%s", calls())
 			}
 			screen(c.empty)
 			pass()
-			if typed() != 1 || keys() != 0 || !strings.Contains(calls(), "mail from chris: deploy freeze") {
+			if typed() != 1 || keys() != 1 || !strings.Contains(calls(), "mail from chris: deploy freeze") {
 				t.Fatalf("after the input emptied the nudge was typed %d times, want once:\n%s", typed(), calls())
 			}
 		})
@@ -803,8 +878,8 @@ func TestNudgeAtKimisCacheMenuIsToldOfOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			pass(3)
-			if n, _ := held(); n != 1 || nudges() != 1+c.typed || keys() != 0 {
-				t.Fatalf("with the menu open: nudge_held %d times, nudged %d times in all, %d keys sent; want 1, %d and none\n%s",
+			if n, _ := held(); n != 1 || nudges() != 1+c.typed || keys() != 1 {
+				t.Fatalf("with the menu open: nudge_held %d times, nudged %d times in all, %d keys sent; want 1, %d and the one Ctrl-L\n%s",
 					n, nudges(), keys(), 1+c.typed, calls())
 			}
 

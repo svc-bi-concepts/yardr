@@ -1,11 +1,12 @@
 # Setting up Slack
 
 The pack wires Slack into the yard as the declared source `slack`: the
-mentions of a bot in a workspace and its one-to-one direct messages,
-heard through the Events API and answered in their threads with `yardr
-reply`. A mention in a channel the bot is invited into lands in the
-yardmaster's inbox; a one-to-one direct message lands whole, mentioned
-or not. What lands is answered where it stood, in its thread. Group
+messages of a bot's channels, groups and one-to-one direct messages in a
+workspace, heard through the Events API and answered in their threads
+with `yardr reply`. A mention in a channel the bot is in lands in the
+yardmaster's inbox; every other message there is stored and read back
+with `yardr thread show`, and nudges nothing. A one-to-one direct message
+lands whole, mentioned or not. What lands is answered where it stood, in its thread. Group
 direct messages are untested: whether Slack delivers a mention in one
 as `app_mention` is checked in a live trial, and until then this walk
 promises only channel mentions and one-to-one direct messages.
@@ -22,14 +23,15 @@ yard if it differs.
    api.slack.com/apps, Create New App, From a manifest: paste
    `packs/slack/app-manifest.yaml` from a checkout of yardr (or from the
    pack as the yard installed it). The manifest names the bot user and
-   the scopes (`app_mentions:read`, `channels:history`,
-   `groups:history`, `im:history`, `mpim:history`, `chat:write` — the
-   four histories are bot scopes, and they are what
-   `conversations.replies` reads a thread back with on the bot token in
-   each kind of conversation; `mpim:history` in particular is a reading
-   scope only: it lets a heard group thread be read back, and no
-   `message.mpim` event is ever subscribed, so it widens nothing that is
-   heard), and carries no event subscriptions and no Request URL. A
+   the scopes (`app_mentions:read`, `channels:history`, `channels:join`,
+   `channels:read`, `groups:history`, `groups:read`, `im:history`,
+   `mpim:history`, `chat:write`, `users:read` — the four histories are bot scopes, and
+   they are what `conversations.replies` reads a thread back with on the
+   bot token in each kind of conversation; `channels:join` lets the
+   `join` call put the bot in a public channel, and `channels:read` and
+   `groups:read` let the `channels` call list the ones it is not in, and
+   `users:read` lets the `user` call find a member's id for a mention),
+   and carries no event subscriptions and no Request URL. A
    manifest that names events without a Request URL does not validate,
    so the events cannot stand in the document the app is created from
    while its hook address is not yet known; they are added in step 6,
@@ -46,7 +48,7 @@ yard if it differs.
    yardr bead ask <bead> "Add Slack to the yard?" --run "pack apply slack" --context "The yard hears the workspace's mentions and direct messages through it."
    ```
    The card shows the declaration whole, as the apply card renders every
-   field of it, the two scripts with their checksums among them.
+   field of it, the scripts with their checksums among them.
 3. **The bot token, on a secret card.**
    ```sh
    yardr bead ask <bead> "The Slack bot token" --secret slack --context "OAuth & Permissions in the Slack app, after install: xoxb-…"
@@ -96,19 +98,23 @@ yard if it differs.
    stands the endpoint up and nothing is sent anywhere. Then, in the
    browser, the operator opens the app's Event Subscriptions, turns it
    on, pastes the hook's URL (`https://<his host>/hooks/slack`) as the
-   Request URL, and subscribes to the two bot events, exactly these
-   two:
+   Request URL, and subscribes to the five bot events, exactly these
+   five:
    ```text
    app_mention
    message.im
+   message.channels
+   message.groups
+   message.mpim
    ```
-   Never subscribe `message.mpim`: Slack delivers it for every group
-   message, mentioned or not, so the yard would receive whole group
-   conversations it was never addressed in, and each group mention
-   would arrive a second time beside its `app_mention`. With the two
-   above, a group direct message is heard only when it mentions the
-   bot — once that live trial confirms Slack delivers it — while a
-   one-to-one direct message is heard whole. Slack sends a
+   The yard hears every message in a channel or group the bot is in,
+   mentioned or not, and stores it; only a mention nudges the yardmaster.
+   A channel message that mentions the bot arrives twice, as its
+   `message.channels` (stored, nudging nothing) and as its `app_mention`
+   (heard once), and the pack's normalize keeps the mention off the
+   first, so the bot is woken once. A group direct message is the same:
+   stored from `message.mpim`, woken by its mention alone. A one-to-one
+   direct message is heard whole. Slack sends a
    `url_verification` challenge to the URL when it is saved; the yard
    answers it from the hook just made, and the app shows verified. This
    is the visit the manifest of step 1 deliberately left undone: only
@@ -150,9 +156,14 @@ yard if it differs.
    ```
    `mentions`, not telegram's `all`: a workspace is many channels of
    other people's talk, and the bot is woken by being addressed, not
-   by everything said where it stands. The operator then invites the
-   bot into each channel it should hear (`/invite @<bot>` in Slack),
-   without which Slack sends the channel nothing. A first mention is
+   by everything said where it stands; what is said where it stands is
+   still stored, and reads back with `yardr thread show`. The bot hears a
+   channel only once it is in it: the `channels` call lists the public
+   channels with `is_member` true or false, and the `join` call, one
+   channel id per call (`yardr call slack join channel=C…`), puts it in
+   each one that is false; a private channel
+   needs `/invite @<bot>` in Slack, since the bot cannot join one itself.
+   Without either, Slack sends the channel nothing. A first mention is
    then the test: it lands in the yardmaster's inbox as
    ```text
    5210 10-17 18:02  hook (mentioned) slack message create by ada (U012AB3CD): <@U…> can the shed land on Monday?
@@ -163,26 +174,41 @@ yard if it differs.
    belongs to the channel it was invited into, and its token holds
    `channels:history` — and `yardr hook show 5210` holds the delivery itself
    meanwhile.
+   Channel broadcast remains unavailable with the shipped manifest's scopes.
+   Before posting, `--broadcast` uses
+   [`conversations.info`](https://docs.slack.dev/reference/methods/conversations.info/)
+   to confirm the conversation is a channel. The bot token must already have
+   `channels:read` for a public channel or `groups:read` for a private channel;
+   add the needed scopes under OAuth & Permissions in the Slack app, then
+   reinstall the app to the workspace to authorize them. For an existing
+   installation, adding scopes alone does not update its authorization.
+   If Slack issues a replacement bot token, repeat steps 3 and 8 to update
+   both copies and restart the answering crew member. Once authorized, use
+   `yardr reply 5210 --broadcast -` with the answer on stdin for a
+   channel-thread answer that should also appear in the channel. Missing
+   access or an unconfirmed channel refuses the reply before posting; direct
+   and group direct messages are refused too.
+   To address the person explicitly, include Slack's mention syntax in the
+   answer, for example `<@U012AB3CD> Noted; I will post here when it lands.`
+   Broadcast does not add a mention to the supplied text.
    The companion check in the same walk: a one-to-one direct message
    mentioning nobody still lands whole by the `room=dm` subscription.
-   A group message mentioning nobody lands nowhere — Slack sends no
-   event for it under step 6's two subscriptions — and a group mention
-   is not tried here: group direct messages stay untested until the
-   live trial.
+   A channel message mentioning nobody is stored under its channel and
+   nudges nothing: `yardr thread show` on its delivery reads the thread
+   back, and no inbox line comes of it. A group direct message is the same
+   under `message.mpim`, and a group mention is not tried here: group
+   direct messages stay untested until the live trial.
 
 Who is heard is what the subscriptions above carry, and who each
 speaker is. The pack hears mapped members as themselves: a delivery
 whose sender is a user's `slack` identity arrives named as them, and a
 subscription may filter with `--where speaker=<user>`. An unmapped
-sender is what the hook's word says: under step 6's `unknown` their
-delivery is dropped and offers the operator one mapping card per source
-and sender — a pick among the yard's users, each naming the identity it
-writes, "someone new" named by the pick's words, and "nobody", who is
-ignored — under `allow` it is heard as an outsider, and under `ignore`
-it is dropped with no card. Picking nobody ignores that sender without
-a second card; `yardr source show slack` and `yardr source ignore
-slack` list the ignored ids, and `yardr source ignore slack --rm <id>`
-hears them again. Three limits, where you meet them: a reply run again
+sender follows the hook's Unknown policy: see
+[identity hearing](../../docs/integrations.md#what-the-service-sends-in)
+for held deliveries, their inbox notices, the operator's mapping card and
+its answers. `yardr source show slack` and `yardr source ignore slack`
+list the ignored ids, and `yardr source ignore slack --rm <id>` hears
+them again. Three limits, where you meet them: a reply run again
 after its answer was lost posts twice, since the service takes no
 idempotency key; `yardr thread show` on a delivery whose conversation
 the bot has left, or whose kind its token has no history scope for,
@@ -195,3 +221,22 @@ name it as actor where Slack sends them back, and never reach its
 inbox: a delivery whose sender is the crew member's `slack` identity,
 by its id or its key, is dropped before hearing, with no mapping card,
 under any Unknown word.
+
+## Looking up a member for a mention
+
+The `user` call finds a member's id from a name, so a mention can be
+written as `<@U…>`. It needs the `users:read` scope of step 1: an app that
+was installed without it adds the scope under OAuth & Permissions and
+reinstalls once, as the channel scopes above. Then the operator grants it
+to the yardmaster and it answers from the yard:
+
+```sh
+yardr source grant slack user --crew yardmaster
+yardr call slack user 'name=Ada Lovelace'
+```
+
+It matches a substring of the real or display name, ignoring ASCII case,
+and skips deactivated accounts. It answers at most five members in directory
+order, each with `id`, `real_name`, `display_name` and `is_bot`. The directory
+is paged inside the program and never printed whole, and no profile email,
+phone or picture leaves it. The lookup itself stores no directory data.

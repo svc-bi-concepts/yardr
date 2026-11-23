@@ -269,7 +269,7 @@ func (t *AskTemplate) framed(row *beadRow, notes []Note) *AskTemplate {
 	card := *t
 	title := OneLine(row.Title)
 	card.Question = fmt.Sprintf("%s — %s: %s", t.Question, row.ID, title)
-	card.Context = []string{fmt.Sprintf("Bead: %s — %s (branch %s)", row.ID, title, Branch(row.ID))}
+	card.Context = []string{fmt.Sprintf("Bead: %s — %s (branch %s)", row.ID, title, BranchOfBead(row.Bead))}
 	if line := finishLine(notes); line != "" {
 		card.Context = append(card.Context, line)
 	}
@@ -611,7 +611,7 @@ func stagePick(move string) func(f *Flow, b *beadRow, data map[string]any) (stri
 	if to, ok := strings.CutPrefix(move, moveTo); ok {
 		return advancePick(to, nil)
 	}
-	return donePick(move, nil)
+	return donePick(move, nil, 0)
 }
 
 // moveWords says a stage ask's move in a refusal's words.

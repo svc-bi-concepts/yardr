@@ -402,16 +402,20 @@ func TestBackground(t *testing.T) {
 	}
 	claude, _ := Lookup("claude")
 	for line, want := range map[string]bool{
-		"✻ Brewed for 48s · done 12:44 AM · 1 shell still running":     true,
-		"✻ Sautéed for 8m 17s · done 1:16 AM · 2 shells still running": true,
-		"⏵⏵ auto mode on · 1 shell · ← 1 agent · ↓ to manage":          true,
-		"1 shell · ↓ to manage":                                        true,
-		"⏵⏵ auto mode on · 3 shells":                                   true,
-		"✻ Brewed for 48s · done 12:44 AM":                             false,
-		"⏵⏵ auto mode on · ← 1 agent · ↓ to manage":                    false,
-		"⏺ The depot test runs in 1 shell; I wait for it.":             false,
-		"⏺ I saw 1 shell still running and stopped it.":                false,
-		"✻ Waiting for 1 background agent to finish":                   false,
+		"✻ Brewed for 48s · done 12:44 AM · 1 shell still running":         true,
+		"✻ Sautéed for 8m 17s · done 1:16 AM · 2 shells still running":     true,
+		"⏵⏵ auto mode on · 1 shell · ← 1 agent · ↓ to manage":              true,
+		"1 shell · ↓ to manage":                                            true,
+		"⏵⏵ auto mode on · 3 shells":                                       true,
+		"✻ Baked for 3s · done 4:41 PM · 2 monitors still running":         true,
+		"⏵⏵ bypass permissions on · 2 monitors · ← 2 agents · ↓ to manage": true,
+		"1 monitor · ↓ to manage":                                          true,
+		"⏺ I started 1 monitor and it still runs.":                         false,
+		"✻ Brewed for 48s · done 12:44 AM":                                 false,
+		"⏵⏵ auto mode on · ← 1 agent · ↓ to manage":                        false,
+		"⏺ The depot test runs in 1 shell; I wait for it.":                 false,
+		"⏺ I saw 1 shell still running and stopped it.":                    false,
+		"✻ Waiting for 1 background agent to finish":                       false,
 	} {
 		if got := runs(claude, line); got != want {
 			t.Errorf("claude: %q says background work runs: %v, want %v", line, got, want)
@@ -656,6 +660,7 @@ func TestLoadRefuses(t *testing.T) {
 		"a hint not known":                    {"claude.yaml", "version: 1\nlabel: x\nhints: {idle: x}\n", "field idle not found"},
 		"marks, no input":                     {"claude.yaml", "version: 1\nlabel: x\nmarks: {message: '>'}\n", "without input"},
 		"marks, placeholder without input":    {"claude.yaml", "version: 1\nlabel: x\nmarks: {placeholder: 'ask'}\n", "without input"},
+		"marks, footer without input":         {"claude.yaml", "version: 1\nlabel: x\nmarks: {footer: '⏵⏵'}\n", "without input"},
 		"marks, hint colour without input":    {"claude.yaml", "version: 1\nlabel: x\nmarks: {placeholder_sgr: '38;2;1;2;3'}\n", "without input"},
 		"marks, hint colour no colour":        {"claude.yaml", "version: 1\nlabel: x\nmarks: {input: '>', placeholder_sgr: 'grey'}\n", `placeholder_sgr "grey"`},
 		"marks, hint colour too short":        {"claude.yaml", "version: 1\nlabel: x\nmarks: {input: '>', placeholder_sgr: '38;2;1;2'}\n", "want 38;2;r;g;b or 38;5;n"},

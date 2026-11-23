@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -185,6 +186,18 @@ func (c *Config) DBPath() string  { return filepath.Join(c.Home, "yard.db") }
 func (c *Config) Socket() string  { return filepath.Join(c.Home, "yard.sock") }
 func (c *Config) PIDFile() string { return filepath.Join(c.Home, "server.pid") }
 
+// Stopped reports whether the home has a STOPPED file: its yard was stopped by
+// hand, and no command may start the server it would start (see cli's store).
+// Only the file's presence counts; its line, who stopped the yard and when, is
+// for people, as integrations/bin/yardlib.py's yard_stopped reads it too.
+func (c *Config) Stopped() bool {
+	_, err := os.Lstat(c.StoppedFile())
+	return err == nil
+}
+
+// StoppedFile is the STOPPED file of the home (see Stopped).
+func (c *Config) StoppedFile() string { return filepath.Join(c.Home, "STOPPED") }
+
 // PIDStart is the file beside the pidfile holding the start time of the
 // process it names, by which a stop tells the server from a later process
 // with its pid (see server.Stop). Compared for equality only, never read
@@ -275,15 +288,7 @@ func DaemonRunning(lock string) bool {
 
 // DaemonPID is the pid of the process that holds lock, 0 when none does.
 func DaemonPID(lock string) int {
-	if !DaemonRunning(lock) {
-		return 0
-	}
-	b, err := os.ReadFile(lock)
-	if err != nil {
-		return 0
-	}
-	var pid int
-	fmt.Sscan(string(b), &pid)
+	pid, _, _ := lockHolder(lock)
 	return pid
 }
 
@@ -293,22 +298,40 @@ func DaemonPID(lock string) int {
 // time: a daemon from before starts were recorded, or one the OS would
 // not describe.
 func DaemonStart(lock string) (uint64, bool) {
-	if !DaemonRunning(lock) {
-		return 0, false
-	}
-	b, err := os.ReadFile(lock)
+	_, start, recorded := lockHolder(lock)
+	return start, recorded
+}
+
+// lockHolder reads the daemon lock once: the pid it names and the start
+// time beside it, with recorded false when there is none. A lock no process
+// holds reads as pid 0. It is one open, one probe and one read, where
+// DaemonPID and DaemonStart made their own, since the daemon's checker asks
+// it on every socket call (DaemonChecker).
+func lockHolder(lock string) (pid int, start uint64, recorded bool) {
+	f, err := os.Open(lock)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	f := strings.Fields(string(b))
-	if len(f) < 2 {
-		return 0, false
+	defer f.Close()
+	// The probe is DaemonRunning's: a lock another descriptor holds is the
+	// daemon's, and a lock taken here is released at once.
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err == nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		return 0, 0, false
+	} else if !errors.Is(err, syscall.EWOULDBLOCK) {
+		return 0, 0, false
 	}
-	start, err := strconv.ParseUint(f[1], 10, 64)
+	b, err := io.ReadAll(f)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	return start, true
+	fmt.Sscan(string(b), &pid)
+	if f := strings.Fields(string(b)); len(f) >= 2 {
+		if s, err := strconv.ParseUint(f[1], 10, 64); err == nil {
+			return pid, s, true
+		}
+	}
+	return pid, 0, false
 }
 
 // DaemonChecker is whether pid is the daemon of home: the holder of its
@@ -317,10 +340,9 @@ func DaemonStart(lock string) (uint64, bool) {
 // (store.SetDaemonChecker), since the store cannot import config for the
 // check; a store no server owns has none.
 func DaemonChecker(home string) func(pid int) bool {
+	lock := At(home).DaemonLock()
 	return func(pid int) bool {
-		lock := At(home).DaemonLock()
-		holder := DaemonPID(lock)
-		start, recorded := DaemonStart(lock)
+		holder, start, recorded := lockHolder(lock)
 		return holder == pid && recorded && peer.Alive(pid, start)
 	}
 }

@@ -61,33 +61,6 @@ type Job struct {
 	Pull *Pull
 }
 
-// NextStage is one stage a flow allows the bead to move to, with who would
-// pick it up there, so a brief can say when to choose it.
-type NextStage struct {
-	Stage    string
-	Terminal bool   // entering it closes the bead
-	Group    string // the group routed for the stage; "" when none is
-	Runner   string // that group's runner
-	Peer     string // the linked yard that works the stage, for a peer group
-	// Else are the further groups of the stage's route, in order: the
-	// bead is not there yet, so none is chosen, and the quota when it gets
-	// there is not known. They start agents, as Group then does.
-	Else []string
-}
-
-// NextOutcome is one outcome the bead's stage offers and where it leads.
-type NextOutcome struct {
-	Outcome string
-	// NextStage is where reporting the outcome takes this bead now, with who
-	// picks it up there: the stage a limit sends it to once its rounds are
-	// used, not the flow's own edge.
-	NextStage
-	// Limit is the outcome as the bead's rounds stand for it, for an outcome
-	// that has a limit: which round reporting it would be, or that its rounds
-	// are used. Nil for one that has none.
-	Limit *store.OutcomeNow
-}
-
 // Runner starts and supervises whatever works a bead: an agent, a process,
 // a notification. The handle it returns is stored on the session and handed
 // back on later calls, so runners keep no state the store does not have.
@@ -184,6 +157,12 @@ type Dispatcher struct {
 	// test reaches the real project. See telemetry.go.
 	TelemetryURL     string
 	TelemetryTimeout time.Duration
+
+	// HostVisibility reads the visibility the code host records for the
+	// repository a checkout at dir is of: the daily check (visibility.go)
+	// calls it once a depot a day. Nil, there is no check: the daemon gives
+	// ReadHostVisibility, and a test gives a stand-in or nothing.
+	HostVisibility func(ctx context.Context, dir string) (string, error)
 
 	// PeerKey is the file of the yard's key, with which requests to its
 	// peers are signed; PeerHTTP makes them (nil: http.DefaultClient).
@@ -287,6 +266,16 @@ type Dispatcher struct {
 	// telemetryTold is the last local fault of the telemetry pass that was
 	// said, so each is said once until it is gone. See telemetry.
 	telemetryTold string
+
+	// visibilityDay is the UTC day visibilityDone belongs to, and
+	// visibilityDone the depots already asked that day, so that each is asked
+	// once a day even where a pass stopped at the deadline. See visibility.go.
+	visibilityDay  string
+	visibilityDone map[string]bool
+
+	// visibilityDeadline bounds the whole daily check; zero is
+	// visibilityTotal. A test shortens it.
+	visibilityDeadline time.Duration
 
 	// timerDue is when the earliest timer left is due, as of the last pass
 	// (see timers); nil with none.
@@ -994,6 +983,9 @@ func (d *Dispatcher) Reconcile(ctx context.Context) error {
 	// Once a day at most, and bounded: a push (pushes.go) waits as long.
 	pass.step("telemetry")
 	d.telemetry(ctx)
+	// Once a day at most, one call to the host a git depot (visibility.go).
+	pass.step("visibility")
+	d.visibility(ctx)
 	// Last: a peer that does not answer holds up nothing of this yard's,
 	// and neither does a remote. What a peer's return brought in this pass
 	// is fetched in it.
@@ -1156,34 +1148,6 @@ func (d *Dispatcher) teardown(ctx context.Context, groups map[string]store.Group
 	return nil
 }
 
-// cleanup removes what runners left behind for beads that are now closed,
-// unless the group sets cleanup=false.
-func (d *Dispatcher) cleanup(ctx context.Context, groups map[string]store.Group) error {
-	done, err := d.Store.ClosedWithWorkspace(ctx)
-	if err != nil {
-		return err
-	}
-	for _, s := range done {
-		g := groups[s.Group]
-		if f, ok := d.runnerFor(s, groups).(Finisher); ok && g.Config["cleanup"] != false {
-			if err := f.Finish(ctx, s.Handle); errors.Is(err, ErrNothingLeft) {
-				// another stage's session already handled it
-			} else if err != nil {
-				d.Log.Warn("workspace kept", "bead", s.Bead, "session", s.ID, "err", err)
-				_ = d.Store.LogDispatch(ctx, s.Bead, "workspace_kept", actor, map[string]any{
-					"session": s.ID, "worktree": s.Handle["worktree"], "reason": err.Error()})
-			} else {
-				_ = d.Store.LogDispatch(ctx, s.Bead, "workspace_removed", actor, map[string]any{
-					"session": s.ID, "worktree": s.Handle["worktree"]})
-			}
-		}
-		if err := d.Store.MarkCleaned(ctx, s.ID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (d *Dispatcher) route(ctx context.Context, groups map[string]store.Group, active map[string]int, paused bool) error {
 	ready, err := d.Store.Dispatchable(ctx)
 	if err != nil {
@@ -1251,7 +1215,10 @@ func (d *Dispatcher) route(ctx context.Context, groups map[string]store.Group, a
 		// Which of the route's groups: the first whose quota condition
 		// holds. A route whose groups start no agents and name no condition
 		// asks nobody (chooseGroup).
-		choice, ok := d.chooseGroup(ctx, b, r, groups, active, settings[store.DefaultKindSetting])
+		// A pass at max_sessions hands its full groups to the choice, which
+		// passes them over toward a peer group only; a paused yard passes none.
+		choice, ok := d.chooseGroup(ctx, b, r, groups, active, settings[store.DefaultKindSetting],
+			yardCap{Full: capped && most > 0 && d.running >= most, Max: most}, rb.StayStart)
 		if !ok {
 			continue
 		}
@@ -1270,12 +1237,7 @@ func (d *Dispatcher) route(ctx context.Context, groups map[string]store.Group, a
 		// keeps from starting. At 0 the yard is paused: nothing starts,
 		// whatever runs, and the event says paused instead of counting.
 		if capped && store.RunsHere(g.Runner) && d.running >= most {
-			reason := fmt.Sprintf(
-				"the yard runs as many sessions as max_sessions (%d) allows; the bead starts when one ends, or the setting is raised (yardr settings set max_sessions <n>)", most)
-			if most == 0 {
-				reason = "max_sessions is 0 (paused); the bead starts when the setting is raised (yardr settings set max_sessions <n>)"
-			}
-			d.reportOnce(ctx, b, "capped", reason)
+			d.reportOnce(ctx, b, "capped", capReason(most))
 			continue
 		}
 		// Last, since it reads the bead's events: only a bead that would
@@ -1421,37 +1383,6 @@ func (d *Dispatcher) route(ctx context.Context, groups map[string]store.Group, a
 	return nil
 }
 
-// runtimeDown notes that g's runtime could not start anything. The first
-// failure of an outage is logged as runtime_down for the group, so the
-// yardmaster hears of it once; later ones only lengthen the wait, doubling up
-// to RuntimeBackoffMax.
-func (d *Dispatcher) runtimeDown(ctx context.Context, g store.Group, err error) {
-	o := d.down[g.Name]
-	if o == nil {
-		o = &outage{delay: d.RuntimeBackoff}
-		d.down[g.Name] = o
-		d.Log.Warn("runtime down; the group's beads wait", "group", g.Name, "runner", g.Runner, "err", err)
-		if lerr := d.Store.LogDispatch(ctx, "", "runtime_down", actor, map[string]any{
-			"group": g.Name, "runner": g.Runner, "reason": err.Error()}); lerr != nil {
-			d.Log.Warn("runtime_down event", "err", lerr)
-		}
-	} else {
-		o.delay = min(2*o.delay, d.RuntimeBackoffMax)
-	}
-	o.until = time.Now().Add(o.delay)
-}
-
-// runtimeUp ends g's outage, if it had one, once a Start got past the
-// runtime.
-func (d *Dispatcher) runtimeUp(ctx context.Context, g store.Group) {
-	if d.down[g.Name] == nil {
-		return
-	}
-	delete(d.down, g.Name)
-	d.Log.Info("runtime back", "group", g.Name, "runner", g.Runner)
-	_ = d.Store.LogDispatch(ctx, "", "runtime_up", actor, map[string]any{"group": g.Name, "runner": g.Runner})
-}
-
 // nextStages is where b's flow lets it go next, and the outcomes its stage
 // offers, each with the group that would work it there, and where the
 // stage file of the stage it is in comes from, with the map of the flow;
@@ -1472,7 +1403,16 @@ func (d *Dispatcher) nextStages(ctx context.Context, b store.Bead, routes []stor
 		moved.Stage = st
 		if r := Match(routes, moved, operator, groups); r != nil && !n.Terminal {
 			g := groups[r.Worker()]
-			n.Group, n.Runner, n.Peer, n.Else = r.Worker(), g.Runner, g.AtPeer(), r.Further()
+			n.Group, n.Runner, n.Peer = r.Worker(), g.Runner, g.AtPeer()
+			// A peer group after the others is the yard a full group passes
+			// the bead to, not a group that takes it in the quota's place.
+			for _, name := range r.Further() {
+				if o := groups[name]; o.Runner == store.PeerRunner {
+					n.Overflow, n.OverflowAfter = o.AtPeer(), o.PeerAfter()
+					continue
+				}
+				n.Else = append(n.Else, name)
+			}
 		}
 		return n
 	}

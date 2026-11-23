@@ -167,11 +167,11 @@ func (h *Herdr) Stop(ctx context.Context, handle map[string]any) error {
 // The removal moves the worktree aside and deletes it without waiting:
 // the tree is renamed to a sibling `<path>.removing`, which stays on the
 // same filesystem so the rename is instant, then dropped from git's
-// worktree list with prune, and the moved directory is deleted in the
+// worktree list, and the moved directory is deleted in the
 // background. Finish runs inside the dispatcher's pass, where waiting on
 // a big tree (a webapp's node_modules) would stall every group past
-// git's own timeout; a rename and a prune take milliseconds. A status
-// that names only deleted tracked files is a removal that died midway,
+// git's own timeout; a rename and an admin entry removal take milliseconds.
+// A status that names only deleted tracked files is a removal that died midway,
 // whose branch holds every one of those files, so it is removed rather
 // than refused as uncommitted changes.
 func (h *Herdr) Finish(ctx context.Context, handle map[string]any) error {
@@ -183,11 +183,14 @@ func (h *Herdr) Finish(ctx context.Context, handle map[string]any) error {
 	if path == "" {
 		return dispatch.ErrNothingLeft
 	}
+	if err := worktreeOffline(handle); err != nil {
+		return err
+	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// A move-aside left by a cleanup that died between the rename
 		// and the delete goes with the admin entry.
 		_ = os.RemoveAll(path + ".removing")
-		_ = git(ctx, repo, "worktree", "prune")
+		_ = git(ctx, repo, "worktree", "remove", "--force", path)
 		return dispatch.ErrNothingLeft
 	}
 	// Briefs live in the worktree's git dir, so they do not count as a
@@ -234,7 +237,7 @@ func onlyDeleted(out string) bool {
 }
 
 // removeWorktree moves the worktree at path aside to a sibling
-// `<path>.removing`, prunes it from the repo's worktree list, and deletes
+// `<path>.removing`, removes it from the repo's worktree list, and deletes
 // the moved directory without waiting on it. A leftover move-aside from
 // a cleanup that died between the rename and the delete is swept first,
 // so the rename has its target free; what the sweep cannot delete fails
@@ -245,10 +248,7 @@ func (h *Herdr) removeWorktree(ctx context.Context, repo, path string) error {
 	if err := os.Rename(path, moved); err != nil {
 		return git(ctx, repo, "worktree", "remove", path)
 	}
-	// The directory is gone from its path, so prune drops the admin
-	// entry; the branch is kept either way. When prune fails the move is
-	// undone, so an error still means the worktree is kept in place.
-	if err := git(ctx, repo, "worktree", "prune"); err != nil {
+	if err := git(ctx, repo, "worktree", "remove", "--force", path); err != nil {
 		_ = os.Rename(moved, path)
 		return err
 	}

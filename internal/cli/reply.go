@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -88,6 +89,7 @@ func hookEnvelope(ctx context.Context, st store.API, arg string) (uint64, hooks.
 
 func (a *app) replyCmd() *cobra.Command {
 	var member, to string
+	var broadcast bool
 	var replyFiles []string
 	cmd := &cobra.Command{
 		Use:   "reply <seq|bead> <text|->",
@@ -120,6 +122,10 @@ fits, else it is sent first and the files follow without one. A source
 whose file does not say its replies take files is refused: --file there
 would send the words and drop the files. Mail and a note on another
 yard's bead take no --file.
+
+With --broadcast, a source whose thread declaration says broadcast true also
+sends the channel-thread reply to the channel. Sources without that capability
+refuse the option; direct and group direct messages cannot be broadcast.
 
 Mail to the crew member is answered by mail to its sender: mail from this
 yard (a user or a crew member) as yardr mail <sender> would send it; mail
@@ -190,6 +196,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				// either, saying so names the way out.
 				if st, serr := a.store(ctx); serr == nil {
 					if bead := awayBead(ctx, st, args[0]); bead != "" {
+						if broadcast {
+							return fmt.Errorf("broadcast replies are only supported for source hook deliveries")
+						}
 						if len(replyFiles) > 0 {
 							return fmt.Errorf("--file carries files into a source's thread: %s is a bead at another yard, answered with a note", bead)
 						}
@@ -206,6 +215,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				return err
 			}
 			if bead := awayBead(ctx, st, args[0]); bead != "" {
+				if broadcast {
+					return fmt.Errorf("broadcast replies are only supported for source hook deliveries")
+				}
 				if len(replyFiles) > 0 {
 					return fmt.Errorf("--file carries files into a source's thread: %s is a bead at another yard, answered with a note", bead)
 				}
@@ -223,6 +235,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				return err
 			}
 			if e.Kind == "mail" {
+				if broadcast {
+					return fmt.Errorf("broadcast replies are only supported for source hook deliveries")
+				}
 				if len(replyFiles) > 0 {
 					return fmt.Errorf("--file carries files into a source's thread: event %d is mail, answered by mail", seq)
 				}
@@ -234,6 +249,18 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 			seq, env, r, err := hookEvent(ctx, st, a.home(), args[0])
 			if err != nil {
 				return err
+			}
+			if broadcast {
+				if len(replyFiles) > 0 {
+					return fmt.Errorf("--broadcast cannot be combined with --file")
+				}
+				br, ok := r.(hooks.BroadcastReplier)
+				if !ok {
+					return fmt.Errorf("source %s does not support broadcast replies", env.Source)
+				}
+				if err := br.CheckBroadcast(env); err != nil {
+					return err
+				}
 			}
 			// With files the source must take them, said before any is
 			// put: a reply command that ignores unknown keys would send
@@ -257,7 +284,12 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 			}
 			// The reply is on record, with its key, before anything is
 			// posted; a record already posted is the whole answer.
-			rp, err := st.Replying(ctx, name, seq, to, body, a.who(), blobFiles(refs)...)
+			var rp *store.Reply
+			if broadcast {
+				rp, err = st.ReplyingBroadcast(ctx, name, seq, to, body, a.who(), blobFiles(refs)...)
+			} else {
+				rp, err = st.Replying(ctx, name, seq, to, body, a.who(), blobFiles(refs)...)
+			}
 			if err != nil {
 				return err
 			}
@@ -279,7 +311,9 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 					}
 				}
 				if !already {
-					if filer != nil {
+					if broadcast {
+						m, err = r.(hooks.BroadcastReplier).ReplyBroadcast(ctx, env, to, body, rp.Key, cred)
+					} else if filer != nil {
 						m, err = postWithFiles(ctx, filer, a.home(), env, to, body, rp.Key, refs, cred)
 					} else {
 						m, err = r.Reply(ctx, env, to, body, rp.Key, cred)
@@ -304,6 +338,7 @@ event with the comment's id is logged. Prints the URL of the reply.`,
 				})
 		},
 	}
+	cmd.Flags().BoolVar(&broadcast, "broadcast", false, "also send a channel-thread reply to the channel")
 	cmd.Flags().StringVar(&member, "crew", "", "who is replying (default $YARDR_CREW)")
 	cmd.Flags().StringVar(&to, "to", "", "answer under this message's conversation (an id from yardr thread show)")
 	cmd.Flags().StringArrayVar(&replyFiles, "file", nil, "a file the reply carries (repeatable)")
@@ -464,23 +499,19 @@ func (a *app) replyMail(c *cobra.Command, st store.API, seq uint64, e store.Even
 		return fmt.Errorf("event %d is mail from %s at a yard no longer linked (was %s): no address would reach its sender", seq, from, was)
 	}
 	if peer, _ := e.Data["from_peer"].(string); peer != "" {
-		from, _ := e.Data["from"].(string)
-		if from == "" {
-			from, _, _ = strings.Cut(e.Actor, "@")
-		}
-		if from == "" {
-			return fmt.Errorf("event %d is mail with no sender to answer", seq)
-		}
-		m, err := st.MailPeer(ctx, from, peer, body, name)
+		r, err := st.MailPeerReply(ctx, seq, body, name)
 		if err != nil {
 			return err
+		}
+		queued := map[string]any{"seq": seq, "crew": name, "to": r.To, "peer": r.Peer, "sent": "queued", "id": r.ID, "receipt": r}
+		if wire, _ := e.Data["id"].(string); wire != "" {
+			queued["re"] = wire
 		}
 		if err := a.ackAnsweredMail(ctx, st, name, seq); err != nil {
 			return err
 		}
-		queued := map[string]any{"seq": seq, "crew": name, "to": from, "peer": peer, "id": m.ID, "sent": "queued"}
 		return a.out(c.OutOrStdout(), queued, func(w io.Writer) {
-			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", from, peer, peer)
+			fmt.Fprintf(w, "mail for %s@%s queued; the daemon delivers it, and yardr peer show %s lists it while it waits\n", r.To, r.Peer, r.Peer)
 		})
 	}
 	if bead, _ := e.Data["from_bead"].(string); bead != "" {
@@ -492,6 +523,12 @@ func (a *app) replyMail(c *cobra.Command, st store.API, seq uint64, e store.Even
 	}
 	if err := a.mayMailUser(from); err != nil {
 		return err
+	}
+	// Mail recorded before its sender had a yard (a bare name, not from a link) is
+	// answered only where that name is a crew member or user; elsewhere the
+	// store would say not found, which is no help.
+	if err := replyableHere(ctx, st, from); err != nil {
+		return fmt.Errorf("event %d: %w", seq, err)
 	}
 	if err := store.MailReplyText(st, ctx, from, body, name, seq); err != nil {
 		return err
@@ -786,4 +823,22 @@ waiting:
 func delivered(env hooks.Envelope, m hooks.Message) bool {
 	_, frag, _ := strings.Cut(env.URL, "#comment-")
 	return frag != "" && strings.HasPrefix(m.ID, frag)
+}
+
+// replyableHere is nil when from is a crew member or user of this yard, and
+// says otherwise how to reach it: mail to a name of another yard goes with
+// the link's name for that yard (name@peer).
+func replyableHere(ctx context.Context, st store.API, from string) error {
+	if _, err := st.GetCrew(ctx, from); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if _, err := st.GetUser(ctx, from); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return fmt.Errorf("%s is not a crew member or user of this yard, so this reply cannot reach it. "+
+		"Its mail was recorded without the yard it writes from: send to it with yardr mail %s@<peer>, <peer> being the link to its yard (yardr peer list)", from, from)
 }

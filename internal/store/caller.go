@@ -88,7 +88,14 @@ func paneSession(tx *bolt.Tx, pid int) (*Session, error) {
 	if pid <= 0 {
 		return nil, nil
 	}
-	for _, p := range peer.Ancestors(pid) {
+	return paneSessionIn(tx, peer.Ancestors(pid))
+}
+
+// paneSessionIn is paneSession for the process tree anc (peer.Ancestors of
+// the caller, nearest first). The walk asks the OS once per level, so
+// CallerOf makes it before its read transaction and passes it here.
+func paneSessionIn(tx *bolt.Tx, anc []int) (*Session, error) {
+	for _, p := range anc {
 		pn, err := paneOf(tx, p)
 		if err != nil {
 			return nil, err
@@ -157,6 +164,12 @@ func paneCrewSession(tx *bolt.Tx, pid int) (*CrewMember, string, error) {
 	if pid <= 0 {
 		return nil, "", nil
 	}
+	return paneCrewSessionIn(tx, peer.Ancestors(pid))
+}
+
+// paneCrewSessionIn is paneCrewSession for the process tree anc (see
+// paneSessionIn).
+func paneCrewSessionIn(tx *bolt.Tx, anc []int) (*CrewMember, string, error) {
 	type crewPane struct {
 		r      *CrewMember
 		user   string
@@ -186,7 +199,7 @@ func paneCrewSession(tx *bolt.Tx, pid int) (*CrewMember, string, error) {
 	if err != nil || len(panes) == 0 {
 		return nil, "", err
 	}
-	for _, p := range peer.Ancestors(pid) {
+	for _, p := range anc {
 		// A shell whose start time matches wins over one recorded
 		// without, which is trusted by its pid alone.
 		var unverified *crewPane
@@ -297,9 +310,13 @@ func (s *Store) CallerOf(ctx context.Context) (CallerKind, error) {
 	if s.daemonOnly(ctx, "") == nil {
 		return CallerDaemon, nil
 	}
+	// The caller's process tree is the OS's to say, and it costs a sysctl
+	// a level: it is walked here, once, before the read transaction, not
+	// inside it and not again for each pane lookup.
+	anc := peer.Ancestors(pid)
 	var kind CallerKind
 	err := s.read(func(tx *bolt.Tx) (err error) {
-		kind, _, err = callerIn(tx, ctx)
+		kind, _, err = callerInAt(tx, ctx, anc)
 		return err
 	})
 	return kind, err
@@ -311,16 +328,28 @@ func (s *Store) CallerOf(ctx context.Context) (CallerKind, error) {
 // command). It runs inside a transaction, so a write asks the same question
 // the socket does and the two cannot disagree about who a bead's agent is.
 func callerIn(tx *bolt.Tx, ctx context.Context) (CallerKind, *Session, error) {
-	pid := callerOf(ctx)
-	if sess, err := paneSession(tx, pid); err != nil {
-		return CallerPerson, nil, err
-	} else if sess != nil && !sess.Manual() {
-		return sessionCaller(sess), sess, nil
+	var anc []int
+	if pid := callerOf(ctx); pid > 0 {
+		anc = peer.Ancestors(pid)
 	}
-	if r, err := paneCrew(tx, pid); err != nil {
-		return CallerPerson, nil, err
-	} else if r != nil {
-		return CallerCrew, nil, nil
+	return callerInAt(tx, ctx, anc)
+}
+
+// callerInAt is callerIn for the process tree anc of the caller (nil when
+// it has none). CallerOf walks the tree before its transaction and passes
+// it here.
+func callerInAt(tx *bolt.Tx, ctx context.Context, anc []int) (CallerKind, *Session, error) {
+	if callerOf(ctx) > 0 {
+		if sess, err := paneSessionIn(tx, anc); err != nil {
+			return CallerPerson, nil, err
+		} else if sess != nil && !sess.Manual() {
+			return sessionCaller(sess), sess, nil
+		}
+		if r, _, err := paneCrewSessionIn(tx, anc); err != nil {
+			return CallerPerson, nil, err
+		} else if r != nil {
+			return CallerCrew, nil, nil
+		}
 	}
 	// A bead's agent may call before its pane is recorded; it says
 	// which session it is, and that is believed when it restricts.

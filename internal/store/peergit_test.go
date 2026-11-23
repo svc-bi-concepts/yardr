@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,23 @@ func TestRemoteForm(t *testing.T) {
 		"https:///acme/web":                                    "",
 		"https://github.com/acme/web\x00--upload":              "",
 		"https://github.com/acme/" + strings.Repeat("w", 2100): "",
+		// A remote helper's prefix is no part of the remote: av::… is the
+		// remote its address names, and only a network address is one.
+		"av::https://github.com/acme/web.git":   web,
+		"av::git@github.com:acme/web.git":       web,
+		"AV::https://GitHub.com/acme/web":       web,
+		"av::":                                  "",
+		"av::https://github.com":                "",
+		"av::/srv/git/web.git":                  "",
+		"av::file:///srv/git/web.git":           "",
+		"file::/srv/git/web.git":                "",
+		"ext::sh -c touch /tmp/x":               "",
+		"ext::ssh://git@github.com/acme/web":    "",
+		"fd::3":                                 "",
+		"av::github.com/acme/web":               "",
+		"av::https://github.com/acme/web::x":    "",
+		"av::av::https://github.com/acme/web":   "",
+		"av::https://github.com/acme/web\x00--": "",
 	} {
 		got := store.RemoteForm(in)
 		if got != want {
@@ -249,5 +267,64 @@ func TestKeepPeerBases(t *testing.T) {
 	// A directory has no refs, and asking is no error.
 	if err := store.KeepPeerBases(ctx, store.Depot{Name: "notes", Path: dir, Kind: store.DepotDir}, bases); err != nil || strings.Contains(refs(), "web-1") {
 		t.Fatalf("a dir depot: %v, %s", err, refs())
+	}
+}
+
+// A remote helper's address is read as the URL it names, and the helper runs
+// nothing: an ext:: remote a peer sends gives "" and leaves no file behind
+// from the command it names.
+func TestRemoteFormRunsNothing(t *testing.T) {
+	t.Parallel()
+	marker := filepath.Join(t.TempDir(), "ran")
+	if got := store.RemoteForm("ext::sh -c 'touch " + marker + "'"); got != "" {
+		t.Fatalf("an ext:: remote gives %q", got)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the command of an ext:: remote ran")
+	}
+}
+
+// A depot whose origin goes through a remote helper sends its beads with the
+// remote in the form the peer compares, so they reach the intake for that
+// repository. The helper is not run: the origin is only read.
+func TestBaseOfHelperOrigin(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main", dir)
+	base := commit(t, dir, "a.txt")
+	git(t, dir, "remote", "add", "origin", "av::https://github.com/acme/web.git")
+	depot := store.Depot{Name: "web", Path: dir, Kind: store.DepotGit, Base: "main"}
+	got := store.BaseOf(context.Background(), depot, "main")
+	if got == nil {
+		t.Fatal("a depot with an av:: origin sends no git part")
+	}
+	if got.Remote != "github.com/acme/web" || got.BaseCommit != base {
+		t.Fatalf("the git part is %+v, want remote github.com/acme/web at %s", got, base)
+	}
+}
+
+// The message sent to a peer carries the normalized remote, not just the
+// helper-wrapped origin that baseOf reads from the depot.
+func TestPeerBeadSendCarriesHelperRemote(t *testing.T) {
+	t.Parallel()
+	y, _ := newSendingYard(t)
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main", dir)
+	commit(t, dir, "a.txt")
+	git(t, dir, "remote", "add", "origin", "av::https://github.com/acme/web.git")
+	if err := y.api.PutDepot(y.ctx, store.Depot{Name: "web", Path: dir, Kind: store.DepotGit, Base: "main"}, "jo"); err != nil {
+		t.Fatal(err)
+	}
+	y.send(t, store.NewBead{Title: "Send the remote"})
+	out := y.outbox(t)
+	if len(out) != 1 {
+		t.Fatalf("the outbox = %+v", out)
+	}
+	var msg store.PeerBeadMessage
+	if err := json.Unmarshal(out[0].Body, &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Git == nil || msg.Git.Remote != "github.com/acme/web" {
+		t.Fatalf("the sent git record = %+v, want remote github.com/acme/web", msg.Git)
 	}
 }

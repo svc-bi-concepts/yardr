@@ -407,6 +407,11 @@ func (s *Store) pruneEvents(floor uint64, cutoff time.Time, expired map[string]i
 				return err
 			}
 		}
+		// The receipts of the events just removed go with them, in this
+		// write (pruneMailReceipts).
+		if err := pruneMailReceipts(w.Tx); err != nil {
+			return err
+		}
 		n = len(dead)
 		if n == 0 {
 			return nil
@@ -495,13 +500,15 @@ func hookSeenKeep(tx *bolt.Tx) (time.Duration, error) {
 // pruneSessions removes up to pruneBatch of the sessions that ended before
 // cutoff and that the daemon is done with: their runner resources stopped
 // and, when they left a worktree, cleaned up (which waits for the bead to
-// close). A live session is never removed, whatever its age.
+// close). A live session is never removed, whatever its age. A cleaned one
+// keeps its worktree record while worktreeRecordKept says the worktree is
+// still there: the record is how a later stage finds it.
 func (s *Store) pruneSessions(cutoff time.Time) (n int, more bool, err error) {
 	err = s.write(func(w *wtx) error {
 		n, more = 0, false
 		var dead []Session
 		if err := each(w.Tx, bSessions, "", func(_ []byte, sess *Session) error {
-			if sess.live() || !sess.Stopped || (sess.Handle["worktree"] != nil && !sess.Cleaned) {
+			if sess.live() || !sess.Stopped || (sess.Handle["worktree"] != nil && !sess.Cleaned) || worktreeRecordKept(sess.Handle) {
 				return nil
 			}
 			ended := sess.StartedAt

@@ -79,7 +79,7 @@ func TestPprofDoesNotRemoveExistingNonSocketOrLiveSocket(t *testing.T) {
 	if err := os.WriteFile(file, []byte("keep me"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stop := servePprof(file, quiet)
+	stop := ServePprof(file, quiet)
 	stop()
 	if got, err := os.ReadFile(file); err != nil || string(got) != "keep me" {
 		t.Fatalf("existing file = %q, %v; want it preserved", got, err)
@@ -91,7 +91,7 @@ func TestPprofDoesNotRemoveExistingNonSocketOrLiveSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	stop = servePprof(sock, quiet)
+	stop = ServePprof(sock, quiet)
 	stop()
 	conn, err := net.DialTimeout("unix", sock, time.Second)
 	if err != nil {

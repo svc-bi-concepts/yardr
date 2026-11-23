@@ -20,10 +20,11 @@ import (
 // and drains its calls.
 const PprofEnv = "PPROF"
 
-// servePprof serves the profiles at path until the function returned is
+// ServePprof serves the profiles at path until the function returned is
 // called. A path that cannot be listened on is logged and left: the yard
-// works without it.
-func servePprof(path string, log *slog.Logger) (stop func()) {
+// works without it. The server and the daemon both call it, so a profile
+// of either reads the same variable and the same socket.
+func ServePprof(path string, log *slog.Logger) (stop func()) {
 	if path == "" {
 		return func() {}
 	}

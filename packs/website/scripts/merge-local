@@ -21,7 +21,8 @@
 #                       landed by rebase, so that the base gets the commit of
 #                       each of its children
 #   YARDR_TEST_TIMEOUT  seconds the test command may run, besides what it
-#                       waited for the race lock (default 1800)
+#                       waited for the race lock and for a machine-wide
+#                       gate slot (default 1800)
 #   YARDR_REWRITE_TIMEOUT
 #                       seconds the file size table rewrite may run (default
 #                       120); it waits on no race lock
@@ -51,6 +52,11 @@
 # run ended by a signal is run once more, and held if a
 # signal ends it again. A depot with no test command lands untested, and the
 # note says so. It never forces and never pushes anything but a fast-forward.
+# Before the rebase, the branch must contain the commit the reviewer approved
+# (the newest "Reviewed <sha>" or "approved <sha>" note of the bead, as
+# infra-land.sh reads it): a branch on another line of commits is refused back
+# to its builders, with both shas and the commits it has past the approved
+# one. A bead with no approval lands as before, and the log says so.
 #
 # With YARDR_LAND=squash the branch is made one commit after the rebase and
 # before the tests, so that the commit tested is the commit landed. Its
@@ -272,6 +278,69 @@ fi
 [ "$(git -C "$WT" symbolic-ref -q HEAD)" = "refs/heads/$BR" ] || hold "$WT is not on $BR"
 [ -z "$(git -C "$WT" status --porcelain)" ] || hold "worktree $WT has uncommitted changes"
 
+# The commit the reviewer approved, from the bead's notes: the newest note whose
+# text says "Reviewed <sha>" or "approved <sha>", the rule infra-land.sh reads
+# (yard-hxkm), so that both landers agree. The notes come from bead show as
+# JSON, one "text" line per note, oldest first, with the newlines of a note
+# escaped as \n: each note is read from its own line, the escapes become
+# spaces, and the sha must be a whole word of 7 to 40 hex digits. Prints it,
+# or nothing for a bead with no such note.
+approved_from_json() {
+  sed -n 's/^ *"text": *"\(.*\)",\{0,1\}$/\1/p' | sed 's/\\n/ /g' |
+    awk '{
+      s = " " $0; found = ""
+      while (match(s, /[ \t]([Rr]eviewed|approved)[ :]+[0-9a-f]+/)) {
+        m = substr(s, RSTART, RLENGTH)
+        s = substr(s, RSTART + RLENGTH)
+        sub(/^.*[ :]/, "", m)
+        if (length(m) >= 7 && length(m) <= 40 && substr(s, 1, 1) !~ /[0-9A-Za-z]/) { found = m; break }
+      }
+      if (found != "") last = found
+    }
+    END { print last }'
+}
+# keep_head writes the head $2 the branch had before $1 moved it ("its squash",
+# "its rebase") to refs/archive/$BEAD, so that nothing a landing replaces is
+# left to the reflog, which a git gc expires. The ref is only ever created: a
+# bead landed again takes the next free $BEAD-<n>, and an existing archive is
+# never moved. Its name is left in ARCHIVE. The push sends the base alone, so
+# the archive stays in this repository.
+keep_head() {
+  ARCHIVE=refs/archive/$BEAD
+  keep_n=0
+  while git -C "$REPO" rev-parse -q --verify "$ARCHIVE" >/dev/null; do
+    keep_n=$((keep_n + 1))
+    ARCHIVE=refs/archive/$BEAD-$keep_n
+  done
+  git -C "$REPO" update-ref -m "assembly: keep the head $BEAD had before $1" "$ARCHIVE" "$2" "" ||
+    hold "cannot keep the head $2 of $BEAD at $ARCHIVE"
+}
+# Before the rebase, which gives every commit of the branch a new sha: the
+# reviewer approved one commit, and the branch must contain it. A branch on
+# another line of commits does not land, though its tip may be tested and
+# green. Commits past the approved one are allowed. A bead with no recorded
+# approval is a legacy bead and lands as before, with a line in the log saying
+# so. An approved sha that is not in the depot holds: there is no judging it.
+json=$("$Y" --json bead show "$BEAD") || hold "cannot read the notes of $BEAD for its reviewer-approved commit"
+approved=$(printf '%s\n' "$json" | approved_from_json)
+if [ -z "$approved" ]; then
+  echo "no reviewer-approved commit recorded on $BEAD; landing $BR as before"
+else
+  full_approved=$(git -C "$REPO" rev-parse -q --verify "$approved^{commit}") ||
+    hold "the reviewer-approved commit $approved is not in $REPO; cannot check $BR against it"
+  br_head=$(git -C "$REPO" rev-parse "refs/heads/$BR") || hold "cannot read $BR"
+  after=$(git -C "$REPO" log --oneline "$br_head" --not "$full_approved") ||
+    hold "cannot list the commits of $BR past the reviewer-approved commit $approved"
+  if git -C "$REPO" merge-base --is-ancestor "$full_approved" "$br_head"; then
+    echo "== $BR at $(git -C "$REPO" rev-parse --short "$br_head") contains the reviewer-approved $(git -C "$REPO" rev-parse --short "$full_approved"); commits past it:"
+    echo "${after:-none}"
+  else
+    back "$BR at $br_head does not contain the reviewer-approved commit $full_approved: the branch is on another line of commits. Commits on $BR that the approved commit lacks:
+${after:-none}
+The builder runs the bead again on a branch that contains the reviewed commit, or the review is run again on what the branch holds."
+  fi
+fi
+
 # Bring the base up to what it is pushed to before the branch is rebased
 # onto it, so the bead is tested against and lands on the remote's commits
 # and not a stale base. Only when YARDR_PUSH names the remote to fetch:
@@ -313,17 +382,26 @@ if [ -n "$PUSH" ]; then
   fi
 fi
 
-# Rebase onto the base when it moved since the branch was made.
+# Rebase onto the base when it moved since the branch was made. The rebase gives
+# each commit a new sha, so the head it moves from is kept under refs/archive/
+# $BEAD first. A branch the base already holds is not rebased, and keeps nothing.
 if ! git -C "$REPO" merge-base --is-ancestor "$BASE" "$BR"; then
   t0=$(date +%s)
+  rb_old=$(git -C "$REPO" rev-parse "refs/heads/$BR") || hold "cannot read $BR"
+  keep_head "its rebase" "$rb_old"
+  rb_arch=$ARCHIVE
   git -C "$WT" rebase "$BASE" && ok=1 || ok=
   step "$t0" rebase
   if [ -z "$ok" ]; then
     files=$(git -C "$WT" diff --name-only --diff-filter=U | tr '\n' ' ')
     git -C "$WT" rebase --abort
+    # A conflict moved nothing, so the archive it made holds a head the branch
+    # still has: it is taken back, and the ref is only ever one this run made.
+    git -C "$REPO" update-ref -d "$rb_arch" "$rb_old" 2>/dev/null
     conflict "rebase onto $BASE conflicts in: $files
 Rebase $BR onto $BASE, keep both changes' intent, run the tests again."
   fi
+  echo "== rebased $BR onto $BASE (its head before the rebase is kept at $rb_arch)"
 fi
 
 # --- closefds: the same text in merge-local, integrate-train, pr-ci, deploy-dokku and deploy-void (a test holds them equal) ---
@@ -496,7 +574,7 @@ Correct the rewrite command, then unhold."
 # are lowered once for the train, not by each wagon (integrate-train), and a
 # branch with no commit past the base has no head that is its own to amend.
 ONTRAIN=
-if [ "${YARDR_TYPE:-}" = wagon ] && [ -n "${YARDR_TRAIN:-}" ] && [ "$BASE" = "yard/$YARDR_TRAIN" ]; then
+if [ "${YARDR_TYPE:-}" = wagon ] && [ -n "${YARDR_TRAIN:-}" ] && [ "$BASE" = "${YARDR_TRAIN_BRANCH:-yard/$YARDR_TRAIN}" ]; then
   ONTRAIN=1
 elif [ "$(git -C "$REPO" rev-list --count "refs/heads/$BASE..refs/heads/$BR")" != 0 ]; then
   lowerrows amend
@@ -742,9 +820,12 @@ squash() {
   case $sq_new in
   '' | *[!0-9a-f]*) hold "cannot write the squash commit of $BEAD: $sq_new" ;;
   esac
+  # The head the squash replaces is kept first (keep_head): a bead squashed
+  # again after a red run takes the next free archive name.
+  keep_head "its squash" "$sq_old"
   git -C "$WT" update-ref -m "assembly: squash $BEAD onto $BASE" "refs/heads/$BR" "$sq_new" "$sq_old" ||
     hold "cannot move $BR to its squash commit $sq_new"
-  echo "== squashed $BEAD onto $BASE: $SQ_SUBJECT"
+  echo "== squashed $BEAD onto $BASE: $SQ_SUBJECT (its head before the squash is kept at $ARCHIVE)"
 }
 # A train lands the commits of its children, which is how the base gets one
 # commit for each of them: it is never squashed.
@@ -860,14 +941,14 @@ gradle_fails() {
 # in $lines, the failing tests in $fails (the full log's FAIL and XCTest
 # lines, and the Gradle names, deduped, at most $FAILS, only when the log
 # runs past the tail), and $late set when it ran past $LIMIT seconds besides
-# what it waited for the race lock. It adds the seconds the run took to $secs,
+# reported race-lock and gate-slot waits. It adds the run's seconds to $secs,
 # which a second run after a signal adds to. A red run's full log stays in
 # $log until the outcome attaches it to the bead; a green run's is removed
 # at once, as ever.
 #
 # The bound is sh's own, since timeout(1) is not everywhere (macOS has none):
 # the command runs in the background beside a watcher that sleeps $LIMIT
-# seconds, credits the race-lock seconds the run waited, and then kills it.
+# seconds, credits reported queue waits, and then kills it.
 # Killing sh alone would leave go test and its
 # test binaries running, and a shell without a terminal gives a background
 # job no process group of its own to signal, so the watcher finds the
@@ -903,7 +984,10 @@ runtest() {
     # The test command starts with no descriptor above 2 that the landing
     # did not give it, or does not start.
     closefds "$RUN"
-    if [ -n "$copy" ]; then exec sh "$copy"; else exec sh -c "$TEST"; fi
+    # The base copy protects only this entry script. Its $0 is the path the
+    # script would have in the worktree, for layout such as dirname "$0";
+    # anything it sources or calls through that path comes from the branch.
+    if [ -n "$copy" ]; then exec sh -c 'f=$1; shift; sh -n "$f" || exit 2; . "$f"' "$WT/$TEST" "$copy"; else exec sh -c "$TEST"; fi
   ) >"$log" 2>&1 </dev/null &
   pid=$!
   (
@@ -920,20 +1004,54 @@ runtest() {
     # and kill. The gate prints a start marker while it waits and a final
     # `test: waited N s` line when it acquires the lock; account for the
     # elapsed active wait too, since it may outlast LIMIT.
+    # The machine-wide gate slots (integrations/gate-slot.sh, which wraps the
+    # depots' test commands) are a wait of the same kind: with a long line
+    # the whole deadline once went on the queue and no test ran
+    # (doc-platform-ybbh). The gate prints `gate: waiting for a slot (...),
+    # N s` every minute while it waits, the seconds since it began, and
+    # `gate: running in slot K of M, after N s` once it is admitted, the
+    # final wait. An admitted wait counts its N; one still open counts its
+    # latest N plus the seconds since the preceding inspection (or watcher
+    # startup for the first inspection), so a wait outlasting the deadline
+    # is never cut off between two lines.
+    # Those seconds count up to two of the gate's line intervals only: a gate
+    # still waiting prints a newer line by then, and a stray waiting line
+    # (a gate killed while it waited, a test's own output) followed by a hang
+    # would otherwise lift the deadline for good.
+    gap=${YARD_GATE_WAIT_LINE_S:-60}
+    case "$gap" in ''|*[!0-9]*) gap=60 ;; esac
+    gap=$((2 * gap))
     credited=0
     parred=0
     wait_for=$LIMIT
+    observed=$(date +%s)
+    open_s=
+    open_at=
     while :; do
       sleep "$wait_for" &
       nap=$!
       echo "$nap" >"$napfile"
       wait "$nap"
-      waited=$(awk -v now="$(date +%s)" '
+      now=$(date +%s)
+      # shellcheck disable=SC2046 # two numbers, split on purpose
+      set -- $(awk -v now="$now" '
         /^test: race lock wait started at [0-9]+$/ { active=$NF; next }
         /^test: waited [0-9]+ s for the race lock$/ { total+=$3; active="" }
-        END { if (active != "") total += now-active; print total+0 }
+        /^gate: waiting for a slot \([0-9]+ (running|ahead in line)\), [0-9]+ s$/ { gate=$(NF-1); next }
+        /^gate: running in slot [0-9]+ of [0-9]+, after [0-9]+ s$/ { total+=$(NF-1); gate="" }
+        END { if (active != "") total += now-active; print total+0, (gate == "" ? "-" : gate) }
       ' "$log" 2>/dev/null)
+      waited=${1:-0}
       case "$waited" in ''|*[!0-9]*) waited=0 ;; esac
+      case "${2:--}" in
+        -|*[!0-9]*) open_s= ;;
+        *)
+          if [ "$2" != "$open_s" ]; then open_s=$2; open_at=$observed; fi
+          since=$((now - open_at))
+          [ "$since" -le "$gap" ] || since=$gap
+          waited=$((waited + open_s + since))
+          ;;
+      esac
       # A race leg the gate throttled with -p runs slower by design, so the
       # deadline follows it: cores over -p, floored at 1, times LIMIT. The
       # gate says the throttle in one line; without it the factor is 1 and
@@ -962,7 +1080,8 @@ runtest() {
       esac
       extension=0
       [ "$fact" -gt 1 ] && extension=$(((fact - 1) * limitnum))
-      extra=$((waited - credited + extension - parred))
+      credited=$((credited + now - observed))
+      extra=$((limitnum + waited - credited + extension))
       if [ "$extra" -le 0 ]; then
         break
       fi
@@ -970,7 +1089,7 @@ runtest() {
       if [ "$parred" -eq 0 ] && [ "$fact" -gt 1 ]; then
         echo "deadline $LIMIT s x $fact for -p=$par on $cores cores" >>"$log"
       fi
-      credited=$waited
+      observed=$now
       parred=$extension
       wait_for=$extra
     done

@@ -6,17 +6,29 @@
 # docs/design/2026-10-17-yardr-pcxd-slack.md).
 #
 # Every body gets an envelope, an unknown event too: the yard subscribes
-# to app_mention and message.im alone (SETUP.md step 6), so anything else
-# is answered as type event and matches no subscription, and a non-zero
-# exit would be answered 400, which the service retries. Nothing of the
-# body is ever printed to stderr.
+# to app_mention, message.im, message.channels, message.groups and
+# message.mpim (SETUP.md step 6), and anything else is answered as type
+# event and matches no subscription, and a non-zero exit would be answered
+# 400, which the service retries. Nothing of the body is ever printed to
+# stderr.
 #
-# Edits and deletes arrive through message.im as a message of subtype
-# message_changed or message_deleted, carrying no top-level user or text
-# (the edited message sits under message): they are answered as type
-# event like anything unsubscribed, so neither is delivered as a phantom
-# message nor offers a mapping card. A mention edited after it was heard
-# stands as it was heard.
+# A message is a message of no subtype, or of one that carries a message
+# a person or the bot wrote: bot_message (the bot's own posts, dropped by
+# identity), file_share and thread_broadcast. Every other subtype is
+# answered as type event: edits and deletes (message_changed,
+# message_deleted, which carry no top-level user or text, the edited
+# message sitting under message), joins and leaves (channel_join,
+# group_join, ...), and message_replied, which Slack sends beside a thread
+# reply in its channel with no text of its own. None is delivered as a
+# phantom message nor offers a mapping card. A mention edited after it was
+# heard stands as it was heard.
+#
+# Slack sends a message.channels, message.groups or message.mpim event for
+# a message that mentions the bot beside the app_mention that carries the
+# same mention, so a channel message keeps its mentions off the envelope:
+# the mention is heard once, by its app_mention, and a channel message
+# that mentions nobody is stored and nudges nothing. A direct message keeps
+# its mentions, since no app_mention comes beside it.
 exec jq -c '
 def obj: if type == "object" then . else {} end;
 def str($v): if ($v | type) == "string" then $v elif $v == null then "" else "\($v)" end;
@@ -34,21 +46,23 @@ def mentions($text):
 (.body | if type == "object" then . else error("slack event is not an object") end) as $b
 | (($b.event | obj) | if (.type | type) == "string" then . else null end) as $e
 | if $e != null and ($e.type == "app_mention" or $e.type == "message")
-    and ($e.subtype != "message_changed" and $e.subtype != "message_deleted") then
+    and ($e.subtype == null or ($e.subtype | IN("bot_message", "file_share", "thread_broadcast"))) then
     ($e.channel // "") as $channel
     | ($e.thread_ts // $e.ts // "") as $parent
     | (($e.text // "") | if type == "string" then . else "" end) as $raw
+    | (if $e.channel_type == "im" or ($channel | startswith("D")) then "dm" else "channel" end) as $room
     | (if $raw != "" then $raw
        elif (($e.files // []) | length) > 0 then "[file]"
        else "[message]" end) as $text
     | {source: "slack", type: "message", action: "create",
        actor: {id: str($e.user // $e.bot_id)},
        thread: {id: "\($channel):\($parent)"},
-       text: ($text | trunc), mentions: mentions($raw),
+       text: ($text | trunc),
+       mentions: (if $e.type == "message" and $room == "channel" then [] else mentions($raw) end),
        message: str($e.ts), parent: str($parent),
        fields: {channel: [$channel], team: [str($b.team_id // $e.team)],
                 sender: [str($e.user // $e.bot_id)],
-                room: [(if $e.channel_type == "im" or ($channel | startswith("D")) then "dm" else "channel" end)]}}
+                room: [$room]}}
   else
     {source: "slack", type: "event", actor: {}, thread: {}, mentions: []}
     | if $e != null and (($e.user | type) == "string") then . + {fields: {sender: [$e.user]}} else . end

@@ -2,6 +2,10 @@ name: ci
 
 # Every uses: below is pinned by full commit SHA, with the release it is
 # as a comment; a tag that moves would run code no review saw.
+# Each job runs only on the origin repository. The private mirror
+# svc-bi-concepts/yardr-ci gets its main pushes too, and its land gate runs on
+# the Hetzner runners (mirror.yml); a run of these jobs there would bill
+# GitHub-hosted minutes for a private repo, which ADR 0011 excludes.
 on:
   push:
     branches: [main]
@@ -38,6 +42,7 @@ jobs:
   # are about twice the longest of those, because a run that outgrows its
   # limit is cut off, and a cut-off says nothing about the tests.
   test:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -65,6 +70,7 @@ jobs:
   # every package. Each takes a fraction of the depot's run, and its limit is
   # lower for that.
   test-plain:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -77,6 +83,7 @@ jobs:
         run: go test ./...
 
   test-rpc:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -89,6 +96,7 @@ jobs:
         run: YARDR_TEST_RPC=1 go test ./...
 
   conformance:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -133,6 +141,7 @@ jobs:
   # stays in step with them: known vulnerabilities in what the module builds
   # with, what staticcheck finds in its Go, and the depot's shell.
   scan:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -180,6 +189,7 @@ jobs:
   # 28 it took on three cores. A run that outgrows its limit is cut off, and a
   # cut-off says nothing about the tests.
   test-macos:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -214,6 +224,7 @@ jobs:
   # The root package's tests that call the real tool skip without it, and
   # they run in test-macos.
   test-macos-plain:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -226,6 +237,7 @@ jobs:
         run: go test ./...
 
   test-macos-rpc:
+    if: github.repository == 'svc-bi-concepts/yardr'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:

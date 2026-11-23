@@ -455,3 +455,25 @@ func TestDaemonClosesSessionsStartedSinceItsLastPass(t *testing.T) {
 		t.Fatalf("the daemon did not log one line per closed session, naming the started bead:\n%s", out)
 	}
 }
+
+// A STOPPED file in the daemon's home ends the daemon as it ends the server,
+// on the same tick. It is not a lost home: the cause is not the home-gone one,
+// so the herdr sessions are left as on a SIGTERM (see TestDaemonKeepsHerdrSessionsOnStop).
+func TestDaemonStopsWhenItsYardIsStopped(t *testing.T) {
+	t.Parallel()
+	cfg, ctx, logged := daemonHome(t)
+	if err := os.WriteFile(cfg.StoppedFile(), []byte("who and when\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the daemon kept running on a stopped home:\n%s", logged.String())
+	}
+	if homeLostCause(context.Cause(ctx)) != "" {
+		t.Fatalf("a stopped yard was taken for a lost home: %v", context.Cause(ctx))
+	}
+	if !strings.Contains(logged.String(), "STOPPED file; stopping the yardr daemon") {
+		t.Fatalf("the log does not say why the daemon stopped:\n%s", logged.String())
+	}
+}

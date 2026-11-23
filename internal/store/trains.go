@@ -132,7 +132,7 @@ func familyOf(tx *bolt.Tx, row *beadRow) (*Family, error) {
 			f.Train = train.ID
 		}
 	case train != nil:
-		f.Train, f.Base = train.ID, Branch(train.ID)
+		f.Train, f.Base = train.ID, BranchOfBead(train.Bead)
 	default:
 		f.Base = r.Base
 		// A bead that came from a yard which said where its work starts

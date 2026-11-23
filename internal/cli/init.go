@@ -1355,7 +1355,7 @@ func settingRows(home string, stored map[string]string) []settingRow {
 	// yard goes by its own count, from default.
 	kept := make(map[string]string, len(stored))
 	for k, v := range stored {
-		if k != store.FilesMaxSetting {
+		if k != store.FilesMaxSetting && k != store.WorktreeRootVolume {
 			kept[k] = v
 		}
 	}

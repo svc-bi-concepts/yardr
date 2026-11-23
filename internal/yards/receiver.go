@@ -181,6 +181,10 @@ type from struct {
 	sig  string // a pairing confirm's signature, on the old profile
 	req  store.PeerRequestSig
 	body []byte // opened; the sealed body is checked and opened in verify
+	// msg is a post's body as the message it is, read once in verify with
+	// what it says (heard); msgErr is why it does not read as one.
+	msg    *store.PeerMessage
+	msgErr error
 }
 
 // verify tells whose a request is, from its headers alone first: the
@@ -267,12 +271,13 @@ func (rc *Receiver) verify(w http.ResponseWriter, r *http.Request) (*from, bool)
 	// What the peer says of its build is kept whatever becomes of the
 	// request: it is the peer's word either way. Not kept, it costs the
 	// request nothing.
-	if says, ok := stated(r, body); ok {
+	says, ok, msg, msgErr := heard(r, body)
+	if ok {
 		if err := rc.st.PeerHeard(r.Context(), p.Name, p.Key, says); err != nil && !errors.Is(err, store.ErrNotFound) {
 			rc.log.Warn("peer: keeping what it says it understands", "peer", p.Name, "err", err)
 		}
 	}
-	return &from{peer: p, key: key, req: desc, body: body}, true
+	return &from{peer: p, key: key, req: desc, body: body, msg: msg, msgErr: msgErr}, true
 }
 
 // peerRequestScheme recovers the target scheme that an edge terminates
@@ -336,16 +341,46 @@ func stated(r *http.Request, body []byte) (says *store.PeerSays, ok bool) {
 	return m.Says, true
 }
 
+// heard reads a request as stated reads it, and for a POST also the message
+// its body is, from the same decode: a file's body is megabytes, and each
+// decode of it is a pass over all of it. A body that does not read as the
+// whole, a message with a field of the wrong kind among them, takes stated's
+// way for what it says, so what is kept of a request is what it was; msg is
+// then nil and msgErr says why the body is no message.
+func heard(r *http.Request, body []byte) (says *store.PeerSays, ok bool, msg *store.PeerMessage, msgErr error) {
+	if r.Method == http.MethodGet {
+		says, ok = stated(r, body)
+		return says, ok, nil, nil
+	}
+	var w struct {
+		Says json.RawMessage `json:"says"`
+		store.PeerMessage
+	}
+	if err := json.Unmarshal(body, &w); err != nil {
+		says, ok = stated(r, body)
+		return says, ok, nil, err
+	}
+	// What says does not read as its kind is none, as stated has it: the
+	// message is still a message.
+	if len(w.Says) > 0 {
+		if err := json.Unmarshal(w.Says, &says); err != nil {
+			says, ok = nil, false
+			return says, ok, &w.PeerMessage, nil
+		}
+	}
+	return says, true, &w.PeerMessage, nil
+}
+
 func (rc *Receiver) post(w http.ResponseWriter, r *http.Request) {
 	f, ok := rc.verify(w, r)
 	if !ok {
 		return
 	}
-	var m store.PeerMessage
-	if err := json.Unmarshal(f.body, &m); err != nil {
+	if f.msgErr != nil {
 		rc.answer(w, f, http.StatusBadRequest, map[string]any{"error": "not a message"})
 		return
 	}
+	m := *f.msg
 	m.Seq = 0 // the sender's own; a posted message has no place here
 	taken, err := rc.st.PeerReceive(r.Context(), f.peer.Name, f.peer.Key, []store.PeerMessage{m})
 	switch {

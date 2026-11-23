@@ -81,7 +81,10 @@ var (
 	bDepFrom  = []byte("dep_from") // <from>\x00<dep id>
 	bDepTo    = []byte("dep_to")   // <to>\x00<dep id>
 	bNotes    = []byte("notes")    // <bead>\x00<seq>
-	bEvents   = []byte("events")   // <seq>
+	// bAskTo indexes every ask by the person it is addressed to, so a
+	// person's queue reads only the beads that name them (UserAsks).
+	bAskTo    = []byte("asks_to") // <user>\x00<bead>\x00<seq>
+	bEvents   = []byte("events")  // <seq>
 	bEventsBy = []byte("events_by_bead")
 	bInbox    = []byte("inbox")          // <crew member>\x00<seq>: mail to it, or delivered to it by a subscription
 	bEventsKd = []byte("events_by_kind") // <kind>\x00<seq>
@@ -109,7 +112,7 @@ var (
 // package comment) and deleted on open.
 var bVersions = []byte("versions")
 
-var allBuckets = [][]byte{bBeads, bBeadOpen, bHandles, bDeps, bDepFrom, bDepTo, bNotes, bEvents, bEventsBy, bInbox, bEventsKd,
+var allBuckets = [][]byte{bBeads, bBeadOpen, bHandles, bDeps, bDepFrom, bDepTo, bNotes, bAskTo, bEvents, bEventsBy, bInbox, bEventsKd,
 	bSessions, bSessLive, bSessPane, bSessPend, bSessBead, bSessTime, bGroups, bRoutes, bDepots, bFlows, bFlowPtrs, bMeta, bETACells, bETAFailed}
 
 type Store struct {

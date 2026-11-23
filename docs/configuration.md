@@ -25,7 +25,7 @@ repository ([below](#seeding-a-depot-yardr-depot-init)).
 | roles | a depot's own role prompts: `.yardr/roles/<name>.md`, read from the base; none in a depot set up from a pack | each group's and crew member's `prompt`: for a depot set up from a pack the absolute path of the pack's role as installed in the home, `~/.yardr/packs/<pack>/roles/<name>.md`. `~/.yardr/roles/`, in a yard that has it from an earlier yardr, is the fallback of a relative `prompt` |
 | groups | | runner, limit, members, subscriptions (manual), agent kind, model, args, cmd, worktree settings |
 | routes | | which group works which stage, by depot, type, label |
-| depots | | path, kind (`git` or `dir`), clone, base branch, test command; `depot add` registers, `depot rm` removes |
+| depots | | path, kind (`git` or `dir`), clone, base branch, test command, visibility; `depot add` registers, `depot rm` removes |
 | crew members | | agent, directory, inbox kinds, rotation, subscriptions, identities |
 | settings | | the yard's defaults ([Settings](#settings)) |
 
@@ -173,7 +173,7 @@ unread.
 session whose pane says, when it reaches `idle`, that a command its agent
 started in the background still runs (the `background` lines of any
 harness file, whichever kind the group names; Claude Code's
-`1 shell still running`) raises no
+`1 shell still running` or `2 monitors still running`) raises no
 `session_idle`, and its idle spell starts again from that look, so `grace`
 does not end it. `max_age` applies. See
 [groups.md](groups.md#a-command-runs-in-the-background).
@@ -246,9 +246,53 @@ dependency kinds, are lowercase letters, digits, `.`, `_` and `-`. What
 A depot can say what tests it: `yardr depot add webapp ~/projects/webapp
 --test 'make test'` ([Tests](#tests)).
 
-A depot can also be a plain directory, with no git (`--kind dir`): the next
-section says how the two kinds differ, and [dir-depots.md](dir-depots.md)
-has a worked example.
+A depot can also be a plain directory, with no git (`--kind dir`):
+[Depot kinds](#depot-kinds-git-and-dir) says how the two kinds differ, and
+[dir-depots.md](dir-depots.md) has a worked example.
+
+## Visibility
+
+A depot says whether its GitHub repository is public. It is private unless
+the operator says otherwise:
+
+```sh
+yardr depot add webapp ~/projects/webapp --visibility public   # when registering
+yardr depot visibility webapp private                          # an existing depot
+```
+
+A `depot add` without `--visibility` keeps the visibility the depot has.
+Only the operator sets it. `depot show` and `depot list` show it, and
+`yardr depot show webapp --json` carries it as `visibility`, which is what
+a script or a hook reads.
+
+While the daemon runs, yardr checks each git depot's visibility once per
+UTC day against its GitHub repository's, with one `gh repo view` in the
+depot's checkout, and the whole check stops after a minute: a depot it did
+not reach is asked on the next pass. The daily attempt is kept in memory, so restarting the
+daemon checks again that day. A depot that differs from GitHub is reported
+to the yardmaster's inbox with the depot's name, its recorded visibility
+and GitHub's. The check never changes the value; a repository GitHub calls
+internal counts as private. A dir depot is not checked, and neither is a
+depot GitHub does not answer for, such as one with no GitHub remote or on a
+machine without `gh`.
+
+A public depot's history and branches are public, so they name no yard id.
+Its beads change in three ways, and a private depot is unchanged:
+
+- The yard's commit-msg hook writes neither `Yardr-Bead:` nor `Yardr-Agent:`
+  trailers. A harness's own trailers are still dropped, as everywhere.
+- A bead made in the depot records its branch: `fix/<slug>` for a bug and
+  `feat/<slug>` for anything else, the slug being its title's words in lower
+  case. A name already taken, by another bead or by a branch the depot's git
+  has (local, or on `origin`), gets `-2`, `-3` and so on. The name is recorded
+  once, at creation, so a later title edit leaves it. A bead made before the
+  depot became public keeps `yard/<id>`: renaming existing branches is not
+  done.
+- Whatever finds a bead from its branch reads the recorded name, never
+  parses it: the runner's `YARDR_BRANCH`, a peer's send and return of the
+  branch, and the train a webhook's head branch belongs to. The peer push
+  sends the recorded name too. `YARDR_TRAIN_BRANCH` is a train's recorded
+  branch, which the landing scripts compare a wagon's base with.
 
 ## Depot kinds: git and dir
 
@@ -473,10 +517,11 @@ depot's path and kind, and clearing the test command, stay the operator's.
 to run it in the worktree before handing on. Its merge script, `merge-local`,
 runs it on the rebased commit before the base moves, with `YARDR_LANDING=1`
 in the environment (unset for a wagon landing on its train's branch) and
-for at most `YARDR_TEST_TIMEOUT` seconds (1800), besides what it waited for
-the race lock. Where the field is a file of the branch that carries a file
-size table (depot yardr's `.yardr/test` does), it first has that file lower the
-table to the branch's files, for at most `YARDR_REWRITE_TIMEOUT` seconds (120),
+with the [assembly test deadline](../contrib/assembly/README.md)
+(described under Environment). Where the field is a file of the branch that
+carries a file size table (depot yardr's `.yardr/test` does), it first has that
+file lower the table to the branch's files, for at most `YARDR_REWRITE_TIMEOUT`
+seconds (120),
 a run that waits on no race lock. Exit 0 lands the bead.
 Exit 2, the command saying it could not run, holds it. Any other exit sends
 it back to its builder with the end of the output in a note. A depot with no
@@ -504,11 +549,9 @@ has to wait says so (`test: waited 312 s for the race lock`). Only a landing
 (`YARDR_LANDING=1`) and the quiet run have a race leg: a run without it, a
 builder's or a reviewer's, whatever it changed, tests without `-race` and
 says so in its first line, queuing only when its step covers the whole
-suite. The deadline of
-a landing, and of a train's integration, does not count that wait:
-`merge-local` and `integrate-train` credit the waited seconds, so one late in
-the queue is killed only when its own run outlasts `YARDR_TEST_TIMEOUT`. The
-rewrite of the file size table, which they run first, has a deadline of its
+suite. The [assembly test deadline](../contrib/assembly/README.md), described
+under Environment, accounts for queue waits. The rewrite of the file size
+table, which merge-local and integrate-train run first, has a deadline of its
 own, `YARDR_REWRITE_TIMEOUT` (120 seconds), and nothing is credited to it: it
 waits on no race lock. Race suites
 run side by side slow each other past Go's per-package timeout while one
@@ -564,7 +607,7 @@ Everything yardr keeps for itself lives in one directory, the yard's
 | `otel-export.json` | what `yardr otel export` has sent, where the next run continues ([otel.md](otel.md#what-it-remembers)) |
 | `telemetry.json`, `telemetry.json.lock` | the install id and the consent bookkeeping of yardr's opt-in telemetry, made by the first `yardr telemetry on`, mode 0600: when consent was given and withdrawn, the day batches count from, the day of the latest attempt to send, and the last day sent. The lock is held for a moment by whichever of the daemon and the `yardr telemetry` commands writes the file. Deleting `telemetry.json` forgets the id ([telemetry.md](telemetry.md#the-install-id)) |
 | `logs/sessions/yard-<session>.log` | what the command of an exec group's session printed, for a group that sets no `log` ([groups.md](groups.md#runners)); nothing prunes them |
-| `worktrees/<depot>/<bead>` | herdr bead worktrees |
+| `worktrees/<depot>/<bead>` | the default location of bead worktrees ([Where the worktrees go](#where-the-worktrees-go)) |
 | `depots/<name>` | depots registered with `depot add --clone`; `depot rm` leaves the clone here |
 | `packs/<pack>/` | a pack's roles and scripts as an import installed them, filled with the yard's names ([packs.md](packs.md#how-a-pack-maps-to-the-yard)): what the groups and crew members of a depot set up from the pack read. `yardr init` installs the yardmaster's role here, from the default pack, before any depot |
 | `flows/<pack>.<flow>/` | the stage files of a pack's flow, installed the same way |
@@ -666,7 +709,7 @@ still the way to have them gone at once.
 match it (`--depot <name>`) and its flow pointers, logging one `depot_removed`
 event. It is refused, naming them, while the depot has open beads or live
 sessions; closed beads keep the depot's name as history. Nothing on disk
-changes: the clone, its worktrees under `worktrees/<depot>/` and its `.yardr/`
+changes: the clone, its worktrees ([Where the worktrees go](#where-the-worktrees-go)) and its `.yardr/`
 stay where they are for you to remove.
 
 ### Which yardr a yard runs
@@ -1005,9 +1048,9 @@ commands are the same.
 
 #### Starting and stopping a yard
 
-`yardr up` starts everything a yard needs that is not running, and
-`yardr down` stops the yard. Both are safe to repeat, both print one line a
-part, and both take `--json`.
+`yardr up` starts everything a yard needs that is not running (not on a
+stopped home, see below), and `yardr down` stops the yard. Both are safe to
+repeat, both print one line a part, and both take `--json`.
 
 ```sh
 yardr up       # herdr's server, the yard's server, the daemon
@@ -1022,6 +1065,26 @@ and `yardr down --login` removes them ([below](#yardr-up---login)).
 `yardr uninstall` is `yardr down`, then the removal of every login service
 yardr wrote for the yard, then a list of what it left on the machine
 ([install.md](install.md#removing-yardr)).
+
+A home with a file named `STOPPED` in it is a yard that is retired or moved:
+nothing may start or write it. A person puts the file there by hand, and
+yardr neither writes nor removes it. `yardr down` is not that: it is a pause,
+after which `yardr up` starts the yard again. `yardr up` on a home with the
+file refuses with one line that names it, as every command does, and removing
+the file by hand is the one way back; no flag or variable bypasses it.
+
+While no server answers on such a home, no command starts one. So every
+command except `yardr status`, `yardr doctor` and `yardr down` stops with that
+line, and reads and writes nothing of the yard (`yardr server start` stops the
+same way). `yardr down` starts none either: it stops the daemon, the web view,
+the BDP server and the telemetry export that run, skips the agents (it cannot
+ask the store for them) and leaves yard.db as it is.
+
+A server or a daemon that runs when the file appears stops on its next home
+check, within a minute, as it does when its home is removed under it. The
+server stops the normal way, so its socket and pidfiles go and yard.db is
+closed; the daemon stops as on a SIGTERM, leaving its herdr sessions running
+for whoever runs the yard next.
 
 **`yardr up`** takes the parts in this order:
 
@@ -1347,11 +1410,11 @@ they stop, so the home goes last.
 | the home | `~/.yardr`, or what `YARDR_HOME` names: the store, the roles, the logs, `packs/` and `flows/` (an imported pack's roles, scripts and stage files; the assembly's `merge-local` is one of them), `worktrees/`, `depots/` | `ls -a <home>` | `rm -rf <home>`, typed by you with the path. Read the next paragraph first |
 | a depot's `.yardr` files | in the repository, committed on its base branch: `.yardr/roles/`, `.yardr/flows/` | `git -C <repo> ls-files .yardr` | keep them: a new yard that adds the repository as a depot reads them as they are. To start the depot's configuration over too: `git -C <repo> rm -r .yardr`, and commit |
 
-**Before the home is removed**, look at two directories in it, because they
-hold work and not only yardr's state. `<home>/worktrees/<depot>/<bead>` are
-the worktrees of beads, on branches `yard/<bead>` of the depot's repository:
-the commits on those branches stay in the repository, and what is not
-committed in a worktree goes with the home. `<home>/depots/<name>` are
+**Before the home is removed**, check the [bead worktrees](#where-the-worktrees-go)
+and `<home>/depots/<name>`, because they hold work and not only yardr's state.
+Commits on the beads' `yard/<bead>` branches stay in the depot's repository.
+Uncommitted work in a worktree inside the home goes with the home; worktrees
+outside it stay on disk. `<home>/depots/<name>` are
 repositories themselves, cloned by `yardr depot add --clone`: removing the home
 removes those clones, with every branch that was never pushed. Move out what
 you want to keep. Credential files you kept in the home
@@ -1436,6 +1499,37 @@ To change it:
 
 The two unchanged are the yardmaster and its role, which `yardr init` made.
 A yard whose yardmaster has another name gives `--crew yardmaster=<name>`.
+
+### Where the worktrees go
+
+A new bead worktree goes at `<root>/<depot>/<bead>`. The root is the group's
+`worktrees` config when set, else the yard's `worktree_root` setting, else
+`<home>/worktrees`. To select another directory for the yard, give its
+absolute path (the path below is an example):
+
+```sh
+yardr settings set worktree_root /mnt/work/worktrees/my-yard
+yardr settings set worktree_root ""   # return to the default root
+```
+
+Only new worktrees go there. A worktree that stands keeps the path it was
+made at, which the bead's session records, so a later stage reopens it there,
+and removing it works as before. Set the root while its volume is mounted:
+yardr records the mount as well as each session's worktree location. The
+directory must already exist, and its recorded mount must be available when
+a worktree is made using the setting.
+Otherwise the session is refused with a message that names the directory,
+and nothing is written in its place on the home's disk. `yardr doctor`
+says the yard's root and whether its volume is mounted. A group's explicit
+`worktrees` config bypasses this setting and its mount check. Cleanup of
+an offline worktree waits for a later dispatch pass after remounting, even
+if the setting has since changed. After successful cleanup, the recorded
+location is cleared, so reopening the bead uses the current root. Moving
+existing worktrees is not done by yardr.
+
+The local socket's settings also return `worktree_root_volume` when recorded:
+the mount path captured for the root. It is derived metadata, not a key
+`SetSetting` accepts, and is absent when `worktree_root` is unset.
 
 ### Copies of the store
 
@@ -1603,7 +1697,7 @@ Environment variables yardr reads:
 | `YARDR_LINEAR_API`, `YARDR_GITHUB_API` | where `yardr reply`, `yardr thread open` and `yardr thread state` send their calls, read by the command that makes them, and where the daemon sends a hook's issue moves ([links.md](links.md#a-beads-stage-moves-the-issue)), read when it starts (default: Linear's GraphQL endpoint, `https://api.github.com`) |
 | `YARDR_EVENT_RETENTION`, `YARDR_HOOK_PAYLOAD_RETENTION`, `YARDR_INBOX_RETENTION` | how long the daemon and `yardr store prune` keep events, ended sessions and webhook bodies, and how long an unread inbox event holds the log back ([below](#retention-keeping-yarddb-bounded)) |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, their lower-case forms, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS` | the standard proxy and CA variables, which the yard's own calls and its agents read. yardr sets none of them and hands on the ones its starter has, to the server, the daemon, the web view and herdr's server, and from the server and the daemon to a source's commands ([below](#behind-an-egress-proxy)) |
-| `YARDR_PPROF` | measuring: a path; the server serves Go's `net/http/pprof` on a unix socket there (mode 0600) for as long as it runs, read where the server starts. `curl --unix-socket <path> 'http://x/debug/pprof/profile?seconds=60'` is a CPU profile of a minute. Unset, nothing listens |
+| `YARDR_PPROF` | measuring: a path; the server and the daemon each serve Go's `net/http/pprof` on a unix socket there (mode 0600) for as long as they run, read where each starts. A server and a daemon of one home need two paths: a socket in use is not taken over, so the second one serves nothing and logs why. `curl --unix-socket <path> 'http://x/debug/pprof/profile?seconds=60'` is a CPU profile of a minute. Unset, nothing listens |
 | `YARDR_TEST_RPC` | tests: run the store suites through the unix-socket client |
 | `YARDR_STORE_NOSYNC` | tests: `1` opens `yard.db` without syncing each commit to the disk, which is most of a test run's time on macOS. The test suites set it for their throwaway yards (`0` keeps the sync). Never set it for a yard you keep: its store can be lost when the machine goes down |
 

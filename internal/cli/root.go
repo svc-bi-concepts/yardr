@@ -62,6 +62,10 @@ type app struct {
 	actorLoaded bool
 	// homeDir is --home: the yard this run and all it starts work in.
 	homeDir string
+	// ownHome is the yard this run starts in, before --home moves it: the
+	// yard that writes mail into another home (yardr --home <other> mail), and
+	// whose key names it there. "" without --home.
+	ownHome string
 	// env is the run's environment by full key, less the process facts
 	// (see environ): what names its yard, who acts, and what its children
 	// start with. Nil reads nothing (see getenv): Execute seeds it, and
@@ -154,6 +158,12 @@ func (a *app) rootCmd() *cobra.Command {
 			// Before anything reads the home: the config of this run, and
 			// the environment of what it starts, follow the flag.
 			if c.Flags().Changed("home") {
+				// The yard the run starts in, read before the flag moves it. A home
+				// that cannot be read leaves ownHome empty: mail is then not
+				// qualified with a sender's yard (mailCmd).
+				if own, err := config.LoadReadOnlyWith(a.yardrenv); err == nil {
+					a.ownHome = own.Home
+				}
 				if err := a.useHome(a.homeDir); err != nil {
 					return err
 				}
@@ -339,12 +349,17 @@ var connect = func(ctx context.Context, cfg *config.Config) (store.API, error) {
 	return st, nil
 }
 
-// store connects to the yardr server, starting it on first use.
+// store connects to the yardr server, starting it on first use. On a stopped
+// home (see errStopped) it starts none: a home with no server answering is
+// refused, and nothing of the yard is read or written.
 func (a *app) store(ctx context.Context) (store.API, error) {
 	if a.st == nil {
 		cfg, err := a.config()
 		if err != nil {
 			return nil, err
+		}
+		if cfg.Stopped() && !server.Running(ctx, cfg) {
+			return nil, errStopped{cfg: cfg}
 		}
 		st, err := connect(ctx, cfg)
 		if err != nil {
@@ -361,6 +376,20 @@ func (a *app) store(ctx context.Context) (store.API, error) {
 	// session its shell is in.
 	runner.FollowSetting(a.st)
 	return a.st, nil
+}
+
+// errStopped refuses a command on a home with a STOPPED file and no server
+// answering, and `yardr up` on any home with one. The file is put there by
+// hand to retire or move a yard (see config.Stopped), and nothing may start or
+// write it: a command that started the server would write the store of a yard
+// that is meant to stay as it is. The refusal comes before any connect, so
+// nothing starts and yard.db is not opened. Removing the file by hand is the
+// one way back; no flag or variable bypasses it.
+type errStopped struct{ cfg *config.Config }
+
+func (e errStopped) Error() string {
+	return fmt.Sprintf("the yard at %s is stopped (%s exists): no command starts its server, and yardr up does not either, so nothing was read or written. Remove that file by hand to start the yard again.",
+		e.cfg.Home, e.cfg.StoppedFile())
 }
 
 // out prints v as JSON to w, or calls text for humans with the same w.

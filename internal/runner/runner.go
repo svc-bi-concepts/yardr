@@ -41,7 +41,7 @@ import (
 func All(home string, st store.API, log *slog.Logger, onError func(error)) map[string]dispatch.Runner {
 	return map[string]dispatch.Runner{
 		"manual": &Manual{Store: st, Show: HerdrNotifier("herdr"), Log: log},
-		"exec":   &Exec{Home: home, Bin: self(), Log: log},
+		"exec":   &Exec{Home: home, Bin: self(), Log: log, Store: st},
 		"herdr": &Herdr{Bin: "herdr", WorktreeRoot: config.At(home).Worktrees(), YardHome: home,
 			YardBin: self(), OnError: onError, Store: st, Log: log},
 		store.PeerRunner: &Peer{Store: st, Home: home},
@@ -658,6 +658,20 @@ func roundNote(o dispatch.NextOutcome) string {
 // the bead there: a terminal stage closes it, otherwise the routed group's
 // runner decides who picks it up.
 func nextWhen(n dispatch.NextStage) string {
+	when := nextWhenGroups(n)
+	if n.Overflow != "" && n.Runner != store.PeerRunner && n.Group != "" && !n.Terminal {
+		at := "at once"
+		if n.OverflowAfter > 0 {
+			at = "once it has waited " + store.Span(n.OverflowAfter) + " in the stage"
+		}
+		when = strings.TrimSuffix(when, "use it when your part is ready for them.") +
+			fmt.Sprintf("when `%s` is full for it, the yard %s takes it, %s; use it when your part is ready for them.", n.Group, n.Overflow, at)
+	}
+	return when
+}
+
+// nextWhenGroups is nextWhen for the route's groups before a peer group.
+func nextWhenGroups(n dispatch.NextStage) string {
 	switch {
 	case n.Terminal:
 		return "closes the bead; use it when nothing is left to do."

@@ -193,7 +193,7 @@ func TestListedBeadsShareNothing(t *testing.T) {
 	b := store.Bead{ID: "web-1", UUID: "u", Title: "t", Body: "b", Type: "task", Stage: "new", Status: "open", Priority: 1,
 		Depot: str("web"), Labels: []string{"a"}, Metadata: map[string]any{"k": []any{map[string]any{"k": "v"}}}, Hold: true, HeldBy: "me",
 		Group: str("g"), Session: str("s"), CloseReason: str("r"), CreatedAt: at, UpdatedAt: at, ClosedAt: &at,
-		CreatedBy: str("me"), Originator: "me", Rounds: map[string]int{"new": 1}, Visited: []string{"new"}, Revision: "r", Train: "web-e", Notify: "s"}
+		CreatedBy: str("me"), Originator: "me", Rounds: map[string]int{"new": 1}, Visited: []string{"new"}, Revision: "r", Train: "web-e", Notify: "s", Branch: "fix/t"}
 	c := store.CloneBead(&b)
 	if !reflect.DeepEqual(b, c) {
 		t.Fatalf("clone = %+v, want %+v", c, b)
@@ -259,6 +259,18 @@ func TestDispatchableCarriesNoBody(t *testing.T) {
 	want := []store.ReadyBead{
 		{Bead: first.ID, Stage: "triage", Type: "bug", Priority: 1},
 		{Bead: late.ID, Stage: "new", Type: "task", Depot: &web, Labels: []string{"ui"}, Model: "big", Priority: 3},
+	}
+	// The stay's start is the one field the bead's row adds (the peer
+	// groups' after setting counts from it): it is set, and is the only
+	// one of the row's times the answer carries.
+	if len(got) != len(want) {
+		t.Fatalf("dispatchable has %d beads, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].StayStart.IsZero() {
+			t.Fatalf("bead %s has no stay start", got[i].Bead)
+		}
+		want[i].StayStart = got[i].StayStart
 	}
 	raw, err := json.Marshal(got)
 	if err != nil {

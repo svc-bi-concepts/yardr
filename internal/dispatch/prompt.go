@@ -66,6 +66,14 @@ type ScreenWatcher interface {
 	HarnessScreen(ctx context.Context, handle map[string]any) (up, known bool)
 }
 
+// AgentReadier is implemented by runners that know whether the agent of a
+// session is ready for input by other means than its screen (herdr's
+// interactive_ready), for a kind whose screen they cannot read. Only the
+// first prompt asks it, where ScreenWatcher says nothing.
+type AgentReadier interface {
+	AgentReady(ctx context.Context, handle map[string]any) (up, known bool)
+}
+
 // TrustAcceptor is implemented by runners that answer the folder-trust
 // dialog a harness draws on its first start in a directory, the
 // use-this-API-key dialog one draws on its first start with a key in its
@@ -125,6 +133,22 @@ type InputReader interface {
 	InputText(ctx context.Context, handle map[string]any) (text string, known bool, err error)
 }
 
+// ComposerReader is implemented by runners that also say why an input reads
+// as it does (the herdr runner). composer is the runner's fixed reason code
+// for the text, "" when it names none; it is a diagnostic only, and what is
+// typed is decided by text alone, as InputReader's is.
+type ComposerReader interface {
+	InputComposer(ctx context.Context, handle map[string]any) (text string, known bool, composer string, err error)
+}
+
+// InputRedrawer redraws the input of the verified pane in handle without
+// changing its contents. The dispatcher reads it again before typing.
+// marked is false for a harness kind with no input mark: nothing is sent,
+// and an unreadable input of it is the normal case, not a malformed one.
+type InputRedrawer interface {
+	RedrawInput(ctx context.Context, handle map[string]any) (marked bool, err error)
+}
+
 // DialogReader is implemented by runners that know questions a harness
 // draws in place of its input (the herdr runner, from the kind's file):
 // dialog is the word for the one the agent of handle is at and line its
@@ -140,105 +164,6 @@ type DialogReader interface {
 // none. An error says the runner could not look, which tells nothing.
 type LoginReader interface {
 	InputLogin(ctx context.Context, handle map[string]any) (line string, err error)
-}
-
-// draft is text seen in an agent's input on a pass that had something to
-// type there.
-type draft struct {
-	since time.Time // when it was first seen
-	said  bool      // the nudge_held event of this wait is logged
-}
-
-// hold is what the one nudge_held event of a wait has to say, on the pass
-// that is to say it (see inputHeld): the text has been in the input for
-// waited, the input is a dialog of the harness, known by its word, with
-// line its first, or the pane shows the harness's login screen, with login
-// its line. The zero hold says nothing.
-type hold struct {
-	waited       time.Duration
-	dialog, line string
-	login        string
-}
-
-func (h hold) tells() bool { return h.waited > 0 || h.dialog != "" || h.login != "" }
-
-type ownNudge struct {
-	text string
-	at   time.Time
-}
-
-// inputHeld reports whether the input of the session of handle holds text,
-// so that nothing may be typed there on this pass; key names the session
-// in the dispatcher's memory. why tells on the one pass of a wait that is
-// to say so: the text has then been there for DraftWait, or it is a dialog
-// of the harness, which is said at once.
-//
-// Found live (yardr-ps05): a person was typing in the yardmaster's pane when
-// the yardmaster was nudged about its inbox. The nudge was typed after their
-// words and its Enter sent both as one message; what they had still meant to
-// write was lost. Text in an input is someone's, so yardr types nothing after
-// it and looks again on the next pass: what it had to say stays due.
-//
-// Text that stays is a draft someone left. It is never cleared and never
-// typed after, however long it sits: both would send or destroy words a
-// person wrote, to deliver a line that is still true and still due once
-// they are gone. What a long wait costs is that the agent is not told, so
-// after DraftWait one nudge_held event says who is waiting on whose input,
-// once per wait.
-//
-// The one text yardr sends is its own, alone in the input because its Enter
-// was not taken: that is ownInput's, which looks before anything is typed.
-//
-// Found live (yardr-vsen): what holds the input may be the harness's own
-// question, drawn where the input is. One asks an agent that sat idle past
-// its model's cache how to go on, and marks the answer Enter would choose
-// as an input is marked (the dialog cache_menu of harnesses/kimi.yaml). Nobody is typing there, so nobody will
-// clear it, and the agent sits until someone answers: that is said at
-// once, and DraftWait is not waited for (see dialogAt).
-//
-// Found live (yardr-m519): a harness that is not logged in draws its login
-// screen where its input is, and Claude Code's menu of methods carries the
-// mark of the input before its selected option. Read as an input it is
-// text someone left, and read for its screen it is up, so the first prompt
-// was typed into the menu; with another status the daemon waited for a
-// human. A pane at a login screen is its own state (see loginAt): nothing
-// is typed there, and the event names the login, not the text.
-//
-// A runner that cannot look, or a harness whose input it cannot tell, says
-// nothing: yardr then types as it did before it looked.
-func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle map[string]any) (held bool, why hold) {
-	if at, why := d.loginAt(ctx, r, key, handle); at {
-		return true, why
-	}
-	ir, ok := r.(InputReader)
-	if !ok {
-		return false, hold{}
-	}
-	done := askTimer(ctx, askPane)
-	text, known, err := ir.InputText(ctx, handle)
-	done()
-	if err != nil || !known || strings.TrimSpace(text) == "" {
-		delete(d.drafts, key)
-		if err == nil {
-			delete(d.dialogs, key) // no mark, or nothing after it: no dialog is there
-		}
-		return false, hold{}
-	}
-	now := d.now()
-	w := d.drafts[key]
-	if w == nil {
-		w = &draft{since: now}
-		d.drafts[key] = w
-	}
-	if at, why := d.dialogAt(ctx, r, key, handle); at {
-		w.said = true // the dialog's event is this wait's
-		return true, why
-	}
-	if !w.said && now.Sub(w.since) >= d.DraftWait {
-		w.said = true
-		return true, hold{waited: now.Sub(w.since)}
-	}
-	return true, hold{}
 }
 
 // dialogAt reports whether the agent of handle is at a dialog its harness
@@ -325,7 +250,9 @@ type InputMarker interface {
 // dialog of the harness the reason is the word "dialog", `dialog` the
 // dialog's own word and `text` its first line. For the harness's login
 // screen the reason is not_logged_in and `line` its line, with the command
-// that logs in.
+// that logs in. For text in the input, `composer` is the runner's fixed
+// reason for the text when it names one (ComposerReader), so the event says
+// what the input was taken for without its words.
 func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map[string]any, what string, why hold) {
 	waited := why.waited
 	data := map[string]any{
@@ -362,6 +289,11 @@ func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map
 	if pane, _ := handle["pane"].(string); pane != "" {
 		data["pane"] = pane
 	}
+	if why.composer != "" {
+		// The fixed code of the runner's composer reason, so the next
+		// incident says what the input was taken for (yardr-pce2).
+		data["composer"] = why.composer
+	}
 	for k, v := range who {
 		data[k] = v
 	}
@@ -372,7 +304,7 @@ func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map
 	case why.dialog != "":
 		d.Log.Warn("a dialog of the agent's harness holds back "+what, "bead", bead, "who", who, "dialog", why.dialog, "line", why.line)
 	default:
-		d.Log.Warn("text in the agent's input holds back "+what, "bead", bead, "who", who, "waited", waited.Round(time.Second))
+		d.Log.Warn("text in the agent's input holds back "+what, "bead", bead, "who", who, "waited", waited.Round(time.Second), "composer", why.composer)
 	}
 	_ = d.Store.LogDispatch(ctx, bead, "nudge_held", actor, data)
 }
@@ -621,6 +553,9 @@ func (d *Dispatcher) pendingPrompt(ctx context.Context, r Runner, key string, ha
 	if sw, ok := r.(ScreenWatcher); ok {
 		done := askTimer(ctx, askPane)
 		up, known := sw.HarnessScreen(ctx, handle)
+		if ar, ok := r.(AgentReadier); ok && !known {
+			up, known = ar.AgentReady(ctx, handle)
+		}
 		done()
 		if known && !up {
 			// Idle counts from the screen, which a harness may still be

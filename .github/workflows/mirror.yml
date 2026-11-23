@@ -1,0 +1,139 @@
+name: mirror
+
+# The land gate on the private mirror svc-bi-concepts/yardr-ci, run on the
+# Hetzner runners. The lander pushes each pull request head there as
+# land/pr-<n> and, after a merge, pushes main. This workflow runs on those
+# pushes only and reports one check-run, named `yardr gate`, which the lander
+# reads (required-checks.json, yard-6gzx). The public repository keeps Actions
+# off, so nothing here runs there.
+#
+# Every uses: below is pinned by full commit SHA, with the release it is
+# as a comment; a tag that moves would run code no review saw.
+on:
+  push:
+    branches: [main, "land/pr-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-${{ github.ref }}
+  # A land/pr-<n> run is superseded by a newer push to the same branch, so it
+  # is cancelled. A run on main is not: it is the backstop for what a landing
+  # leaves out, and the next push waits for it instead (as ci.yml's main run).
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/land/pr-') }}
+
+jobs:
+  gate:
+    name: yardr gate
+    # Only the mirror runs this gate: a copy of this file in any other
+    # repository with Actions on would otherwise wait forever for a
+    # self-hosted runner that is not there.
+    if: github.repository == 'svc-bi-concepts/yardr-ci'
+    runs-on: [self-hosted, hetzner]
+    # The same limit as ci.yml's test job: the depot's test command takes 11
+    # to 14 minutes on a runner's four cores, and its 30 minutes are about
+    # twice the longest of those.
+    timeout-minutes: 30
+    # The race leg (go test -race, in .yardr/test's landing run) needs cgo:
+    # the race detector is a C library, and a Go with cgo off refuses -race
+    # outright ("go: -race requires cgo"). The runner's Go defaults to off,
+    # so the gate sets it here, for every step of the job.
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # go-version-file pins the toolchain go.mod names; cache keeps the
+      # module and build caches keyed on go.sum.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # cgo needs a C compiler. The runner's own cc is used when it has one.
+      # Otherwise a pinned zig, a C compiler in one tarball, is fetched into
+      # RUNNER_TEMP the way the shellcheck step below fetches its release: no
+      # apt, no sudo, and the sha256 ziglang.org publishes for that tarball is
+      # checked before it runs. CC is then set for the rest of the job,
+      # targeting linux/amd64 glibc, the same target the gate builds for.
+      - name: C compiler (cgo for the race leg)
+        run: |
+          set -eu
+          if cc_path=$(command -v cc); then
+            echo "cc: $cc_path (the runner's)"
+            "$cc_path" --version | head -1
+            exit 0
+          fi
+          echo "no cc on the runner: fetching pinned zig 0.16.0 for cgo"
+          dir="$RUNNER_TEMP/zig"
+          mkdir -p "$dir"
+          curl -sSfL -o "$dir/zig.tar.xz" \
+            "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  $dir/zig.tar.xz" | sha256sum -c -
+          tar -xJf "$dir/zig.tar.xz" -C "$dir"
+          echo "$dir/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+          echo "CC=zig cc -target x86_64-linux-gnu" >> "$GITHUB_ENV"
+          "$dir/zig-x86_64-linux-0.16.0/zig" version
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:"
+            echo "$out"
+            exit 1
+          fi
+      # The Hetzner runners have no shellcheck, and .yardr/test exits 1
+      # without it, by design. It is fetched here at a pinned release and
+      # checked against the sha256 that release publishes for this asset
+      # (GitHub's digest for shellcheck-v0.11.0.linux.x86_64.tar.xz, released
+      # 2025-08-04); no apt, so no sudo on the runner. A version that moves
+      # would run code no review saw, so it is pinned here, not "latest".
+      - name: shellcheck (pinned v0.11.0)
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/shellcheck"
+          mkdir -p "$dir"
+          curl -sSfL -o "$dir/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz"
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $dir/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$dir/shellcheck.tar.xz" -C "$dir"
+          echo "$dir/shellcheck-v0.11.0" >> "$GITHUB_PATH"
+      # contrib/internal's TestInstallInternal* tests sign with the real
+      # minisign and fail without one on PATH; the gate does not skip them,
+      # since a skip would hide a missing signer from the landing gate. The
+      # runners have no apt or sudo, so minisign 0.12 is fetched at the same
+      # upstream tarball and sha256 internal.yml pins, as shellcheck is above.
+      - name: minisign (pinned 0.12)
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/minisign"
+          mkdir -p "$dir"
+          curl -sSfL -o "$dir/minisign.tar.gz" \
+            "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz"
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $dir/minisign.tar.gz" | sha256sum -c -
+          tar -xzf "$dir/minisign.tar.gz" -C "$dir" minisign-linux/x86_64/minisign
+          echo "$dir/minisign-linux/x86_64" >> "$GITHUB_PATH"
+      # There is no base on the mirror: the checkout has no origin/main to
+      # compare with, or on main it has one equal to HEAD, which would select
+      # nothing. YARDR_BASE names a ref that is never there, so the gate's
+      # merge-base is empty and a landing run takes the whole suite.
+      - name: depot tests (.yardr/test, as for a landing)
+        env:
+          YARDR_BASE: no-base-on-the-mirror
+          # The runners are slower per package than the mini, whose 60 s R1 is
+          # measured against (docs/testing.md R1). Run 44838772035 on main
+          # 7e6b5d70 ran cli 91.8 s, store 73.4 s and server 65.4 s alone; 120 s
+          # leaves headroom without hiding a doubling. Only this workflow sets it.
+          YARDR_R1_BUDGET: "120"
+        run: YARDR_LANDING=1 sh .yardr/test
+      # The two 32 MiB legs of TestMaxFileCrossesSealed sit in a !race file
+      # (yardr-8ern), so the race landing run above never runs them. This plain
+      # step runs them on the landed tree, for a pull request's head and for
+      # main alike (docs/testing.md R4).
+      # go test passes when -run matches nothing, so the step also asks for the
+      # two legs' PASS lines: a rename of the test cannot drop them unseen.
+      - name: max peer file legs (no -race, yardr-8ern)
+        run: |
+          set -eo pipefail
+          go test -count=1 -v -run TestMaxFileCrossesSealed ./internal/yards | tee "$RUNNER_TEMP/max-legs.log"
+          grep -q -e '--- PASS: TestMaxFileCrossesSealedPostedAndPulled/posted ' "$RUNNER_TEMP/max-legs.log"
+          grep -q -e '--- PASS: TestMaxFileCrossesSealedPostedAndPulled/pulled ' "$RUNNER_TEMP/max-legs.log"
