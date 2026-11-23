@@ -23,6 +23,7 @@ import (
 
 	"io"
 	"yardr.dev/yardr/internal/agents"
+	"yardr.dev/yardr/internal/config"
 	"yardr.dev/yardr/internal/dispatch"
 	"yardr.dev/yardr/internal/limits"
 	"yardr.dev/yardr/internal/runner"
@@ -124,6 +125,9 @@ func (a *app) daemonCmd() *cobra.Command {
 			}
 			defer unlock()
 			log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+			// The server's profile switch, so a daemon's CPU is read the
+			// same way as the server's (docs/configuration.md, YARDR_PPROF).
+			defer server.ServePprof(config.Getenv(server.PprofEnv), log)()
 			ctx, release, err := whileHomeStands(ctx, cfg, watchEvery(log), log)
 			if err != nil {
 				return err
