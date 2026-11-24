@@ -12,21 +12,28 @@ type draft struct {
 	since time.Time // when it was first seen
 	said  bool      // the nudge_held event of this wait is logged
 	drawn bool      // Ctrl-L was sent once during this held spell
+	// unread: the last pass could not read the input. unreadSaid: the
+	// nudge_held for that is logged. Both are cleared by a read that tells.
+	unread, unreadSaid bool
 }
 
 // hold is what the one nudge_held event of a wait has to say, on the pass
 // that is to say it (see inputHeld): the text has been in the input for
 // waited, the input is a dialog of the harness, known by its word, with
 // line its first, or the pane shows the harness's login screen, with login
-// its line. The zero hold says nothing.
+// its line, or the pane has stayed unreadable as an input (unreadable). The
+// zero hold says nothing.
 type hold struct {
 	waited       time.Duration
 	dialog, line string
 	login        string
+	unreadable   bool
 	composer     string // why the input reads as text (ComposerReader), "" when not told
 }
 
-func (h hold) tells() bool { return h.waited > 0 || h.dialog != "" || h.login != "" }
+func (h hold) tells() bool {
+	return h.waited > 0 || h.dialog != "" || h.login != "" || h.unreadable
+}
 
 type ownNudge struct {
 	text string
@@ -128,7 +135,18 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 			}
 		}
 		d.lookAt(d.now().Add(heldInputRetry))
-		return true, hold{}
+		// Held and not typed, as before. Said once per wait, and only when
+		// a second pass reads it unreadable as well: one garbled read is
+		// often a repaint in progress, not the pane's state.
+		if !w.unread {
+			w.unread = true
+			return true, hold{}
+		}
+		if w.unreadSaid {
+			return true, hold{}
+		}
+		w.unreadSaid = true
+		return true, hold{unreadable: true}
 	}
 	if strings.TrimSpace(text) == "" {
 		delete(d.drafts, key)
@@ -143,6 +161,8 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 	} else if w.since.IsZero() {
 		w.since = now
 	}
+	// The input read, so a later unreadable spell is a new one to say.
+	w.unread, w.unreadSaid = false, false
 	if !w.drawn {
 		if redrawer, ok := r.(InputRedrawer); ok {
 			w.drawn = true

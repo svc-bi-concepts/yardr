@@ -286,6 +286,14 @@ func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map
 				"For a crew member of a yard with an operator, the yard leads the login itself and asks the operator (a login_led event names the ask).",
 				kind, what, exe, fresh)}
 	}
+	if why.unreadable {
+		// The input is no empty line and no text yardr can find: the pane
+		// is not read as an input, so nothing is typed there, and the hold
+		// says so rather than passing for no hold at all (yardr-n8wn).
+		data = map[string]any{"reason": "the agent's input cannot be read: its pane shows neither an empty input nor text yardr can find, so " +
+			what + " is not typed there. It is typed once the pane reads as an input again",
+			"hint": "yardr types into an input it can read. Look at the agent's pane: " + what + " waits until it reads again"}
+	}
 	if pane, _ := handle["pane"].(string); pane != "" {
 		data["pane"] = pane
 	}
@@ -303,6 +311,8 @@ func (d *Dispatcher) nudgeHeld(ctx context.Context, bead string, who, handle map
 		d.Log.Warn(kind+" is not logged in: "+what+" is not typed into its login screen", "bead", bead, "who", who, "line", why.login)
 	case why.dialog != "":
 		d.Log.Warn("a dialog of the agent's harness holds back "+what, "bead", bead, "who", who, "dialog", why.dialog, "line", why.line)
+	case why.unreadable:
+		d.Log.Warn("the agent's input cannot be read, so "+what+" is not typed", "bead", bead, "who", who)
 	default:
 		d.Log.Warn("text in the agent's input holds back "+what, "bead", bead, "who", who, "waited", waited.Round(time.Second), "composer", why.composer)
 	}
