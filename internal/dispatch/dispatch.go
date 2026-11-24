@@ -240,6 +240,11 @@ type Dispatcher struct {
 	pulling   context.Context
 	pullersOf map[string]puller
 	poke      func()
+	// pullSeen is peer key -> the newest outbox message a pass has looked at
+	// for it, and passClock the clocks at the last pass: what kickPullers
+	// tells a queued message and a pause by (peers.go).
+	pullSeen  map[string]uint64
+	passClock clockMark
 	// fetchErr is the last error of asking the store which branches came
 	// back from peers (fetches), said once.
 	fetchErr string

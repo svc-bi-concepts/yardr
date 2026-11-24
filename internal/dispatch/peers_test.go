@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,7 +21,26 @@ import (
 )
 
 // peerClock is the one clock of every yard in a test.
-type peerClock struct{ now time.Time }
+type peerClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+// at is the clock as the daemons and the receivers read it: under the lock,
+// so a test may jump it while they run (jump).
+func (c *peerClock) at() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+// jump moves the clock on, as a host that slept does to the wall clock: every
+// yard in the test moves with it, so their signatures still agree.
+func (c *peerClock) jump(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
 
 // peerYard is a yard with a key, a receiver on a listener of its own and a
 // daemon. down makes the listener answer as something that is not the
@@ -37,8 +57,14 @@ type peerYard struct {
 	d      *dispatch.Dispatcher
 	down   atomic.Bool
 	capped atomic.Bool
-	asked  atomic.Int64 // requests that reached the listener
-	holds  atomic.Int64 // pulls the receiver has begun to hold (see deadlineCounter)
+	// failPulls makes the listener answer every question (a held one among
+	// them) 502, as a proxy with nothing behind it does; dropNext closes the
+	// connection of the next held question with no answer, as a router or a
+	// host that slept does.
+	failPulls atomic.Bool
+	dropNext  atomic.Bool
+	asked     atomic.Int64 // requests that reached the listener
+	holds     atomic.Int64 // pulls the receiver has begun to hold (see deadlineCounter)
 }
 
 // deadlineCounter wraps the writer a receiver is handed and counts the read
@@ -92,13 +118,26 @@ func newPeerYard(t *testing.T, name string, clock *peerClock) *peerYard {
 	// link names the yards it passes by their keys.
 	own.SetYard(keyFile, "test")
 	y.rc = yards.NewReceiver(own, keyFile, nil)
-	y.rc.SetClock(func() time.Time { return clock.now })
+	y.rc.SetClock(clock.at)
 	inner := y.rc.Handler()
 	y.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		y.asked.Add(1)
 		if y.down.Load() {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("wait") {
+			if y.dropNext.CompareAndSwap(true, false) {
+				conn, _, err := http.NewResponseController(w).Hijack()
+				if err == nil {
+					_ = conn.Close()
+				}
+				return
+			}
+			if y.failPulls.Load() {
+				http.Error(w, "bad gateway", http.StatusBadGateway)
+				return
+			}
 		}
 		if y.capped.Load() {
 			w.Header().Set(yards.HoldHeader, "capped")
@@ -109,7 +148,7 @@ func newPeerYard(t *testing.T, name string, clock *peerClock) *peerYard {
 	}))
 	t.Cleanup(y.srv.Close)
 	y.d = &dispatch.Dispatcher{Store: api, Runners: map[string]dispatch.Runner{store.PeerRunner: &runner.Peer{Store: api}}, PeerKey: keyFile}
-	dispatch.SetClock(y.d, func() time.Time { return clock.now })
+	dispatch.SetClock(y.d, clock.at)
 	return y
 }
 

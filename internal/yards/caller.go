@@ -59,6 +59,13 @@ const HoldHeader = "X-Edge-Hold"
 // lost, and the puller asks again.
 var ErrHoldCapped = errors.New("the edge ended the hold")
 
+// ErrTransport is a request that got no answer to read: the connection
+// failed, timed out, or ended before the answer was whole (a host that slept
+// with the question open, a router that cut it short). The peer said nothing,
+// so a new connection may get the answer where the old one did not; an answer
+// the peer did send (a 401, a 5xx) is never this.
+var ErrTransport = errors.New("no answer from the peer")
+
 // Caller makes this yard's requests to its peers, signed with its key and
 // sealed to theirs.
 type Caller struct {
@@ -149,12 +156,12 @@ func (c *Caller) do(ctx context.Context, p store.Peer, method, path string, body
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("peer %s: %w: %w", p.Name, ErrTransport, err)
 	}
 	defer resp.Body.Close()
 	answerWire, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxAnswer)+1))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("peer %s: %w: %w", p.Name, ErrTransport, err)
 	}
 	if len(answerWire) > maxAnswer {
 		return nil, fmt.Errorf("peer %s: its answer is larger than %d bytes", p.Name, maxAnswer)
