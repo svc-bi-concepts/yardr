@@ -597,7 +597,14 @@ func (d *Dispatcher) execQuietRun(ctx context.Context, depot store.Depot) (Quiet
 		out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
-	commit, err := git("-C", depot.Path, "rev-parse", "refs/heads/"+base)
+	// The base is as the depot gives it: a local branch (main), or a
+	// remote-tracking ref (origin/main), which has no refs/heads/ name. The
+	// local branch is tried first, as it is the usual base; what is left is
+	// resolved as git resolves any name given to it.
+	commit, err := git("-C", depot.Path, "rev-parse", "--verify", "--quiet", "refs/heads/"+base+"^{commit}")
+	if err != nil {
+		commit, err = git("-C", depot.Path, "rev-parse", "--verify", "--quiet", base+"^{commit}")
+	}
 	if err != nil {
 		return QuietResult{Load: quietLoad()}, fmt.Errorf("quiet run: %s has no base %s: %w", depot.Name, base, err)
 	}

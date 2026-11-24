@@ -174,6 +174,23 @@ func TestExecQuietRunRemovesWorktreeAfterCancellation(t *testing.T) {
 	}
 }
 
+// A depot whose base is a remote-tracking ref (origin/main) has no
+// refs/heads/origin/main; the quiet run must resolve the base as given and
+// get past base resolution to the tests, which pass here.
+func TestExecQuietRunResolvesARemoteTrackingBase(t *testing.T) {
+	depot, git := quietDepot(t, "exit 0\n")
+	git("update-ref", "refs/remotes/origin/main", "HEAD")
+	depot.Base = "origin/main"
+
+	res, err := (&Dispatcher{}).execQuietRun(context.Background(), depot)
+	if err != nil {
+		t.Fatalf("quiet run on origin/main: %v", err)
+	}
+	if want := git("rev-parse", "HEAD"); res.Commit != want {
+		t.Errorf("quiet run commit = %s, want the base's %s", res.Commit, want)
+	}
+}
+
 // The quiet run's tests start with no descriptor above 2 that the daemon
 // holds, as a landing's do (the exec runner's test of it is
 // TestExecStartsWithNoInheritedFile in internal/runner): nothing sits between
