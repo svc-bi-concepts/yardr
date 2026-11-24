@@ -494,7 +494,7 @@ are `gave_up`, `session_blocked`, `unrouted`, `stranded`, `no_runner`,
 `session_model_mismatch`, `session_prompt_gave_up`, `move_refused`,
 `make_refused` (a hook's `makes` line matched an event but the store
 refused the bead: [integrations.md](integrations.md#github-where-it-differs)), `held`,
-`waited`, `nudge_held` (an agent's input holds text, a dialog of its
+`waited`, `nudge_held` (an agent's input holds text or cannot be read, a dialog of its
 harness, or its login screen, so nothing is typed there: see "Text in the
 input" in [crew.md](crew.md)), `backup_failed` (a dated copy of the
 store could not be made:
