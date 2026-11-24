@@ -45,3 +45,29 @@ func TestUnreadablePaneHoldsNudgeAndSaysSoOnce(t *testing.T) {
 		t.Fatalf("nudges after the pane reads again = %q, want one", r.nudges)
 	}
 }
+
+// A redraw whose re-read tells text is not an unreadable pass: the next
+// unreadable read is the first of a new spell, so it is not said at once
+// (yardr-n8wn review). Before the fix the text read left the unreadable
+// flag set, and the first unreadable read after it was said as the pane's
+// state.
+func TestReadThatTellsAfterRedrawStartsANewUnreadableSpell(t *testing.T) {
+	t.Parallel()
+	r := &redrawCrewRunner{script: []read{{"", false}, {"some creative..", true}, {"", false}}}
+	s, d, ctx := redrawSetup(t, r)
+	member, err := s.GetCrew(ctx, "yardmaster")
+	must(t, err)
+
+	must(t, d.Reconcile(ctx)) // unreadable, redrawn, the re-read has text
+	must(t, d.Reconcile(ctx)) // unreadable again: the first of its spell
+	if n, _ := kindCount(t, s, member.Journal, "nudge_held"); n != 0 {
+		t.Fatalf("nudge_held after one unreadable read following a telling read = %d, want none", n)
+	}
+	must(t, d.Reconcile(ctx)) // unreadable a second time: said once
+	if n, ev := kindCount(t, s, member.Journal, "nudge_held"); n != 1 || ev.Data["reason"] == nil {
+		t.Fatalf("nudge_held after the second unreadable read = %d (%v), want one with a reason", n, ev.Data)
+	}
+	if len(r.nudges) != 0 || r.submits != 0 {
+		t.Fatalf("typed into an unreadable pane: nudges %q, Enter %d", r.nudges, r.submits)
+	}
+}

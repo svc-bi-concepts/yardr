@@ -135,6 +135,14 @@ func (d *Dispatcher) inputHeld(ctx context.Context, r Runner, key string, handle
 			}
 		}
 		d.lookAt(d.now().Add(heldInputRetry))
+		if err == nil && known {
+			// Only the redraw's re-read can be known here (the first read
+			// failed or was not known), and it has text, since an empty one
+			// returned above. The pane reads as an input again, so this pass
+			// is not an unreadable one: a later unreadable read is a new spell.
+			w.unread, w.unreadSaid = false, false
+			return true, hold{}
+		}
 		// Held and not typed, as before. Said once per wait, and only when
 		// a second pass reads it unreadable as well: one garbled read is
 		// often a repaint in progress, not the pane's state.
