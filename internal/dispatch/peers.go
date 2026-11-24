@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -49,13 +51,87 @@ const (
 	// beside a post's, since nothing is given up by it: a laptop back from
 	// sleep is to have what queued meanwhile within minutes.
 	peerAskBackoffMax = 2 * time.Minute
+	// peerRetryJitter spreads the one retry of a held question that failed
+	// in transport: the peer is not asked by every yard at the same instant
+	// after a network came back.
+	peerRetryJitter = 2 * time.Second
+	// peerPauseGap is how much more the wall clock than the monotonic one
+	// must have moved between two passes to call it a pause (the host
+	// asleep: a sleep stops the monotonic clock, not the wall one). A pass
+	// runs every PeerPoll, so a normal gap is milliseconds.
+	peerPauseGap = 5 * time.Second
+	// peerKeepAlive is how soon a dead connection to a peer is noticed while
+	// a question waits on it: the first probe after this much idle time, then
+	// every interval, Count unanswered probes ending it.
+	peerKeepAlive = 5 * time.Second
 )
 
 // puller is the goroutine that asks one peer, as of the URL it was started
-// for.
+// for. kick ends its backoff early (kickPullers).
 type puller struct {
 	url  string
 	stop context.CancelFunc
+	kick chan struct{}
+}
+
+// clockMark is the wall clock and the monotonic one (monoNow) at a pass.
+type clockMark struct {
+	wall time.Time
+	mono time.Duration
+}
+
+// monoNow is the monotonic clock since the process started: it does not
+// count a sleep, which is what tells a pause from a slow pass. A variable,
+// so a test can make the clock jump.
+var monoNow = func() time.Duration { return time.Since(processStart) }
+
+var processStart = time.Now()
+
+// peerDefaultHTTP is the client peers are called with when the dispatcher
+// has none: the default transport, with TCP keepalive set short so a
+// question on a connection the host slept with fails in seconds, not at its
+// deadline. Requests close their connection (yards.Caller), so this is the
+// only thing that watches the one a question holds.
+var peerDefaultHTTP = &http.Client{Transport: peerTransport()}
+
+func peerTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = (&net.Dialer{
+		Timeout: 30 * time.Second,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   true,
+			Idle:     peerKeepAlive,
+			Interval: peerKeepAlive / 2,
+			Count:    3,
+		},
+	}).DialContext
+	return t
+}
+
+// peerHTTP is the client peers are called with.
+func (d *Dispatcher) peerHTTP() *http.Client {
+	if d.PeerHTTP != nil {
+		return d.PeerHTTP
+	}
+	return peerDefaultHTTP
+}
+
+// pausedSince says whether the host slept since the mark: the wall clock
+// has moved on by more than the monotonic one, by peerPauseGap.
+func pausedSince(last clockMark, wall time.Time, mono time.Duration) bool {
+	if last.wall.IsZero() {
+		return false
+	}
+	// Round(0) drops the monotonic reading, so Sub is the wall difference.
+	slept := wall.Round(0).Sub(last.wall.Round(0)) - (mono - last.mono)
+	return slept > peerPauseGap
+}
+
+// expectsAnswer says whether a message of kind is one the peer answers, so
+// a question held for it is worth asking now: a ping (its pong) and an ask
+// (its answer).
+func expectsAnswer(kind string) bool {
+	return kind == store.PeerPing || kind == store.PeerAsk
 }
 
 // peers posts and asks every peer that can be called.
@@ -82,7 +158,9 @@ func (d *Dispatcher) peers(ctx context.Context) error {
 	}
 	maps.DeleteFunc(d.peerWait, func(key string, _ time.Time) bool { return gone(key) })
 	maps.DeleteFunc(d.peerErr, func(key, _ string) bool { return gone(key) })
+	maps.DeleteFunc(d.pullSeen, func(key string, _ uint64) bool { return gone(key) })
 	d.pullers(ps)
+	d.kickPullers(ctx, ps)
 	if !d.peerCalls {
 		return nil
 	}
@@ -113,15 +191,12 @@ func (d *Dispatcher) peers(ctx context.Context) error {
 	}
 	d.peerKeyErr = ""
 	c := &yards.Caller{
-		Key: key, Enc: enc, HTTP: d.PeerHTTP, Now: d.now,
+		Key: key, Enc: enc, HTTP: d.peerHTTP(), Now: d.now,
 		Heard: func(ctx context.Context, p store.Peer, answer store.PeerAnswer) {
 			if err := d.Store.PeerPostAnswered(ctx, p.Name, answer); err != nil && !errors.Is(err, store.ErrNotFound) {
 				d.Log.Warn("peer: keeping what it says it understands", "peer", p.Name, "err", err)
 			}
 		},
-	}
-	if c.HTTP == nil {
-		c.HTTP = http.DefaultClient
 	}
 	for _, p := range ps {
 		// A peer stored before sealed bodies has no encryption key: it is
@@ -209,8 +284,76 @@ func (d *Dispatcher) pullers(ps []store.Peer) {
 		if d.pullersOf == nil {
 			d.pullersOf = map[string]puller{}
 		}
-		d.pullersOf[key] = puller{url: url, stop: stop}
-		go d.pullFrom(ctx, key, url)
+		kick := make(chan struct{}, 1)
+		d.pullersOf[key] = puller{url: url, stop: stop, kick: kick}
+		go d.pullFrom(ctx, key, url, kick)
+	}
+}
+
+// kickPullers ends the backoff of the pullers that have something to ask for
+// now, and of all of them after a pause. A message queued for a peer that
+// expects an answer (a ping) is the first: its pong comes back by the
+// question that is held for it, which a backoff keeps from being sent. Only
+// the messages not seen by an earlier pass count, so an old unanswered ping
+// does not ask again on every pass.
+//
+// A pause (the host asleep) is the second: the held questions it left are
+// dead, and the connections of before it are closed, so each peer is asked
+// at once rather than after the wait it was in.
+//
+// A kick reaches a puller in its backoff. One that is in a question has no
+// backoff to end, and the question it holds already gets the answer.
+func (d *Dispatcher) kickPullers(ctx context.Context, ps []store.Peer) {
+	if d.pulling == nil {
+		return
+	}
+	wall, mono := d.now(), monoNow()
+	paused := pausedSince(d.passClock, wall, mono)
+	d.passClock = clockMark{wall: wall, mono: mono}
+	if paused {
+		d.peerHTTP().CloseIdleConnections()
+		d.Log.Info("peers: the host paused; asking every peer at once")
+		for _, pl := range d.pullersOf {
+			wake(pl.kick)
+		}
+		return
+	}
+	if d.pullSeen == nil {
+		d.pullSeen = map[string]uint64{}
+	}
+	for _, p := range ps {
+		pl, ok := d.pullersOf[p.Key]
+		if !ok {
+			continue
+		}
+		msgs, err := d.Store.PeerOutbox(ctx, p.Name, peerBurst)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				d.Log.Warn("peer outbox", "peer", p.Name, "err", err)
+			}
+			continue
+		}
+		// The first pass to see the peer (a daemon just started) asks for
+		// what waits as well.
+		seen, known := d.pullSeen[p.Key]
+		for _, m := range msgs {
+			if expectsAnswer(m.Kind) && (!known || m.Seq > seen) {
+				wake(pl.kick)
+			}
+			seen = max(seen, m.Seq)
+		}
+		if len(msgs) > 0 {
+			d.pullSeen[p.Key] = seen
+		}
+	}
+}
+
+// wake ends a puller's backoff, if it is in one: the channel holds one
+// kick, and a second while it is unread is the same one.
+func wake(kick chan struct{}) {
+	select {
+	case kick <- struct{}{}:
+	default:
 	}
 }
 
@@ -220,10 +363,16 @@ func (d *Dispatcher) pullers(ps []store.Peer) {
 // doubles from Backoff up to peerAskBackoffMax. It keeps nothing of the
 // peer between questions but that wait: each reads the peer, and the
 // yard's key, again, so a question says what the yard has as of now.
-func (d *Dispatcher) pullFrom(ctx context.Context, key, url string) {
+func (d *Dispatcher) pullFrom(ctx context.Context, key, url string, kick <-chan struct{}) {
 	var backoff time.Duration
 	said := ""
 	for ctx.Err() == nil {
+		// A kick is for a question about to be sent, not one sent already:
+		// one that came while the last was held is answered by it.
+		select {
+		case <-kick:
+		default:
+		}
 		name, pause, err := d.pullOnce(ctx, key, url)
 		switch {
 		case ctx.Err() != nil:
@@ -247,6 +396,11 @@ func (d *Dispatcher) pullFrom(ctx context.Context, key, url string) {
 			t.Stop()
 			return
 		case <-t.C:
+		case <-kick:
+			// Asked now, and the backoff starts again from its first step
+			// if this question fails too.
+			t.Stop()
+			backoff = 0
 		}
 	}
 }
@@ -277,11 +431,26 @@ func (d *Dispatcher) pullOnce(ctx context.Context, key, url string) (name string
 	if err != nil {
 		return name, 0, err
 	}
-	c := &yards.Caller{Key: own, Enc: enc, HTTP: d.PeerHTTP, Now: d.now}
+	c := &yards.Caller{Key: own, Enc: enc, HTTP: d.peerHTTP(), Now: d.now}
 	// By the clock on the wall, whatever a test's says: it is the peer's
 	// hold that is timed.
 	asked := time.Now()
 	n, err := d.ask(ctx, c, ps[i], d.PeerHold)
+	if errors.Is(err, yards.ErrTransport) && ctx.Err() == nil {
+		// The question died on its way (the host slept with it open, a
+		// router cut it short): nothing was asked of the peer's answer, so
+		// it is asked once more on a new connection, after a short jitter,
+		// before the wait that doubles. An answer the peer did give (a 401,
+		// a 5xx) is not retried here: it goes to the wait as it did.
+		d.peerHTTP().CloseIdleConnections()
+		select {
+		case <-ctx.Done():
+			return name, 0, ctx.Err()
+		case <-time.After(rand.N(peerRetryJitter)):
+		}
+		asked = time.Now()
+		n, err = d.ask(ctx, c, ps[i], d.PeerHold)
+	}
 	switch {
 	case errors.Is(err, yards.ErrHoldCapped):
 		// The edge ended the hold itself: nothing was lost, so the peer is

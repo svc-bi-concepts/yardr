@@ -3255,13 +3255,29 @@ requests a minute.
   lost meanwhile: a message stays in the sender's outbox until a question
   says it arrived, so a laptop that wakes from sleep gets everything that
   queued with its next question.
+- **A question that gets no answer at all.** A question whose connection
+  fails, times out or closes before the answer (a host that slept with the
+  question open, a router that cut it short) is sent once more at once, on a
+  new connection, after up to two seconds. Only that retry failing starts the
+  wait above. A yard that answered with a status (401, 5xx) waits as above
+  without a retry. A connection the question holds that goes silent is probed
+  after five seconds, so a dead one is noticed in seconds rather than at the
+  question's deadline.
+- **After a sleep.** When the asker's wall clock has moved on by more than
+  its monotonic clock (the host slept), it closes its idle connections and
+  asks every peer at once, instead of after the wait it was in.
+- **A ping or an ask queued for a peer** ends that peer's wait, and a
+  question is sent for its answer at once. The answer is held there, as any
+  question's is, so the pong comes back as soon as the yard answering it
+  queues it, not after the asker's wait.
 - **Something between the yards that cuts a request short.** A held
   question is a request that takes 30 seconds to be answered. A proxy or
   tunnel in front of the yard asked that ends requests sooner than that
   makes each one fail, and the asker's log says `peer: asking failed; trying
   again`: what waits is still handed over, by the question after the wait,
-  so within two minutes and not at once. Let the proxy give a request 60
-  seconds or more.
+  so within two minutes and not at once (a ping or an ask queued for that
+  peer is asked for at once all the same, see above). Let the proxy give a
+  request 60 seconds or more.
 - **Over the edge.** A question through an edge URL is held by the yard as
   any is, but the edge ends the wait itself after about 25 seconds, with
   204 and no body (`X-Edge-Hold: capped`), since a longer hold would
