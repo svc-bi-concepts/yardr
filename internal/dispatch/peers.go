@@ -348,6 +348,14 @@ func (d *Dispatcher) kickPullers(ctx context.Context, ps []store.Peer) {
 	}
 }
 
+// kickPuller ends the backoff of the puller of the peer with key, if the
+// peer has one (Run only; a pass run alone asks for nothing).
+func (d *Dispatcher) kickPuller(key string) {
+	if pl, ok := d.pullersOf[key]; ok {
+		wake(pl.kick)
+	}
+}
+
 // wake ends a puller's backoff, if it is in one: the channel holds one
 // kick, and a second while it is unread is the same one.
 func wake(kick chan struct{}) {
@@ -519,6 +527,13 @@ func (d *Dispatcher) push(ctx context.Context, c *yards.Caller, p store.Peer) bo
 		case err == nil:
 			delete(d.peerWait, p.Key)
 			d.Log.Info("message sent to peer", "peer", p.Name, "kind", m.Kind, "id", m.ID)
+			// The pong of a ping posted here comes by asking the peer, so the
+			// puller is kicked now: kickPullers read the outbox before this
+			// pass posted, and a ping queued between the two reads would
+			// otherwise wait out the backoff of a minute.
+			if expectsAnswer(m.Kind) {
+				d.kickPuller(p.Key)
+			}
 			if err := d.Store.PeerDelivered(ctx, p.Name, m.Seq); err != nil && !errors.Is(err, store.ErrNotFound) {
 				// It stays and is posted again; the peer takes an id once.
 				d.Log.Warn("peer_message_sent event", "peer", p.Name, "id", m.ID, "err", err)

@@ -2,9 +2,11 @@ package dispatch_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"yardr.dev/yardr/internal/store"
 	"yardr.dev/yardr/internal/testload"
 )
 
@@ -88,14 +90,49 @@ func TestPeerPullAnAnswerKeepsItsBackoff(t *testing.T) {
 	}
 }
 
+// racingOutbox is the store of a daemon whose pass is made to meet a ping
+// in the window it leaves open. A pass reads the outbox twice: kickPullers
+// reads it for the pings that want their pong asked for now, and push reads
+// it again for what to post. Armed, the first read answers from before the
+// write and queue writes the ping between the two reads, so the pass posts a
+// ping it did not see when it kicked.
+type racingOutbox struct {
+	store.API
+	armed atomic.Bool
+	queue func() string
+	id    atomic.Pointer[string]
+}
+
+func (r *racingOutbox) PeerOutbox(ctx context.Context, peer string, limit int) ([]store.PeerOut, error) {
+	if !r.armed.CompareAndSwap(true, false) {
+		return r.API.PeerOutbox(ctx, peer, limit)
+	}
+	out, err := r.API.PeerOutbox(ctx, peer, limit)
+	id := r.queue()
+	r.id.Store(&id)
+	return out, err
+}
+
 // A ping queued for a peer whose questions are failing gets its pong at once:
 // the ping ends that peer's backoff and a question is held for the pong, not
 // asked after the backoff of a minute (which is what the pong waited for
-// before).
+// before). The ping is queued in the window of a pass, every time, so the
+// test does not depend on where the scheduler put the write.
 func TestPeerPingEndsAPullersBackoff(t *testing.T) {
 	t.Parallel()
 	clock := newClock()
 	a, b := newPeerYard(t, "a", clock), newPeerYard(t, "b", clock)
+	// Set before b's daemon starts: its goroutines read d.Store from then on.
+	race := &racingOutbox{API: b.api}
+	race.queue = func() string {
+		m, err := b.api.PeerSend(context.Background(), "a", store.PeerPing, nil, "jo")
+		if err != nil {
+			t.Errorf("queueing b's ping: %v", err)
+			return ""
+		}
+		return m.ID
+	}
+	b.d.Store = race
 	pullOf(t, a, b)
 	pullingYard(t, b, time.Minute)
 	until(t, "b's question is held at a", func() bool { return a.holds.Load() >= 1 })
@@ -106,9 +143,11 @@ func TestPeerPingEndsAPullersBackoff(t *testing.T) {
 	untilQuiet(t, a)
 	a.failPulls.Store(false)
 
-	id := b.send(t, "a")
+	race.armed.Store(true)
+	var id *string
+	within(t, 5*time.Second, "a pass of b's posts the ping queued in its window", func() bool { id = race.id.Load(); return id != nil })
 	start := time.Now()
-	within(t, 5*time.Second, "the pong to b's ping, held for it at a", func() bool { return b.pong(t, id) != nil })
+	within(t, 5*time.Second, "the pong to b's ping, held for it at a", func() bool { return b.pong(t, *id) != nil })
 	if took := time.Since(start); took >= 5*time.Second {
 		t.Fatalf("the pong came after %s, want well under 5s", took)
 	}
