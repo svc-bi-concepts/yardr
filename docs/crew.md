@@ -490,6 +490,12 @@ at all.
   pane, reads again after a moment, and types the nudge only if the fresh
   read shows an empty input. The check is retried every three minutes, and
   the wait's age is kept across retries.
+- A pane that reads as neither an empty input nor text yardr can find, and
+  stays so after the Ctrl-L redraw on a second pass, is held and told of
+  too: one `nudge_held` per spell, with a `reason` saying the input cannot
+  be read, and the pane. Nothing is typed there; the nudge is typed once
+  the pane reads as an input again, and a later unreadable spell is told
+  anew. A single unreadable read is not told, since it is often a repaint.
 - One short mail arrives in the nudge itself: where the session's slice
   holds exactly one unread entry, it is mail, and its line is at most 600
   characters, the nudge types `yardr: <seq> mail from <sender>: <text>` on
