@@ -100,3 +100,10 @@ func ProviderOf(runner string, cfg map[string]any, as []limits.Answerer) string 
 func (s *Server) SetEstimates(fn func(ctx context.Context, st store.API, ids []string, now time.Time) (map[string]*eta.Result, error)) {
 	s.estimates = fn
 }
+
+// PagesParsed is how many page sets this server has parsed so far.
+func (s *Server) PagesParsed() int {
+	s.pagesMu.Lock()
+	defer s.pagesMu.Unlock()
+	return len(s.pages)
+}

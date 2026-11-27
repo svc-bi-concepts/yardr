@@ -123,7 +123,7 @@ func TestTalkGrouping(t *testing.T) {
 					t.Errorf("letter %d is named %q, want %q", i+1, l.Sender, c.wantSenders[i])
 				}
 				var body bytes.Buffer
-				if err := s.pages["talk"].ExecuteTemplate(&body, "letter", l); err != nil {
+				if err := s.page("talk").ExecuteTemplate(&body, "letter", l); err != nil {
 					t.Fatal(err)
 				}
 				class := regexp.MustCompile(`<article class="([^"]*)"`).FindStringSubmatch(body.String())

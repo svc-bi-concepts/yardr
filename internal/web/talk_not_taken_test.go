@@ -40,7 +40,7 @@ func TestTalkNotTakenFile(t *testing.T) {
 		t.Fatalf("talkLetters = %+v, want the peer's not-taken file without a missing marker", shown)
 	}
 	var body bytes.Buffer
-	if err := s.pages["talk"].ExecuteTemplate(&body, "letter", shown[0]); err != nil {
+	if err := s.page("talk").ExecuteTemplate(&body, "letter", shown[0]); err != nil {
 		t.Fatal(err)
 	}
 	if want := "image aaaaaaaa: not taken: it did not arrive"; !strings.Contains(body.String(), want) {

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"sync"
 	"time"
 )
 
@@ -31,7 +32,12 @@ var assetTypes = map[string]string{
 	".css": "text/css; charset=utf-8",
 }
 
-func loadAssets() (map[string]asset, error) {
+// loadAssets reads the embedded assets once per process: they cannot change
+// while the binary runs, and each server would otherwise hold its own copy
+// of every body. The map is read-only once built.
+var loadAssets = sync.OnceValues(readAssets)
+
+func readAssets() (map[string]asset, error) {
 	files, err := fs.Glob(assetFS, "assets/*")
 	if err != nil {
 		return nil, err
