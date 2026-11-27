@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -52,12 +53,18 @@ type Server struct {
 	estimates func(ctx context.Context, st store.API, ids []string, now time.Time) (map[string]*eta.Result, error)
 	// home is the yard's home directory, whose name is the yard's when the
 	// `name` setting is unset.
-	home  string
-	log   *slog.Logger
-	mux   *http.ServeMux
-	pages map[string]*template.Template
+	home string
+	log  *slog.Logger
+	mux  *http.ServeMux
+	// shell is the parsed partials each page's set is cloned from, bound to
+	// this server; it is made on first use under pagesMu (shellSet). pages
+	// holds the sets served so far, each parsed on first use (page).
+	shell   *template.Template
+	pagesMu sync.Mutex
+	pages   map[string]*template.Template
 	// partials are the templates that are part of a page and no page
-	// themselves; the stream renders one alone.
+	// themselves; the stream renders one alone. Made on first use under
+	// pagesMu (renderPartial): a server that never streams never holds them.
 	partials *template.Template
 	assets   map[string]asset
 	// streams counts the open /events streams.
@@ -128,7 +135,7 @@ func NewServer(st store.API, home string, log *slog.Logger) (*Server, error) {
 	if s.assets, err = loadAssets(); err != nil {
 		return nil, err
 	}
-	if s.pages, err = s.loadPages(); err != nil {
+	if err = s.loadPages(); err != nil {
 		return nil, err
 	}
 	s.routes()
@@ -141,40 +148,149 @@ func NewServer(st store.API, home string, log *slog.Logger) (*Server, error) {
 // page: every page is parsed with them.
 var partial = []string{"shell", "aside", "entry", "card", "ask", "csrf"}
 
-// loadPages parses every template of templates/ with the shell, one set per
-// page: each page defines "content", so two pages cannot share a set.
-func (s *Server) loadPages() (map[string]*template.Template, error) {
-	funcs := template.FuncMap{"asset": s.assetURL, "blobURL": blobURL, "clock": clock, "clockTime": clockTime, "csrf": s.csrfValue, "inc": inc, "markAuthor": markAuthor, "strong": store.StrongWeight}
+// templateFuncs are the functions every template is parsed with. asset and
+// csrf read this server, so a parse binds them to one server's state.
+func (s *Server) templateFuncs() template.FuncMap {
+	return template.FuncMap{"asset": assetURL, "blobURL": blobURL, "clock": clock, "clockTime": clockTime, "csrf": s.csrfValue, "inc": inc, "markAuthor": markAuthor, "strong": store.StrongWeight}
+}
+
+// sharedShell is the partials parsed once per process. It is never executed,
+// only cloned: html/template escapes a template the first time it runs, and
+// a clone takes its own copy of the tree. The functions it was parsed with
+// belong to a server that is not serving anything; each server rebinds its
+// own on its clone (loadPages).
+var sharedShell = sync.OnceValues(func() (*template.Template, error) {
+	return parseShell((&Server{}).templateFuncs())
+})
+
+// checkTemplates parses every page of templates/ once per process, so a
+// broken template is refused at startup as before. It is not kept: a server
+// parses only the pages it serves (page).
+var checkTemplates = sync.OnceValue(func() error {
+	shell, err := sharedShell()
+	if err != nil {
+		return err
+	}
+	for _, f := range pageFiles() {
+		t, err := shell.Clone()
+		if err != nil {
+			return err
+		}
+		if _, err := t.ParseFS(templateFS, f); err != nil {
+			return err
+		}
+	}
+	return nil
+})
+
+// parseShell parses the partials, which every page is parsed with.
+func parseShell(funcs template.FuncMap) (*template.Template, error) {
 	var parts []string
 	for _, name := range partial {
 		parts = append(parts, "templates/"+name+".html")
 	}
-	shell, err := template.New("shell.html").Funcs(funcs).ParseFS(templateFS, parts...)
-	if err != nil {
-		return nil, err
-	}
-	if s.partials, err = shell.Clone(); err != nil {
-		return nil, err
-	}
+	return template.New("shell.html").Funcs(funcs).ParseFS(templateFS, parts...)
+}
+
+// pageFiles are the files of templates/ that are pages, not partials.
+func pageFiles() []string {
 	files, err := fs.Glob(templateFS, "templates/*.html")
 	if err != nil {
+		panic(err) // the pattern is fixed and the embedded files cannot fail to list
+	}
+	var out []string
+	for _, f := range files {
+		if !slices.Contains(partial, strings.TrimSuffix(filepath.Base(f), ".html")) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// loadPages checks every page once per process. Nothing is cloned for this
+// server yet: the shell, the partials and each page's set are made when
+// first used (shellSet, renderPartial, page). Each set copies the shell's
+// trees, which is most of a server's memory under -race, and a server uses
+// only some of them.
+func (s *Server) loadPages() error {
+	if err := checkTemplates(); err != nil {
+		return err
+	}
+	s.pages = map[string]*template.Template{}
+	return nil
+}
+
+// shellSet is the shared shell cloned for this server, bound to its
+// functions, made on first use. The caller holds pagesMu.
+func (s *Server) shellSet() (*template.Template, error) {
+	if s.shell != nil {
+		return s.shell, nil
+	}
+	shared, err := sharedShell()
+	if err != nil {
 		return nil, err
 	}
-	pages := map[string]*template.Template{}
-	for _, f := range files {
-		name := strings.TrimSuffix(filepath.Base(f), ".html")
-		if slices.Contains(partial, name) {
-			continue
+	shell, err := shared.Clone()
+	if err != nil {
+		return nil, err
+	}
+	shell.Funcs(s.templateFuncs())
+	s.shell = shell
+	return shell, nil
+}
+
+// renderPartial executes the named partial into w, making the partials on
+// first use. The partials are a clone of their own: executing a template
+// escapes it, and the shell must stay unexecuted so that pages can still be
+// cloned from it.
+func (s *Server) renderPartial(w io.Writer, name string, data any) error {
+	s.pagesMu.Lock()
+	if s.partials == nil {
+		shell, err := s.shellSet()
+		if err == nil {
+			s.partials, err = shell.Clone()
 		}
-		t, err := shell.Clone()
 		if err != nil {
-			return nil, err
-		}
-		if pages[name], err = t.ParseFS(templateFS, f); err != nil {
-			return nil, err
+			s.pagesMu.Unlock()
+			return err
 		}
 	}
-	return pages, nil
+	t := s.partials
+	s.pagesMu.Unlock()
+	return t.ExecuteTemplate(w, name, data)
+}
+
+// page is the set that serves the named page, parsed on first use. Nil when
+// no page has that name.
+func (s *Server) page(name string) *template.Template {
+	s.pagesMu.Lock()
+	defer s.pagesMu.Unlock()
+	if t, ok := s.pages[name]; ok {
+		return t
+	}
+	f := "templates/" + name + ".html"
+	if slices.Contains(partial, name) {
+		return nil
+	}
+	if _, err := fs.Stat(templateFS, f); err != nil {
+		return nil
+	}
+	shell, err := s.shellSet()
+	if err == nil {
+		var t *template.Template
+		t, err = shell.Clone()
+		if err == nil {
+			t, err = t.ParseFS(templateFS, f)
+		}
+		if err == nil {
+			s.pages[name] = t
+			return t
+		}
+	}
+	// checkTemplates parsed this page at startup; a failure now is the
+	// server's own state, so it is logged and the page answers as missing.
+	s.log.Error("web: template", "page", name, "err", err)
+	return nil
 }
 
 // routes registers every page. Patterns name GET, so the mux refuses every
@@ -529,7 +645,7 @@ func (s *Server) respond(w http.ResponseWriter, r *http.Request, p Page) {
 		s.data(w, r, p.Status, p.Data)
 		return
 	}
-	t := s.pages[p.Template]
+	t := s.page(p.Template)
 	if t == nil {
 		s.fail(w, r, fmt.Errorf("no template %q", p.Template))
 		return
@@ -618,7 +734,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		s.log.Error("web: "+r.URL.Path, "err", err)
 	}
 	p := Page{Status: status, Template: "error", Title: http.StatusText(status), Data: errorData{Error: err.Error()}}
-	if s.pages[p.Template] == nil || wantsJSON(r.Header.Values("Accept")) {
+	if s.page(p.Template) == nil || wantsJSON(r.Header.Values("Accept")) {
 		// The error page itself is what is missing or what failed: plain
 		// JSON cannot fail the same way.
 		w.Header().Set("Content-Type", "application/json")
@@ -637,7 +753,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		}
 	}
 	var buf bytes.Buffer
-	if terr := s.pages[p.Template].ExecuteTemplate(&buf, "shell.html", v); terr != nil {
+	if terr := s.page(p.Template).ExecuteTemplate(&buf, "shell.html", v); terr != nil {
 		http.Error(w, err.Error(), status)
 		return
 	}

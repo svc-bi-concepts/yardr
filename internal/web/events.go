@@ -293,7 +293,7 @@ func (s *Server) frame(ctx context.Context, e store.Event, format string) ([]byt
 	case format == "home":
 		if rd := s.newReader(nil); inFeed(e) && inHomeFeed(ctx, rd, e) {
 			var html bytes.Buffer
-			if err := s.partials.ExecuteTemplate(&html, "entry", rd.entry(ctx, e)); err != nil {
+			if err := s.renderPartial(&html, "entry", rd.entry(ctx, e)); err != nil {
 				s.log.Error("web: /events", "seq", e.Seq, "err", err)
 				break
 			}
@@ -301,7 +301,7 @@ func (s *Server) frame(ctx context.Context, e store.Event, format string) ([]byt
 		}
 	case inFeed(e):
 		var html bytes.Buffer
-		if err := s.partials.ExecuteTemplate(&html, "entry", s.newReader(nil).entry(ctx, e)); err != nil {
+		if err := s.renderPartial(&html, "entry", s.newReader(nil).entry(ctx, e)); err != nil {
 			s.log.Error("web: /events", "seq", e.Seq, "err", err)
 			break
 		}

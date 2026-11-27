@@ -463,7 +463,7 @@ func (s *Server) place(ctx context.Context, e store.Event) (p placement, ok bool
 func (s *Server) placed(b *bytes.Buffer, seq uint64, p placement) {
 	var html bytes.Buffer
 	if p.Section != "" {
-		if err := s.partials.ExecuteTemplate(&html, "card", p.Card); err != nil {
+		if err := s.renderPartial(&html, "card", p.Card); err != nil {
 			s.log.Error("web: /events", "seq", seq, "err", err)
 			return
 		}

@@ -100,3 +100,17 @@ func ProviderOf(runner string, cfg map[string]any, as []limits.Answerer) string 
 func (s *Server) SetEstimates(fn func(ctx context.Context, st store.API, ids []string, now time.Time) (map[string]*eta.Result, error)) {
 	s.estimates = fn
 }
+
+// PartialsParsed says whether this server has made its partials yet.
+func (s *Server) PartialsParsed() bool {
+	s.pagesMu.Lock()
+	defer s.pagesMu.Unlock()
+	return s.partials != nil
+}
+
+// PagesParsed is how many page sets this server has parsed so far.
+func (s *Server) PagesParsed() int {
+	s.pagesMu.Lock()
+	defer s.pagesMu.Unlock()
+	return len(s.pages)
+}

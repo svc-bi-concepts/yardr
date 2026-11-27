@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"sync"
 	"time"
 )
 
@@ -31,7 +32,12 @@ var assetTypes = map[string]string{
 	".css": "text/css; charset=utf-8",
 }
 
-func loadAssets() (map[string]asset, error) {
+// loadAssets reads the embedded assets once per process: they cannot change
+// while the binary runs, and each server would otherwise hold its own copy
+// of every body. The map is read-only once built.
+var loadAssets = sync.OnceValues(readAssets)
+
+func readAssets() (map[string]asset, error) {
 	files, err := fs.Glob(assetFS, "assets/*")
 	if err != nil {
 		return nil, err
@@ -50,9 +56,15 @@ func loadAssets() (map[string]asset, error) {
 
 // assetURL is the URL templates name an asset by. It carries the file's
 // checksum, so a new binary's stylesheet is never the old one from the
-// browser's cache while an unchanged one is never fetched twice.
-func (s *Server) assetURL(name string) (string, error) {
-	a, ok := s.assets[name]
+// browser's cache while an unchanged one is never fetched twice. It reads
+// the process's assets, not a server's, so the shell's functions do not
+// bind a server for it.
+func assetURL(name string) (string, error) {
+	assets, err := loadAssets()
+	if err != nil {
+		return "", err
+	}
+	a, ok := assets[name]
 	if !ok {
 		return "", fs.ErrNotExist
 	}
