@@ -2148,7 +2148,8 @@ check the footer's model instead.
   is kept (a `workspace_kept` event says why) and `yard/<bead>` branches are
   never deleted. Files git ignores go first, to `kept/<depot>/<bead>/` under
   the yard's home (a `private_kept` event names the directory, a file count
-  and any credential files left behind): `private/` and every other ignored
+  and any credential files left behind, and `yardr bead close` prints
+  `kept: <directory>` for it, never a file name): `private/` and every other ignored
   file, but not a regenerable tree (`node_modules`, `.venv`, `__pycache__`,
   `target` and the like) nor a credential (`.env`, `*.key`, `*.pem`,
   `secret-id`, `token`), which goes with the worktree. A regenerable name is
