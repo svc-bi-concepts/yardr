@@ -193,11 +193,16 @@ func freeName(target string) (string, error) {
 	}
 }
 
+// rename is the rename moveFile tries first. A variable so a test can make
+// it fail with EXDEV, the one error that sends a move to the copy path: a
+// test has no second volume to move across.
+var rename = os.Rename
+
 // moveFile renames src to dst, which is a rename on one volume. Across
 // volumes (a worktree root on another disk) it copies, syncs and only then
 // removes src, so there is never a moment the data is in neither place.
 func moveFile(src, dst string) error {
-	err := os.Rename(src, dst)
+	err := rename(src, dst)
 	if err == nil || !errors.Is(err, syscall.EXDEV) {
 		return err
 	}
@@ -260,6 +265,12 @@ func plainErr(err error) error {
 // per bead, so beads never mix. "" when the yard's home or the bead is
 // unknown; keepIgnored then refuses to move anything.
 func (h *Herdr) keptDir(handle map[string]any, path string) string {
+	return keptDirIn(h.YardHome, handle, path)
+}
+
+// keptDirIn is keptDir for a yard home given, so a close that holds no
+// Herdr names the same directory the cleanup pass keeps the data in.
+func keptDirIn(yardHome string, handle map[string]any, path string) string {
 	depot, _ := handle["depot"].(string)
 	bead, _ := handle["bead"].(string)
 	if bead == "" {
@@ -268,10 +279,44 @@ func (h *Herdr) keptDir(handle map[string]any, path string) string {
 		bead = filepath.Base(path)
 		depot = filepath.Base(filepath.Dir(path))
 	}
-	if h.YardHome == "" || depot == "" || bead == "" {
+	if yardHome == "" || depot == "" || bead == "" {
 		return ""
 	}
-	return filepath.Join(h.YardHome, "kept", depot, bead)
+	return filepath.Join(yardHome, "kept", depot, bead)
+}
+
+// KeptPlan is where the cleanup pass keeps the ignored data of a bead's
+// worktree, and how many files it moves there: the directory keptDirIn gives
+// and the files keepIgnored would move. It reads the worktree now, so a close
+// can name the directory before the pass runs; the pass may still fail, and
+// then the worktree and its data stay where they are. files is 0 when the
+// worktree is not on this machine or holds nothing to keep (its credentials
+// go with the worktree and are not counted). Its errors name no file.
+func KeptPlan(ctx context.Context, yardHome string, handle map[string]any) (kept string, files int, err error) {
+	path, _ := handle["worktree"].(string)
+	if path == "" {
+		return "", 0, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", 0, nil
+	}
+	gitDir, err := gitOut(ctx, path, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", 0, errors.New("read the worktree's git dir")
+	}
+	rels, err := ignoredData(ctx, gitDir, path)
+	if err != nil {
+		return "", 0, errors.New("list the worktree's ignored files")
+	}
+	for _, rel := range rels {
+		if !isCredential(rel) {
+			files++
+		}
+	}
+	if files == 0 {
+		return "", 0, nil
+	}
+	return keptDirIn(yardHome, handle, path), files, nil
 }
 
 // keepPrivate moves the ignored data of the worktree at dir (its git dir is
