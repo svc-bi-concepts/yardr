@@ -15,8 +15,8 @@ import (
 
 // notKept are the trees a worktree holds that a tool regenerates, and yardr's
 // own state: no data, so closing a bead lets them go with the worktree. Only
-// these are skipped; every other file git ignores is kept (yardr-ztz9: we
-// delete no data). A name is skipped only where notKeptPath says so: at the
+// these are skipped; every other file git ignores is kept (yardr deletes no
+// data). A name is skipped only where notKeptPath says so: at the
 // worktree root, or beside a manifest, so a folder that happens to be named
 // target in the data is kept.
 var notKept = map[string]bool{
