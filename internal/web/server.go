@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -55,13 +56,15 @@ type Server struct {
 	home string
 	log  *slog.Logger
 	mux  *http.ServeMux
-	// shell is the parsed partials each page's set is cloned from. pages holds
-	// the sets served so far, each parsed on first use under pagesMu (page).
+	// shell is the parsed partials each page's set is cloned from, bound to
+	// this server; it is made on first use under pagesMu (shellSet). pages
+	// holds the sets served so far, each parsed on first use (page).
 	shell   *template.Template
 	pagesMu sync.Mutex
 	pages   map[string]*template.Template
 	// partials are the templates that are part of a page and no page
-	// themselves; the stream renders one alone.
+	// themselves; the stream renders one alone. Made on first use under
+	// pagesMu (renderPartial): a server that never streams never holds them.
 	partials *template.Template
 	assets   map[string]asset
 	// streams counts the open /events streams.
@@ -148,7 +151,7 @@ var partial = []string{"shell", "aside", "entry", "card", "ask", "csrf"}
 // templateFuncs are the functions every template is parsed with. asset and
 // csrf read this server, so a parse binds them to one server's state.
 func (s *Server) templateFuncs() template.FuncMap {
-	return template.FuncMap{"asset": s.assetURL, "blobURL": blobURL, "clock": clock, "clockTime": clockTime, "csrf": s.csrfValue, "inc": inc, "markAuthor": markAuthor, "strong": store.StrongWeight}
+	return template.FuncMap{"asset": assetURL, "blobURL": blobURL, "clock": clock, "clockTime": clockTime, "csrf": s.csrfValue, "inc": inc, "markAuthor": markAuthor, "strong": store.StrongWeight}
 }
 
 // sharedShell is the partials parsed once per process. It is never executed,
@@ -204,29 +207,57 @@ func pageFiles() []string {
 	return out
 }
 
-// loadPages parses the partials for this server and checks every page once
-// per process. A page's own set is made when it is first served (page):
-// each set copies the shell's trees, which is most of a server's memory
-// under -race, and a server serves only a few of the pages.
+// loadPages checks every page once per process. Nothing is cloned for this
+// server yet: the shell, the partials and each page's set are made when
+// first used (shellSet, renderPartial, page). Each set copies the shell's
+// trees, which is most of a server's memory under -race, and a server uses
+// only some of them.
 func (s *Server) loadPages() error {
 	if err := checkTemplates(); err != nil {
 		return err
 	}
+	s.pages = map[string]*template.Template{}
+	return nil
+}
+
+// shellSet is the shared shell cloned for this server, bound to its
+// functions, made on first use. The caller holds pagesMu.
+func (s *Server) shellSet() (*template.Template, error) {
+	if s.shell != nil {
+		return s.shell, nil
+	}
 	shared, err := sharedShell()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	shell, err := shared.Clone()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	shell.Funcs(s.templateFuncs())
-	if s.partials, err = shell.Clone(); err != nil {
-		return err
-	}
 	s.shell = shell
-	s.pages = map[string]*template.Template{}
-	return nil
+	return shell, nil
+}
+
+// renderPartial executes the named partial into w, making the partials on
+// first use. The partials are a clone of their own: executing a template
+// escapes it, and the shell must stay unexecuted so that pages can still be
+// cloned from it.
+func (s *Server) renderPartial(w io.Writer, name string, data any) error {
+	s.pagesMu.Lock()
+	if s.partials == nil {
+		shell, err := s.shellSet()
+		if err == nil {
+			s.partials, err = shell.Clone()
+		}
+		if err != nil {
+			s.pagesMu.Unlock()
+			return err
+		}
+	}
+	t := s.partials
+	s.pagesMu.Unlock()
+	return t.ExecuteTemplate(w, name, data)
 }
 
 // page is the set that serves the named page, parsed on first use. Nil when
@@ -244,18 +275,22 @@ func (s *Server) page(name string) *template.Template {
 	if _, err := fs.Stat(templateFS, f); err != nil {
 		return nil
 	}
-	t, err := s.shell.Clone()
+	shell, err := s.shellSet()
 	if err == nil {
-		t, err = t.ParseFS(templateFS, f)
+		var t *template.Template
+		t, err = shell.Clone()
+		if err == nil {
+			t, err = t.ParseFS(templateFS, f)
+		}
+		if err == nil {
+			s.pages[name] = t
+			return t
+		}
 	}
-	if err != nil {
-		// checkTemplates parsed this page at startup; a failure now is the
-		// server's own state, so it is logged and the page answers as missing.
-		s.log.Error("web: template", "page", name, "err", err)
-		return nil
-	}
-	s.pages[name] = t
-	return t
+	// checkTemplates parsed this page at startup; a failure now is the
+	// server's own state, so it is logged and the page answers as missing.
+	s.log.Error("web: template", "page", name, "err", err)
+	return nil
 }
 
 // routes registers every page. Patterns name GET, so the mux refuses every
