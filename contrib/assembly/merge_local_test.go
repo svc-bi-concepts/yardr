@@ -506,6 +506,15 @@ func (y *yard) yardrIn(stdin string, args ...string) string {
 	return y.run(y.home, yardrBin, stdin, args...)
 }
 
+// yardrAs is yardrIn as the named actor: a note's author is the actor, and
+// merge-local reads the approval only from a review session's note.
+func (y *yard) yardrAs(actor, stdin string, args ...string) string {
+	saved := y.env
+	y.env = append(append([]string{}, saved...), "YARDR_ACTOR="+actor) // the last one wins
+	defer func() { y.env = saved }()
+	return y.yardrIn(stdin, args...)
+}
+
 func (y *yard) commit(dir, file, content string) string {
 	y.t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0o644); err != nil {
@@ -868,7 +877,7 @@ func TestMergeLocalApprovedCommit(t *testing.T) {
 		y := newYard(t)
 		approved := y.commit(y.wt, "b.txt", "reviewed\n")
 		y.commit(y.wt, "c.txt", "later\n")
-		y.yardrIn("Reviewed "+approved+" by the review.\n", "bead", "note", "r-1", "-")
+		y.yardrAs("r-1-review", "Reviewed "+approved+" by the review.\n", "bead", "note", "r-1", "-")
 
 		y.assembly()
 
@@ -887,7 +896,7 @@ func TestMergeLocalApprovedCommit(t *testing.T) {
 		// on main's tree, made without a checkout.
 		approved := y.git(y.repo, "commit-tree", y.git(y.repo, "rev-parse", "main^{tree}"), "-p", "main", "-m", "reviewed")
 		branch := y.commit(y.wt, "b.txt", "bead\n")
-		y.yardrIn("approved "+approved+"\n", "bead", "note", "r-1", "-")
+		y.yardrAs("r-1-review", "approved "+approved+"\n", "bead", "note", "r-1", "-")
 
 		y.assembly()
 
@@ -917,6 +926,100 @@ func TestMergeLocalApprovedCommit(t *testing.T) {
 		if !strings.Contains(y.log, "no reviewer-approved commit recorded on r-1; landing yard/r-1 as before") {
 			t.Fatalf("the log does not say no approval is recorded:\n%s", y.log)
 		}
+	})
+
+	// The cases below read the notes as infra-land.sh does (approved_from_json).
+	// Each yard's branch holds the reviewed commit and one past it; off is a
+	// commit on main's line that the branch lacks, so a read of off refuses.
+	reviewedBranch := func(t *testing.T) (*yard, string, string) {
+		y := newYard(t)
+		approved := y.commit(y.wt, "b.txt", "reviewed\n")
+		y.commit(y.wt, "c.txt", "later\n")
+		off := y.git(y.repo, "commit-tree", y.git(y.repo, "rev-parse", "main^{tree}"), "-p", "main", "-m", "other line")
+		return y, approved, off
+	}
+	landsOn := func(t *testing.T, y *yard, approved string) {
+		t.Helper()
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: the approved commit %s is on the branch\n%s", b.Stage, approved, y.log)
+		}
+		short := y.git(y.repo, "rev-parse", "--short", approved)
+		if !strings.Contains(y.log, "contains the reviewer-approved "+short) {
+			t.Fatalf("the log does not name the approved commit %s:\n%s", short, y.log)
+		}
+	}
+	noApproval := func(t *testing.T, y *yard) {
+		t.Helper()
+		if b := y.bead(); b.Stage != "merged" {
+			t.Fatalf("bead in %s, want merged: no note approves a commit\n%s", b.Stage, y.log)
+		}
+		if !strings.Contains(y.log, "no reviewer-approved commit recorded on r-1; landing yard/r-1 as before") {
+			t.Fatalf("the log does not say no approval is recorded:\n%s", y.log)
+		}
+	}
+
+	t.Run("a capital Approved from a review note lands on its commit", func(t *testing.T) {
+		y, approved, _ := reviewedBranch(t)
+		y.yardrAs("r-1-review", "Approved "+approved+" by the review.\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		landsOn(t, y, approved)
+	})
+
+	t.Run("a note that approves a second sha reads the first", func(t *testing.T) {
+		y, approved, off := reviewedBranch(t)
+		y.yardrAs("r-1-review", "Approved "+approved+" by the review. Later approved "+off+" in the same note.\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		landsOn(t, y, approved)
+	})
+
+	t.Run("the newest review note with a sha wins", func(t *testing.T) {
+		y, approved, off := reviewedBranch(t)
+		y.yardrAs("r-1-review", "Reviewed "+off+"\n", "bead", "note", "r-1", "-")
+		y.yardrAs("r-1-review", "Approved "+approved+"\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		landsOn(t, y, approved)
+	})
+
+	t.Run("not approved approves nothing", func(t *testing.T) {
+		y, _, off := reviewedBranch(t)
+		y.yardrAs("r-1-review", "This is not approved "+off+".\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		noApproval(t, y)
+	})
+
+	t.Run("a sha on the line after the keyword approves nothing", func(t *testing.T) {
+		y, _, off := reviewedBranch(t)
+		y.yardrAs("r-1-review", "Approved\n"+off+"\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		noApproval(t, y)
+	})
+
+	t.Run("another bead's review note approves nothing", func(t *testing.T) {
+		y, _, off := reviewedBranch(t)
+		y.yardrAs("other-1-review", "approved "+off+"\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		noApproval(t, y)
+	})
+
+	t.Run("a yardmaster's note approves nothing", func(t *testing.T) {
+		y, _, off := reviewedBranch(t)
+		y.yardrAs("yardmaster-chris", "approved "+off+"\n", "bead", "note", "r-1", "-")
+
+		y.assembly()
+
+		noApproval(t, y)
 	})
 }
 
