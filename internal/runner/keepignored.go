@@ -249,5 +249,5 @@ func (h *Herdr) keepPrivate(ctx context.Context, gitDir, dir string, handle map[
 		return nil
 	}
 	return h.Store.LogDispatch(ctx, bead, "private_kept", "yard", map[string]any{
-		"worktree": dir, "kept": kept, "files": res.Files, "credentials_left": res.Left})
+		"worktree": dir, "kept": kept, "moved": res.Files, "credentials_left": res.Left})
 }
