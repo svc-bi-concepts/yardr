@@ -16,12 +16,21 @@ import (
 // notKept are the trees a worktree holds that a tool regenerates, and yardr's
 // own state: no data, so closing a bead lets them go with the worktree. Only
 // these are skipped; every other file git ignores is kept (yardr-ztz9: we
-// delete no data). A name is matched on every path component, so a nested
-// node_modules goes too.
+// delete no data). A name is skipped only where notKeptPath says so: at the
+// worktree root, or beside a manifest, so a folder that happens to be named
+// target in the data is kept.
 var notKept = map[string]bool{
 	"node_modules": true, ".venv": true, "__pycache__": true, ".pytest_cache": true,
 	".mypy_cache": true, ".ruff_cache": true, ".next": true, ".turbo": true,
 	".parcel-cache": true, ".gradle": true, "target": true, ".yard": true,
+}
+
+// manifests are the files that say a directory is a project, so a notKept
+// directory beside one is a build tree the tool made from it. A notKept name
+// with no manifest beside it is data and is kept.
+var manifests = []string{
+	"package.json", "pyproject.toml", "setup.py", "requirements.txt", "Cargo.toml",
+	"go.mod", "build.gradle", "build.gradle.kts", "pom.xml", "Gemfile", "composer.json",
 }
 
 // keptMoved is what keepIgnored did: how many files it moved to the kept
@@ -32,8 +41,8 @@ type keptMoved struct {
 	Left  []string
 }
 
-// keepIgnored moves every file under dir that git ignores, and that is not
-// in notKept, to kept, keeping its path below dir and its mode. gitDir is
+// keepIgnored moves every file under dir that git ignores, and that
+// notKeptPath does not skip, to kept, keeping its path below dir and its mode. gitDir is
 // the git dir whose ignore rules decide what is ignored. A name already in
 // kept gets a numbered suffix, so nothing is overwritten. A move that fails
 // stops the walk and returns its error: the files already moved stay in
@@ -71,8 +80,8 @@ func keepIgnored(ctx context.Context, gitDir, dir, kept string) (keptMoved, erro
 }
 
 // ignoredData lists, relative to dir, the files git ignores under dir that
-// are not notKept. An ignored directory git lists collapsed is walked here;
-// a notKept name is skipped wherever it is on the path.
+// notKeptPath does not skip. An ignored directory git lists collapsed is
+// walked here, and the walk skips the same trees as the listing does.
 func ignoredData(ctx context.Context, gitDir, dir string) ([]string, error) {
 	out, err := gitOutRaw(ctx, dir, "--git-dir="+gitDir, "--work-tree="+dir,
 		"ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory")
@@ -81,10 +90,14 @@ func ignoredData(ctx context.Context, gitDir, dir string) ([]string, error) {
 	}
 	var rels []string
 	for _, entry := range strings.Split(out, "\x00") {
-		if entry == "" || hasNotKept(entry) {
+		if entry == "" {
 			continue
 		}
-		if !strings.HasSuffix(entry, "/") {
+		isDir := strings.HasSuffix(entry, "/")
+		if notKeptPath(dir, strings.TrimSuffix(entry, "/"), isDir) {
+			continue
+		}
+		if !isDir {
 			rels = append(rels, entry)
 			continue
 		}
@@ -93,15 +106,15 @@ func ignoredData(ctx context.Context, gitDir, dir string) ([]string, error) {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() {
-				if notKept[d.Name()] {
-					return filepath.SkipDir
-				}
-				return nil
-			}
 			rel, err := filepath.Rel(dir, p)
 			if err != nil {
 				return err
+			}
+			if d.IsDir() {
+				if notKeptPath(dir, rel, true) {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			rels = append(rels, rel)
 			return nil
@@ -114,10 +127,37 @@ func ignoredData(ctx context.Context, gitDir, dir string) ([]string, error) {
 	return rels, nil
 }
 
-// hasNotKept reports whether a path names a notKept tree at any depth.
-func hasNotKept(rel string) bool {
-	for _, part := range strings.Split(strings.Trim(rel, "/"), "/") {
-		if notKept[part] {
+// notKeptPath reports whether the path rel, under the worktree dir, is a
+// regenerable tree that is skipped. Two rules keep data out of the skip:
+// nothing under a private directory is ever skipped, wherever it is, since
+// private data can be personal; and a notKept name is skipped only at the
+// worktree root or beside a manifest, so a target folder of data is kept.
+// isDir says whether rel names a directory: a file's own name is not one.
+func notKeptPath(dir, rel string, isDir bool) bool {
+	parts := strings.Split(filepath.ToSlash(strings.Trim(rel, "/")), "/")
+	if !isDir {
+		parts = parts[:len(parts)-1]
+	}
+	for _, part := range parts {
+		if part == "private" {
+			return false
+		}
+	}
+	for i, part := range parts {
+		if !notKept[part] {
+			continue
+		}
+		if i == 0 || hasManifest(filepath.Join(dir, filepath.Join(parts[:i]...))) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasManifest reports whether a project manifest sits in the directory at path.
+func hasManifest(path string) bool {
+	for _, m := range manifests {
+		if _, err := os.Lstat(filepath.Join(path, m)); err == nil {
 			return true
 		}
 	}

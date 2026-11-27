@@ -189,7 +189,86 @@ func TestIsCredentialAndNotKept(t *testing.T) {
 			t.Errorf("%s is a credential", rel)
 		}
 	}
-	if !hasNotKept("app/node_modules/x/y") || hasNotKept("private/node_modules_notes.txt") {
-		t.Fatal("hasNotKept matches the wrong paths")
+}
+
+// notKeptPath skips a regenerable tree only at the worktree root or beside a
+// manifest, and never anything under a private directory. The web directory
+// holds a manifest; scratch and app hold none.
+func TestNotKeptPathRules(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "web"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "web", "package.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		rel   string
+		isDir bool
+		skip  bool
+	}{
+		{"target", true, true},                    // at the root
+		{"target/x.bin", false, true},             // a file in a root target
+		{"web/node_modules", true, true},          // beside web/package.json
+		{"web/target/a.o", false, true},           // a file in a manifest's target
+		{"scratch/target", true, false},           // no manifest beside it: data
+		{"scratch/target/data.csv", false, false}, // so is what is in it
+		{"app/node_modules/x/y", true, false},     // no manifest beside app/
+		{"private/finance/target", true, false},   // under private/: always kept
+		{"a/private/node_modules", true, false},   // private anywhere on the path
+		{"notes/target.txt", false, false},        // a file, not a tree named target
+		{"private/node_modules_notes.txt", false, false},
+	} {
+		if got := notKeptPath(dir, c.rel, c.isDir); got != c.skip {
+			t.Errorf("notKeptPath(%q, dir=%v) = %v, want %v", c.rel, c.isDir, got, c.skip)
+		}
+	}
+}
+
+// Ignored data kept on close: a target folder under private/ or in a folder
+// with no manifest is data and is kept; a target at the root and a
+// node_modules beside a manifest are regenerable and go with the worktree.
+func TestKeepIgnoredTargetFoldersAreData(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, wt, home := keepRepo(t)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.WriteFile(filepath.Join(wt, ".gitignore"), []byte("private/\nnode_modules/\n.env\ntarget/\nscratch/\n"), 0o600))
+	for rel, body := range map[string]string{
+		"private/finance/target/budget.xlsx": "xlsx",
+		"scratch/target/data.csv":            "a,b\n",
+		"scratch/node_modules/x.js":          "x",
+		"target/build.bin":                   "bin",
+		"web/package.json":                   "{}",
+		"web/node_modules/pkg/index.js":      "js",
+	} {
+		must(os.MkdirAll(filepath.Dir(filepath.Join(wt, rel)), 0o700))
+		must(os.WriteFile(filepath.Join(wt, rel), []byte(body), 0o600))
+	}
+	gitDir, err := gitOut(ctx, wt, "rev-parse", "--absolute-git-dir")
+	must(err)
+	kept := filepath.Join(home, "kept", "depot", "b1")
+	if _, err := keepIgnored(ctx, gitDir, wt, kept); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{
+		"private/finance/target/budget.xlsx",
+		"scratch/target/data.csv",
+		"scratch/node_modules/x.js",
+	} {
+		if _, err := os.Stat(filepath.Join(kept, rel)); err != nil {
+			t.Errorf("data %s not kept: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{"target", "web/node_modules"} {
+		if _, err := os.Stat(filepath.Join(kept, rel)); !os.IsNotExist(err) {
+			t.Errorf("regenerable %s was copied", rel)
+		}
 	}
 }

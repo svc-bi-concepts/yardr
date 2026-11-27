@@ -2151,7 +2151,11 @@ check the footer's model instead.
   and any credential files left behind): `private/` and every other ignored
   file, but not a regenerable tree (`node_modules`, `.venv`, `__pycache__`,
   `target` and the like) nor a credential (`.env`, `*.key`, `*.pem`,
-  `secret-id`, `token`), which goes with the worktree. If a move fails the
+  `secret-id`, `token`), which goes with the worktree. A regenerable name is
+  skipped only at the worktree root or beside a project manifest
+  (`package.json`, `go.mod`, `pyproject.toml` and the like): a `target`
+  folder under `private/`, or in a folder with no manifest, is data and is
+  kept. If a move fails the
   worktree is kept. Set `--set cleanup=false` on a group to keep its worktrees.
   If its worktree was removed, reopening a bead checks its branch out again.
   If opening by branch fails but the bead's worktree path still exists,
