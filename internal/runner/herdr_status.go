@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -188,7 +189,11 @@ func (h *Herdr) Finish(ctx context.Context, handle map[string]any) error {
 	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// A move-aside left by a cleanup that died between the rename
-		// and the delete goes with the admin entry.
+		// and the delete goes with the admin entry, after its ignored
+		// data is kept.
+		if err := h.keepLeftover(ctx, repo, path+".removing", handle); err != nil {
+			return err
+		}
 		_ = os.RemoveAll(path + ".removing")
 		_ = git(ctx, repo, "worktree", "remove", "--force", path)
 		return dispatch.ErrNothingLeft
@@ -205,6 +210,16 @@ func (h *Herdr) Finish(ctx context.Context, handle map[string]any) error {
 	} else if out := strings.TrimSpace(raw); out != "" && !onlyDeleted(raw) {
 		return fmt.Errorf("uncommitted changes in %s:\n%s", path, out)
 	}
+	// The ignored data (private/ and the like, see notKept) is moved to the
+	// bead's kept directory before the tree goes; a failure keeps the
+	// worktree, which the next pass tries again.
+	gitDir, err := gitOut(ctx, path, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", path, err)
+	}
+	if err := h.keepPrivate(ctx, gitDir, path, handle); err != nil {
+		return err
+	}
 	if ws, _ := handle["workspace"].(string); ws != "" && h.workspaceAt(ctx, ws, path) {
 		// Close the workspace first so herdr does not keep a pane in a
 		// directory that is about to disappear. Ids can be reused after a
@@ -216,7 +231,26 @@ func (h *Herdr) Finish(ctx context.Context, handle map[string]any) error {
 		// the worktree is removed the old way, in place.
 		return git(ctx, path, "worktree", "remove", path)
 	}
-	return h.removeWorktree(ctx, repo, path)
+	return h.removeWorktree(ctx, repo, path, handle)
+}
+
+// keepLeftover keeps the ignored data of a move-aside that a cleanup which
+// died left behind, before it is deleted. Its own git dir is gone with the
+// admin entry, so the depot's git dir reads its ignore rules.
+func (h *Herdr) keepLeftover(ctx context.Context, repo, moved string, handle map[string]any) error {
+	if _, err := os.Stat(moved); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if repo == "" {
+		return fmt.Errorf("%s: its ignored files cannot be read without the depot", moved)
+	}
+	gitDir, err := gitOut(ctx, repo, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", repo, err)
+	}
+	return h.keepPrivate(ctx, gitDir, moved, handle)
 }
 
 // onlyDeleted reports whether a raw `git status --porcelain` output names
@@ -240,10 +274,14 @@ func onlyDeleted(out string) bool {
 // `<path>.removing`, removes it from the repo's worktree list, and deletes
 // the moved directory without waiting on it. A leftover move-aside from
 // a cleanup that died between the rename and the delete is swept first,
-// so the rename has its target free; what the sweep cannot delete fails
-// the rename, which falls back to removing the worktree in place.
-func (h *Herdr) removeWorktree(ctx context.Context, repo, path string) error {
+// after its ignored data is kept, so the rename has its target free; what
+// the sweep cannot delete fails the rename, which falls back to removing
+// the worktree in place.
+func (h *Herdr) removeWorktree(ctx context.Context, repo, path string, handle map[string]any) error {
 	moved := path + ".removing"
+	if err := h.keepLeftover(ctx, repo, moved, handle); err != nil {
+		return err
+	}
 	_ = os.RemoveAll(moved)
 	if err := os.Rename(path, moved); err != nil {
 		return git(ctx, repo, "worktree", "remove", path)

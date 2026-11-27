@@ -2146,7 +2146,13 @@ check the footer's model instead.
 - **Worktrees are cleaned up when the bead closes**, not when a stage ends,
   so later stages reuse them. A worktree with uncommitted or untracked changes
   is kept (a `workspace_kept` event says why) and `yard/<bead>` branches are
-  never deleted. Set `--set cleanup=false` on a group to keep its worktrees.
+  never deleted. Files git ignores go first, to `kept/<depot>/<bead>/` under
+  the yard's home (a `private_kept` event names the directory, a file count
+  and any credential files left behind): `private/` and every other ignored
+  file, but not a regenerable tree (`node_modules`, `.venv`, `__pycache__`,
+  `target` and the like) nor a credential (`.env`, `*.key`, `*.pem`,
+  `secret-id`, `token`), which goes with the worktree. If a move fails the
+  worktree is kept. Set `--set cleanup=false` on a group to keep its worktrees.
   If its worktree was removed, reopening a bead checks its branch out again.
   If opening by branch fails but the bead's worktree path still exists,
   yardr reattaches `yard/<bead>` only when the worktree is registered with
