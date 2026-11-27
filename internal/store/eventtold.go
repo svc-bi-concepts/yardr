@@ -94,10 +94,13 @@ var eventDataTold = map[string][]string{
 	"session_harness_retry":    {"crew", "user", "group", "kind", "of", "reason", "session", "stage", "try", "window"},
 	"workspace_kept":           {"session"},
 	"workspace_removed":        {"session"},
-	"human_notified":           {"group", "session", "stage"},
-	"nudge_held":               {"crew", "user", "session", "waited"},
-	"login_led":                {"ask", "crew", "kind", "method", "proved", "restarted", "step"},
-	"train_branched":           {"branch", "child", "commit", "from"},
+	// The paths of a kept directory and the credentials left behind are the
+	// yard's machine's, so only the count is told.
+	"private_kept":   {"moved"},
+	"human_notified": {"group", "session", "stage"},
+	"nudge_held":     {"crew", "user", "session", "waited"},
+	"login_led":      {"ask", "crew", "kind", "method", "proved", "restarted", "step"},
+	"train_branched": {"branch", "child", "commit", "from"},
 
 	// What a stopped session's agent used: the counts, the time they were read,
 	// whether they fall short, and the reason there is none (toldUsage). The

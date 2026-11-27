@@ -1778,7 +1778,13 @@ and `--inbox` override the knobs for one run).
 | `YARDR_INBOX_RETENTION` | `180d` | how long an event a running crew member has not read holds the log back |
 
 Values are days (`90d`), Go durations (`720h`), or `off` (or `0`) to keep
-everything. Whatever its age, an event is kept when:
+everything. `yardr daemon install` writes all three into the daemon's service
+as `off`, on macOS and on systemd alike, so a reinstall keeps everything; a
+value the installing environment sets wins over that. Nothing prunes what a
+closed bead's worktree left in `kept/` under the home (groups.md, worktrees):
+it grows until someone removes it, and `du -sh` on the home shows its size.
+Whatever its age, an
+event is kept when:
 
 - it is the newest event (sequences continue from it);
 - it is in a *running* crew member's inbox, not yet acknowledged and younger

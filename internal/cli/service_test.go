@@ -341,8 +341,8 @@ func TestServiceEnv(t *testing.T) {
 	want := []string{"HERDR_SOCKET_PATH=/tmp/h.sock", "HOME=/Users/jo", "HTTPS_PROXY=http://proxy.corp:3128",
 		"HTTP_PROXY=http://proxy.corp:3128", "NODE_EXTRA_CA_CERTS=/etc/corp/ca.pem", "NO_PROXY=localhost,.corp",
 		"PATH=/bin", "SSL_CERT_DIR=/etc/corp/certs", "SSL_CERT_FILE=/etc/corp/ca.pem", "XDG_CONFIG_HOME=/Users/jo/.config",
-		"YARDR_HOME=/Users/jo/.yardr", "YARDR_HOOK_ADDR=127.0.0.1:8790", "YARDR_INBOX_RETENTION=30d",
-		"http_proxy=http://proxy.corp:3128", "https_proxy=http://proxy.corp:3128", "no_proxy=localhost,.corp"}
+		"YARDR_EVENT_RETENTION=off", "YARDR_HOME=/Users/jo/.yardr", "YARDR_HOOK_ADDR=127.0.0.1:8790", "YARDR_HOOK_PAYLOAD_RETENTION=off",
+		"YARDR_INBOX_RETENTION=30d", "http_proxy=http://proxy.corp:3128", "https_proxy=http://proxy.corp:3128", "no_proxy=localhost,.corp"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("env = %q\nwant %q", got, want)
 	}
@@ -361,6 +361,52 @@ func TestServiceEnv(t *testing.T) {
 		got := serviceEnv(environ, "/h", k)
 		if has := slices.Contains(got, environ[1]); has != (k.Name == svcOTel) || slices.Contains(got, environ[2]) || slices.Contains(got, environ[3]) {
 			t.Errorf("%s: env = %q", k.Name, got)
+		}
+	}
+}
+
+// The daemon's service keeps the three retention settings off, so a
+// reinstall never brings the prune back; an environment that sets one keeps
+// its value, and no other kind of service gets them.
+func TestDaemonServiceKeepsRetentionOff(t *testing.T) {
+	t.Parallel()
+	keys := []string{"YARDR_EVENT_RETENTION=off", "YARDR_HOOK_PAYLOAD_RETENTION=off", "YARDR_INBOX_RETENTION=off"}
+	base := []string{"PATH=/bin", "HOME=/h"}
+	got := serviceEnv(base, "/h", kindOf(svcDaemon))
+	for _, kv := range keys {
+		if !slices.Contains(got, kv) {
+			t.Errorf("daemon service: no %s in %q", kv, got)
+		}
+	}
+	set := serviceEnv(append(slices.Clone(base), "YARDR_EVENT_RETENTION=30d", "YARDR_INBOX_RETENTION=7d"), "/h", kindOf(svcDaemon))
+	if !slices.Contains(set, "YARDR_EVENT_RETENTION=30d") || !slices.Contains(set, "YARDR_INBOX_RETENTION=7d") ||
+		slices.Contains(set, "YARDR_EVENT_RETENTION=off") || slices.Contains(set, "YARDR_INBOX_RETENTION=off") ||
+		!slices.Contains(set, "YARDR_HOOK_PAYLOAD_RETENTION=off") {
+		t.Fatalf("the installing environment's values must win: %q", set)
+	}
+	// Both managers' files carry the three keys, as the installer writes them.
+	for _, manager := range []string{launchd, systemd} {
+		u := &unit{Kind: svcDaemon, Manager: manager, Home: "/h", Program: "/bin/yardr", Args: []string{"daemon"}, Env: got}
+		text := u.render()
+		for _, kv := range keys {
+			name, _, _ := strings.Cut(kv, "=")
+			want := unitWord(kv, false) // systemd's Environment= word
+			if manager == launchd {
+				want = "<key>" + name + "</key>\n\t\t<string>off</string>"
+			}
+			if !strings.Contains(text, want) {
+				t.Errorf("%s file lacks %s:\n%s", manager, want, text)
+			}
+		}
+	}
+	for _, k := range longRunnings {
+		if k.Name == svcDaemon {
+			continue
+		}
+		for _, kv := range keys {
+			if slices.Contains(serviceEnv(base, "/h", k), kv) {
+				t.Errorf("%s service has %s", k.Name, kv)
+			}
 		}
 	}
 }
