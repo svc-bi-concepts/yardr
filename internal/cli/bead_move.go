@@ -1,13 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"io"
+	"yardr.dev/yardr/internal/runner"
 	"yardr.dev/yardr/internal/store"
 )
 
@@ -175,6 +177,7 @@ stays open.`,
 			// The close went through; what follows only decides the line.
 			// A target read half-way through someone else's write is left
 			// out rather than fail a close that happened.
+			kept := a.closeKept(c.Context(), st, b.ID)
 			var releases []string
 			for _, t := range targets {
 				if !slices.Contains(before[t], blocker.ID) {
@@ -200,16 +203,50 @@ stays open.`,
 			return a.out(c.OutOrStdout(), struct {
 				*store.Bead
 				Releases []string `json:"releases,omitempty"`
-			}{b, releases}, func(w io.Writer) {
+				Kept     []string `json:"kept,omitempty"`
+			}{b, releases, kept}, func(w io.Writer) {
 				fmt.Fprintf(w, "%s closed\n", b.ID)
 				if len(releases) > 0 {
 					fmt.Fprintf(w, "releases %s\n", strings.Join(releases, ", "))
+				}
+				for _, k := range kept {
+					fmt.Fprintf(w, "kept: %s\n", k)
 				}
 			})
 		},
 	}
 	closeCmd.Flags().StringVar(&reason, "reason", "", "why it is closed (- reads stdin; use a quoted heredoc so the shell does not expand backticks or $( ) in double-quoted words)")
 	return closeCmd
+}
+
+// closeKept is the directories a close names for the ignored data its
+// bead's worktrees hold: where the cleanup pass will keep it, one line each.
+// It is empty when there is none, or when the worktree is not on this
+// machine. A worktree that cannot be read names no directory, and the line
+// says so without naming any file, since the data may be personal.
+func (a *app) closeKept(ctx context.Context, st store.API, bead string) []string {
+	sessions, err := st.ListSessions(ctx, store.SessionFilter{Bead: bead, All: true})
+	if err != nil {
+		return []string{"could not read the bead's sessions, so the kept directory is not named"}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range sessions {
+		if w, _ := s.Handle["worktree"].(string); w == "" {
+			continue
+		}
+		dir, files, err := runner.KeptPlan(ctx, a.home(), s.Handle)
+		if err != nil {
+			out = append(out, "could not read the worktree's ignored files, so the kept directory is not named")
+			continue
+		}
+		if files == 0 || dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		out = append(out, dir+"/")
+	}
+	return out
 }
 
 // beadSimpleCmd is a stage move that takes only a bead: it runs fn and
