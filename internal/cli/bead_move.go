@@ -170,14 +170,11 @@ stays open.`,
 				}
 				before[t] = bs
 			}
+			kept := a.closeKept(c.Context(), st, args[0])
 			b, err := st.CloseBead(c.Context(), args[0], reason, a.expect(*rev), a.who())
 			if err != nil {
 				return err
 			}
-			// The close went through; what follows only decides the line.
-			// A target read half-way through someone else's write is left
-			// out rather than fail a close that happened.
-			kept := a.closeKept(c.Context(), st, b.ID)
 			var releases []string
 			for _, t := range targets {
 				if !slices.Contains(before[t], blocker.ID) {
